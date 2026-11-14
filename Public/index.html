@@ -69,6 +69,7 @@
   #sidebar h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 14px 12px 6px; letter-spacing: .08em; }
   .me-row { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
   .me-row b { color: var(--ink); }
+  .modbtn { display: block; width: 100%; margin-top: 6px; padding: 7px 6px; background: var(--mention); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; font-size: 12.5px; font-weight: 700; }
   .me-row select { width: 100%; margin-top: 6px; padding: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
   .item { padding: 8px 12px; display: flex; align-items: center; gap: 7px; border-right: 3px solid transparent; white-space: nowrap; cursor: pointer; }
   .item:hover { background: var(--panel2); }
@@ -265,6 +266,7 @@
   <aside id="sidebar">
     <div class="me-row">
       Sos <b id="meName"></b><span id="meAdmin" hidden> 🛡️</span>
+      <button id="modPanelBtn" class="modbtn" hidden>🛡️ Panel de moderación</button>
       <select id="statusSel" title="Tu estado">
         <option value="disponible">🟢 Disponible</option>
         <option value="hablar">🫂 Quiero hablar</option>
@@ -340,10 +342,11 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-const GENERAL = "#general", JUEGOS = "#juegos";
-const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"] };
+const GENERAL = "#general", JUEGOS = "#juegos", MODS = "#mods";
+const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
+const lockedRooms = new Set();
 const isRoom = (c) => c.startsWith("#");
-const BOT = "Guardián", CRUPIER = "Crupier";
+const BOT = "Fastidio", CRUPIER = "Crupier";
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
 const STATUS = { disponible: ["🟢", "Disponible"], hablar: ["🫂", "Necesita hablar"], escucho: ["👂", "Solo escucha"], ausente: ["🌙", "Ausente"], nomolestar: ["🔕", "No molestar"] };
 const $ = (id) => document.getElementById(id);
@@ -351,7 +354,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 let me = "", isAdmin = false, isOwner = false, current = GENERAL;
 let online = [];                // [{nick, status, admin}]
-const history = { [GENERAL]: [], [JUEGOS]: [] };
+const history = { [GENERAL]: [], [JUEGOS]: [], [MODS]: [] };
 let replyTo = null;
 const unread = {};
 const typingNow = {};
@@ -407,7 +410,7 @@ function rulesHTML(card, mode) {
       <li><b>Nada de contenido sexual ni violento explícito.</b></li>
       <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Tocá el nombre de cualquier persona para bloquearla (no se van a leer entre ustedes) o reportarla.</li>
     </ol>
-    <p class="sub" style="margin:0">🤖 El bot <b>Guardián</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
+    <p class="sub" style="margin:0">🤖 El bot <b>Fastidio</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
     ${mode === "accept"
       ? `<label class="check"><input type="checkbox" id="acceptChk"> Tengo 18 años o más y acepto las reglas</label>
          <button class="primary" id="acceptBtn" style="width:100%" disabled>Continuar</button>`
@@ -475,6 +478,7 @@ function join(nick, onFail) {
     $("login").hidden = true;
     $("app").style.display = "grid";
     setPinned(res.pinned);
+    (res.locked || []).forEach((r) => lockedRooms.add("#" + r));
     if (res.slowMode) push(GENERAL, { type: "sys", text: `🐢 Modo lento activo: un mensaje cada ${res.slowMode} s` });
     const st = store.get("gr-status", "disponible");
     $("statusSel").value = st; socket.emit("status", st);
@@ -509,7 +513,12 @@ socket.on("admin", (v) => {
   isAdmin = !!(v === true || v?.mod); isOwner = !!v?.owner;
   $("meAdmin").textContent = isOwner ? " 👑" : " 🛡️";
   $("meAdmin").hidden = !isAdmin;
+  $("modPanelBtn").hidden = !isAdmin;
+  if (!isAdmin && current === MODS) openChat(GENERAL);
+  renderUsers();
 });
+socket.on("renamed", (n) => { me = n; $("meName").textContent = n; renderMessages(); });
+socket.on("room-lock", ({ room, locked }) => { locked ? lockedRooms.add("#" + room) : lockedRooms.delete("#" + room); renderUsers(); renderMessages(); });
 
 // ---------- Estado ----------
 $("statusSel").onchange = (e) => { store.set("gr-status", e.target.value); socket.emit("status", e.target.value); };
@@ -529,7 +538,8 @@ function sideItem(chat, label, opts = {}) {
   return div;
 }
 function renderUsers() {
-  $("roomList").replaceChildren(...Object.entries(ROOMS).map(([id, [ico, name]]) => sideItem(id, `${ico} ${name}`)));
+  $("roomList").replaceChildren(...Object.entries(ROOMS).filter(([id]) => id !== MODS || isAdmin)
+    .map(([id, [ico, name]]) => sideItem(id, `${ico} ${name}${lockedRooms.has(id) ? " 🔒" : ""}`)));
   const others = online.filter((u) => u.nick !== me);
   $("count").textContent = online.length;
   $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
@@ -620,7 +630,7 @@ function renderMessages() {
   const priv = !isRoom(current);
   const info = userInfo(current);
   $("titleText").textContent = priv ? `🔒 ${current}` : ROOMS[current].slice(0, 2).join(" ");
-  $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : ROOMS[current][2];
+  $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : (lockedRooms.has(current) ? "🔒 Cerrada por moderación" : ROOMS[current][2]);
   $("titleMore").hidden = !priv;
   $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
   $("gameBar").hidden = current !== JUEGOS;
@@ -691,9 +701,15 @@ function openSheet(nick) {
   }
   if (isAdmin && info && (!info.admin || (isOwner && info.role !== "owner"))) {
     sheet.append(el("div", "modsep", "Moderación"));
+    btn("ℹ️ Ver info", () => cmd(`/info ${nick}`));
+    btn("⚠️ Advertir", () => { const r = prompt(`Motivo de la advertencia a ${nick}:`, "Respetá las reglas"); if (r !== null) cmd(`/advertir ${nick} ${r}`); });
     btn("🔇 Silenciar 10 min", () => cmd(`/silenciar ${nick} 10`));
     btn("🔇 Silenciar 1 hora", () => cmd(`/silenciar ${nick} 60`));
     btn("🔊 Quitar silencio", () => cmd(`/desilenciar ${nick}`));
+    btn("✏️ Cambiar apodo", () => { const n = prompt(`Nuevo apodo para ${nick}:`, ""); if (n) cmd(`/apodo ${nick} ${n}`); });
+    btn("📷 Quitarle fotos y GIFs", () => cmd(`/sinfotos ${nick}`));
+    btn("📷 Devolverle fotos y GIFs", () => cmd(`/confotos ${nick}`));
+    btn("🧹 Borrar todos sus mensajes", () => { if (confirm(`¿Borrar todos los mensajes de ${nick} en las salas?`)) cmd(`/purgar ${nick}`); }, "danger");
     btn("👢 Expulsar", () => { const r = prompt("Motivo de la expulsión:", "No respetar las reglas"); if (r !== null) cmd(`/expulsar ${nick} ${r}`); }, "danger");
     btn("⛔ Banear 24 h", () => { const r = prompt("Motivo del baneo:", "Faltas graves a las reglas"); if (r !== null) cmd(`/banear ${nick} ${r}`); }, "danger");
   }
@@ -703,7 +719,8 @@ function openSheet(nick) {
 const closeSheet = () => $("sheetBg").hidden = true;
 $("sheetBg").onclick = (e) => { if (e.target.id === "sheetBg") closeSheet(); };
 $("titleMore").onclick = () => openSheet(current);
-const cmd = (text) => socket.emit("public-message", text);
+const modRoom = () => (isRoom(current) && current !== MODS ? current : GENERAL);
+const cmd = (text) => socket.emit("public-message", { room: modRoom().slice(1), text });
 function toggleBlock(nick) {
   const k = nick.toLowerCase(), on = !blocked.has(k);
   on ? blocked.add(k) : blocked.delete(k);
@@ -847,6 +864,29 @@ $("gameBar").addEventListener("click", (e) => {
   if (c === "ronda") return openRoundSheet();
   sendText(c);
 });
+
+// ---------- Panel de moderación ----------
+function openModPanel() {
+  const sheet = $("sheet"), room = modRoom(), locked = lockedRooms.has(room);
+  sheet.replaceChildren(el("h4", null, (isOwner ? "👑" : "🛡️") + " Panel de moderación"),
+    el("div", "stline", "Para sancionar a alguien, tocá su nombre. Acá están las acciones generales."));
+  const btn = (txt, fn, cls) => { const b = el("button", cls, txt); b.onclick = () => { closeSheet(); fn(); }; sheet.append(b); };
+  sheet.append(el("div", "modsep", "Sala: " + ROOMS[room].slice(0, 2).join(" ")));
+  btn("📌 Fijar un mensaje", () => { const t = prompt("Texto a fijar arriba de la sala General:"); if (t) cmd(`/fijar ${t}`); });
+  btn("📌 Quitar el mensaje fijado", () => cmd("/desfijar"));
+  btn("📢 Hacer un anuncio", () => { const t = prompt("Texto del anuncio (lo ven todos, con sonido):"); if (t) cmd(`/anuncio ${t}`); });
+  btn("🐢 Modo lento", () => { const t = prompt("Segundos entre mensajes (0 = desactivar):", "10"); if (t !== null) cmd(`/lento ${t}`); });
+  btn(locked ? "🔓 Abrir la sala" : "🔒 Cerrar la sala (solo escriben mods)", () => cmd(locked ? "/abrir" : "/cerrar"));
+  btn("🧹 Limpiar la sala", () => { if (confirm("¿Borrar todos los mensajes de esta sala para todos?")) cmd("/limpiar"); }, "danger");
+  sheet.append(el("div", "modsep", "Listas"));
+  btn("🔇 Ver silenciados", () => cmd("/silenciados"));
+  btn("🚩 Ver reportes", () => cmd("/reportes"));
+  if (isOwner) btn("👑 Ver moderadores y claves", () => cmd("/mods"));
+  btn("❔ Todos los comandos", () => cmd("/ayuda"));
+  btn("Cerrar", () => {});
+  $("sheetBg").hidden = false;
+}
+$("modPanelBtn").onclick = openModPanel;
 
 // ---------- Armar una ronda de trivia ----------
 function openRoundSheet() {
