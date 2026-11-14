@@ -15,9 +15,10 @@ app.get("/ping", (req, res) => res.send("ok"));
 app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!process.env.GEMINI_API_KEY }));
 
 // ================== Configuración ==================
-const BOT = "Guardián";
+const BOT = "Fastidio";
 const CRUPIER = "Crupier";
-const ROOMS = ["general", "juegos"];
+const ROOMS = ["general", "juegos", "mods"]; // "mods" = sala privada de moderadores
+const lockedRooms = new Set();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ""; // clave del dueño (👑), se configura en Render
 // Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
 const modKeys = new Map(); // clave -> nombre del moderador
@@ -28,7 +29,7 @@ const genKey = () => Array.from({ length: 8 }, () => "abcdefghjkmnpqrstuvwxyz234
 const MAX_MSG = 500;
 const STATUSES = ["disponible", "hablar", "escucho", "ausente", "nomolestar"];
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
-const RESERVED = ["guardian", "crupier", "admin", "administrador", "moderador", "mod", "sistema", "bot", "__general__"];
+const RESERVED = ["fastidio", "guardian", "crupier", "admin", "administrador", "moderador", "mod", "sistema", "bot", "__general__"];
 
 // Vacía: los insultos están permitidos. El admin puede sumar palabras con /filtro +palabra
 let BAD_WORDS = [];
@@ -71,6 +72,7 @@ const userList = (viewer) =>
     .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
+const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
 // Emite a todos menos a quienes tienen bloqueo con el remitente
 function emitFrom(sender, event, payload, skipSelf = false) {
   for (const [sid, rc] of clients) {
@@ -93,7 +95,9 @@ function botSay(text, room = "general", name = BOT) {
 const gameSay = (text) => botSay(text, "juegos", CRUPIER);
 const notice = (socketId, text, kind = "bot") => io.to(socketId).emit("notice", { text, kind, ts: now() });
 function notifyAdmins(text) {
-  for (const [id, c] of clients) if (c.admin) notice(id, "🛡️ " + text, "mod");
+  const id = newId();
+  remember(id, { chat: "mods", from: BOT, text });
+  emitToMods("public-message", { id, room: "mods", from: BOT, bot: true, text: "🛡️ " + text, ts: now() });
 }
 
 // ---------- Filtro ----------
@@ -150,6 +154,10 @@ function checkMessage(c, id, raw, room = "general", allowEmpty = false) {
   let text = String(raw || "").trim().slice(0, MAX_MSG);
   if (!text && !allowEmpty) return null;
   const t = now();
+  if (lockedRooms.has(room) && !c.admin) {
+    notice(id, "🔒 Esta sala está cerrada por moderación. Solo pueden escribir los moderadores.", "warn");
+    return null;
+  }
   if (c.mutedUntil > t) {
     notice(id, `🔇 Estás silenciado/a. Faltan ${Math.ceil((c.mutedUntil - t) / 60000)} min.`, "warn");
     return null;
@@ -202,7 +210,12 @@ function runCommand(c, id, text, room = "general") {
   if (cmd === "ayuda") {
     let help = "Comandos: /ayuda · /reglas · /admin <clave> · /juegos (en la sala Juegos)";
     if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador) · /desmod <apodo> · /mods (ver moderadores)";
-    if (c.admin) help += "\nModeración: /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo · /fijar <texto> · /desfijar · /anuncio <texto> · /lento <seg> · /limpiar · /filtro +palabra | -palabra | lista · /reportes";
+    if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
+      "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo" +
+      "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
+      "\n• Salas: /cerrar · /abrir (en la sala actual) · /lento <seg> · /limpiar · /fijar <texto> · /desfijar · /anuncio <texto>" +
+      "\n• Listas: /silenciados · /reportes · /filtro +palabra | -palabra | lista" +
+      "\n• Sala 🛡️ Moderación: chat privado solo para moderadores";
     return notice(id, help);
   }
   if (cmd === "admin") {
@@ -298,6 +311,63 @@ function runCommand(c, id, text, room = "general") {
       if (arg[0] === "-") BAD_WORDS = BAD_WORDS.filter((x) => x !== w);
       return notice(id, `Filtro actualizado (${BAD_WORDS.length} palabras).`, "mod");
     }
+    case "info": {
+      if (!target) return notice(id, "No encuentro a ese usuario.");
+      const u = target.c, t = now();
+      const mins = Math.round((t - u.joinedAt) / 60000);
+      const rep = reports.get(u.nick.toLowerCase())?.size || 0;
+      return notice(id, `ℹ️ ${u.nick}${u.owner ? " 👑" : u.admin ? " 🛡️" : ""}\n• Conectado hace ${mins} min · estado: ${u.status}` +
+        `\n• Advertencias recientes: ${u.strikes.filter((x) => t - x < 600000).length}/3 · silencios: ${u.mutes}` +
+        `\n• ${u.mutedUntil > t ? `🔇 Silenciado/a (${Math.ceil((u.mutedUntil - t) / 60000)} min)` : "Puede escribir"} · ${u.noMedia ? "📷 sin fotos" : "fotos permitidas"}` +
+        `\n• Reportes (15 min): ${rep}`, "mod");
+    }
+    case "advertir": case "warn": {
+      if (!target) return notice(id, "No encuentro a ese usuario.");
+      if (target.c.admin && !c.owner) return notice(id, "No podés advertir a otro moderador.");
+      notifyAdmins(`${c.nick} advirtió a ${target.c.nick}: ${reason}`);
+      return strike(target.c, target.id, 1, `${reason} (aviso de ${c.nick})`);
+    }
+    case "apodo": {
+      if (!target) return notice(id, "No encuentro a ese usuario.");
+      if (target.c.admin && !c.owner) return notice(id, "No podés cambiarle el apodo a otro moderador.");
+      const nuevo = why.join(" ").trim().replace(/\s+/g, " ").slice(0, 20);
+      if (nuevo.length < 2 || !/^[\p{L}\p{N} _.\-]+$/u.test(nuevo)) return notice(id, "Apodo nuevo inválido. Uso: /apodo <apodo> <nuevo>");
+      if (users.has(nuevo.toLowerCase())) return notice(id, "Ese apodo ya está en uso.");
+      const viejo = target.c.nick;
+      users.delete(viejo.toLowerCase()); users.set(nuevo.toLowerCase(), target.id);
+      target.c.nick = nuevo;
+      io.to(target.id).emit("renamed", nuevo);
+      notice(target.id, `✏️ Un moderador cambió tu apodo a "${nuevo}".`, "warn");
+      pushUsers();
+      return botSay(`✏️ ${viejo} ahora se llama ${nuevo}.`);
+    }
+    case "sinfotos": case "confotos": {
+      if (!target) return notice(id, "No encuentro a ese usuario.");
+      target.c.noMedia = cmd === "sinfotos";
+      notice(target.id, target.c.noMedia ? "📷 Un moderador te sacó el permiso de mandar fotos y GIFs." : "📷 Ya podés volver a mandar fotos y GIFs.", target.c.noMedia ? "warn" : "help");
+      return notice(id, `${target.c.nick}: fotos ${target.c.noMedia ? "bloqueadas" : "permitidas"}.`, "mod");
+    }
+    case "purgar": {
+      const n = (target?.c.nick || targetNick || "").toLowerCase();
+      if (!n) return notice(id, "Uso: /purgar <apodo>");
+      let count = 0;
+      for (const [mid, m] of messages) {
+        if (m.chat === "general" || m.chat === "juegos") if (m.from.toLowerCase() === n) { messages.delete(mid); io.emit("deleted", { id: mid, byMod: true }); count++; }
+      }
+      notifyAdmins(`${c.nick} borró ${count} mensaje(s) de ${targetNick}.`);
+      return notice(id, `🧹 Borrados ${count} mensaje(s) de ${targetNick}.`, "mod");
+    }
+    case "cerrar": case "abrir": {
+      if (room === "mods") return notice(id, "La sala de moderación no se puede cerrar.");
+      cmd === "cerrar" ? lockedRooms.add(room) : lockedRooms.delete(room);
+      io.emit("room-lock", { room, locked: cmd === "cerrar" });
+      return botSay(cmd === "cerrar" ? "🔒 Sala cerrada por moderación. Por ahora solo escriben los moderadores." : "🔓 Sala abierta de nuevo. ¡Pueden escribir!", room);
+    }
+    case "silenciados": {
+      const t = now();
+      const list = [...clients.values()].filter((u) => u.nick && u.mutedUntil > t).map((u) => `${u.nick} (${Math.ceil((u.mutedUntil - t) / 60000)} min)`);
+      return notice(id, list.length ? "🔇 Silenciados: " + list.join(" · ") : "No hay nadie silenciado.", "mod");
+    }
     case "reportes": {
       const lines = [...reports].map(([n, m]) => `${n}: ${m.size} reporte(s)`);
       return notice(id, lines.length ? "Reportes: " + lines.join(" · ") : "No hay reportes.", "mod");
@@ -312,6 +382,7 @@ const IMG_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const GIF_RE = /^https:\/\/(media\d*|i)\.giphy\.com\/[\w\-./?=&%]+$/;
 function checkMedia(c, id, p) {
   const media = {};
+  if ((p.image || p.gif) && c.noMedia && !c.admin) { notice(id, "📷 Un moderador te sacó el permiso de mandar fotos y GIFs.", "warn"); return null; }
   if (p.image) {
     if (typeof p.image !== "string" || p.image.length > 3.6e6 || !IMG_RE.test(p.image)) { notice(id, "📷 La imagen no es válida o es muy pesada (máx. ~2,5 MB).", "warn"); return null; }
     media.image = p.image;
@@ -642,17 +713,17 @@ io.on("connection", (socket) => {
 
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
-    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode });
+    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms] });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
-    if (RESERVED.includes(norm(nick)) || norm(nick).includes("guardian")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
+    if (RESERVED.includes(norm(nick)) || norm(nick).includes("fastidio")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
     if (censor(nick).hits) return cb({ ok: false, error: "Elegí otro apodo." });
     if (users.has(nick.toLowerCase())) return cb({ ok: false, error: "Ese apodo ya está en uso." });
 
     c.nick = nick; c.joinedAt = now();
     users.set(nick.toLowerCase(), socket.id);
-    cb({ ok: true, nick, users: userList(c), pinned, slowMode });
+    cb({ ok: true, nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms] });
     emitFrom(c, "user-joined", nick, true);
     pushUsers();
   });
@@ -661,6 +732,7 @@ io.on("connection", (socket) => {
     if (!c.nick) return;
     const p = typeof payload === "string" ? { text: payload } : payload || {};
     const room = ROOMS.includes(p.room) ? p.room : "general";
+    if (room === "mods" && !c.admin) return;
     const raw = String(p.text || "").trim();
     if (raw.startsWith("/") && !p.image && !p.gif) return runCommand(c, socket.id, raw, room);
     const hasMedia = !!(p.image || p.gif);
@@ -671,7 +743,8 @@ io.on("connection", (socket) => {
     const id = newId();
     const reply = buildReply(p.replyTo, room);
     remember(id, { chat: room, from: c.nick, text: text || mediaLabel(media) });
-    emitFrom(c, "public-message", { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() });
+    const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
+    if (room === "mods") emitToMods("public-message", out); else emitFrom(c, "public-message", out);
     if (room === "juegos" && text) gameGuess(c.nick, text);
   });
 
@@ -695,7 +768,11 @@ io.on("connection", (socket) => {
 
   socket.on("typing", ({ to, room, on } = {}) => {
     if (!c.nick || c.mutedUntil > now()) return;
-    if (!to) return emitFrom(c, "typing", { from: c.nick, chat: "#" + (ROOMS.includes(room) ? room : "general"), on: !!on }, true);
+    if (!to) {
+      const r = ROOMS.includes(room) ? room : "general";
+      if (r === "mods") { if (c.admin) for (const [sid, rc] of clients) if (rc.admin && rc !== c) io.to(sid).emit("typing", { from: c.nick, chat: "#mods", on: !!on }); return; }
+      return emitFrom(c, "typing", { from: c.nick, chat: "#" + r, on: !!on }, true);
+    }
     const target = byNick(to);
     if (target && !blockedPair(c, target.c)) io.to(target.id).emit("typing", { from: c.nick, chat: c.nick, on: !!on });
   });
@@ -710,11 +787,13 @@ io.on("connection", (socket) => {
     const m = messages.get(id);
     if (!m) return;
     if (m.chat === "private" && c.nick !== m.from && c.nick !== m.to) return;
+    if (m.chat === "mods" && !c.admin) return;
     const set = (m.reactions[emoji] ||= new Set());
     set.has(c.nick) ? set.delete(c.nick) : set.add(c.nick);
     if (!set.size) delete m.reactions[emoji];
     const payload = { id, reactions: Object.fromEntries(Object.entries(m.reactions).map(([e, s]) => [e, [...s]])) };
-    if (m.chat !== "private") io.emit("reactions", payload);
+    if (m.chat === "mods") emitToMods("reactions", payload);
+    else if (m.chat !== "private") io.emit("reactions", payload);
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("reactions", payload); });
   });
 
@@ -723,7 +802,8 @@ io.on("connection", (socket) => {
     if (!m || !c.nick) return;
     if (m.from !== c.nick && !(c.admin && m.chat !== "private")) return;
     messages.delete(id);
-    if (m.chat !== "private") io.emit("deleted", { id, byMod: m.from !== c.nick });
+    if (m.chat === "mods") emitToMods("deleted", { id });
+    else if (m.chat !== "private") io.emit("deleted", { id, byMod: m.from !== c.nick });
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("deleted", { id }); });
   });
 
