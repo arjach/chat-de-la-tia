@@ -310,6 +310,12 @@
   #gameBar::-webkit-scrollbar { display: none; }
   #gameBar button { flex-shrink: 0; background: var(--panel2); border: 1px solid var(--border); border-radius: 16px; padding: 5px 11px; font-size: 13px; white-space: nowrap; }
   #gameBar button:hover { border-color: var(--accent); }
+  #gameBar .gb-custom { border-color: var(--accent); color: var(--ink); font-weight: 800; }
+  #sheet .gtype { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  #sheet .gtype button { margin: 0 !important; padding: 10px 8px !important; font-size: 13.5px; text-align: center !important; }
+  #sheet .gtype button.on { border-color: var(--accent) !important; background: var(--mention) !important; font-weight: 800; }
+  #sheet .tq { border: 1px dashed var(--border); border-radius: 10px; padding: 8px; margin-bottom: 8px; }
+  #sheet .tq .field { margin-bottom: 4px; }
 
   /* Menú de reacciones */
   #msgMenu { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--accent); border-radius: 24px; padding: 4px 6px; display: flex; gap: 2px; box-shadow: 0 6px 24px #0009; }
@@ -479,6 +485,11 @@
     </div>
     <div id="typing"></div>
     <div id="gameBar" hidden>
+      <button type="button" data-cmd="custom" class="gb-custom">⚙️ Personalizar</button>
+      <button type="button" data-cmd="/quienesia">🤖 ¿Quién es la IA?</button>
+      <button type="button" data-cmd="/impostor">🫣 Impostor</button>
+      <button type="button" data-cmd="/mentiroso">🃏 Mentiroso</button>
+      <button type="button" data-cmd="/asesinato">🔪 Asesinato</button>
       <button type="button" data-cmd="/vor">🎭 Verdad o reto</button>
       <button type="button" data-cmd="/dibujo">🖍️ Dibujo</button>
       <button type="button" data-cmd="/100rotos">📊 100 rotos</button>
@@ -591,7 +602,7 @@ function applyPrefs() {
 }
 applyPrefs();
 $("themeBtn").onclick = () => { theme = theme === "dark" ? "light" : "dark"; store.set("gr-theme", theme); applyPrefs(); if (me) { renderUsers(); renderMessages(); } };
-const isMine = (m) => m.mine || (!m.anon && m.from === me);
+const isMine = (m) => m.mine || (!m.anon && !m.alias && m.from === me);
 const mentionsOrReplies = (m) => !isMine(m) && !m.bot && (mentionsMe(m.text) || m.reply?.from === me);
 $("soundBtn").onclick = () => { sound = !sound; store.set("gr-sound", sound ? "on" : "off"); applyPrefs(); if (sound) beep(); };
 
@@ -826,10 +837,10 @@ function renderMessage(m) {
     q.onclick = (e) => { e.stopPropagation(); jumpTo(m.reply.id); };
     b.append(q);
   }
-  const w = el("span", "who", (m.anon ? (mine ? "🤫 Vos (anónimo)" : "🤫 Anónimo") : m.bot ? (m.from === CRUPIER ? "🎲 " : "🤖 ") + m.from : m.from) + ": ");
+  const w = el("span", "who", (m.alias ? m.from + (mine ? " (vos)" : "") : m.anon ? (mine ? "🤫 Vos (anónimo)" : "🤫 Anónimo") : m.bot ? (m.from === CRUPIER ? "🎲 " : "🤖 ") + m.from : m.from) + ": ");
   if (!mine) w.style.color = m.bot ? "var(--ink)" : m.anon ? "var(--muted)" : nickColor(m.from);
-  if (!mine && !m.bot && !m.anon) w.onclick = (e) => { e.stopPropagation(); openSheet(m.from); };
-  if (!mine && !m.bot && !m.anon && isRoom(current)) b.append(avatarEl(m.from, 22));
+  if (!mine && !m.bot && !m.anon && !m.alias) w.onclick = (e) => { e.stopPropagation(); openSheet(m.from); };
+  if (!mine && !m.bot && !m.anon && !m.alias && isRoom(current)) b.append(avatarEl(m.from, 22));
   b.append(w);
   if (m.deleted) b.append(m.deletedByMod ? "🚫 Mensaje eliminado por moderación" : "🚫 Mensaje eliminado");
   else if (m.poll) {
@@ -1265,14 +1276,109 @@ const picEnd = () => { if (!picDraw) return; clearInterval(picDraw.timer); if (p
 pcv.addEventListener("pointerup", picEnd); pcv.addEventListener("pointercancel", picEnd); pcv.addEventListener("pointerleave", picEnd);
 picRedraw();
 
+// ---------- Tarjetas secretas (impostor, asesinato, apodos) ----------
+socket.on("secret-card", ({ title, text }) => {
+  beep(900); setTimeout(() => beep(1200), 150);
+  if (current !== JUEGOS) openChat(JUEGOS);
+  push(JUEGOS, { type: "notice", kind: "help", text: `${title} (solo lo ves vos)\n${text}` });
+  const sh = sheetOpen("secret", title, "🤫 Solo lo ves vos. También te quedó guardado en el chat de Juegos.");
+  const box = el("div", "notice help", text); box.style.whiteSpace = "pre-wrap"; box.style.marginBottom = "10px"; box.style.fontSize = "15px";
+  sh.append(box);
+  sbtn(sh, "Entendido 🤐", closeSheet, "primary");
+});
+
+// ---------- Juegos personalizados ----------
+const CUSTOM_GAMES = [
+  ["rotos", "📊 100 rotos dicen"], ["trivia", "❓ Trivia propia"], ["dibujo", "🖍️ Dibujo"], ["ahorcado", "🪢 Ahorcado"],
+  ["numero", "🔢 Número"], ["juicio", "⚖️ Juicio"], ["eliminatorio", "🏟️ Eliminatorio"], ["vor", "🎭 Verdad o reto"],
+  ["turing", "🤖 ¿Quién es la IA?"], ["impostor", "🫣 Impostor"], ["mentiroso", "🃏 Mentiroso"], ["asesinato", "🔪 Asesinato"],
+];
+function selectEl(opts, def) { const sel = el("select", "field"); opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; if (String(v) === String(def)) o.selected = true; sel.append(o); }); return sel; }
+const lines = (t) => t.split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+function openCustomGame(type = "rotos") {
+  if (type === "juicio") return openJuicioSheet();
+  const sh = sheetOpen("custom", "⚙️ Juego personalizado", "Elegí el juego y poné tus propias consignas.");
+  const grid = el("div", "gtype");
+  CUSTOM_GAMES.forEach(([k, t]) => { const b = el("button", k === type ? "on" : null, t); b.type = "button"; b.onclick = () => openCustomGame(k); grid.append(b); });
+  sh.append(grid);
+  const body = el("div"); sh.append(body);
+  const label = (t) => body.append(el("div", "modsep", t));
+  const hint = (t) => body.append(el("div", "hint", t));
+  let collect;
+  if (type === "rotos") {
+    label("Tus preguntas (una por renglón, hasta 10)");
+    const ta = el("textarea", "field"); ta.rows = 5; ta.placeholder = "Algo que te llevarías a una isla desierta\nUna excusa para no lavar los platos\nUn nombre para un perro"; ta.style.resize = "vertical"; body.append(ta);
+    label("Tiempo para responder"); const t = selectEl([[20, "20 s"], [40, "40 s"], [60, "1 min"], [90, "1:30 min"]], 40); body.append(t);
+    collect = () => ({ type, questions: ta.value.split("\n").map((x) => x.trim()).filter(Boolean), secs: +t.value });
+  } else if (type === "trivia") {
+    label("Tus preguntas y respuestas");
+    hint("Si hay varias respuestas válidas, separalas con / (ej: Messi / Lionel Messi). Vos no jugás porque las sabés 😉");
+    const list = el("div"); body.append(list);
+    const add = () => { if (list.children.length >= 15) return; const box = el("div", "tq"); const q = el("input", "field"); q.placeholder = `Pregunta ${list.children.length + 1}`; q.maxLength = 200; const a = el("input", "field"); a.placeholder = "Respuesta"; a.maxLength = 120; box.append(q, a); list.append(box); };
+    add(); add();
+    const more = el("button", null, "➕ Otra pregunta"); more.type = "button"; more.onclick = add; body.append(more);
+    label("Tiempo por pregunta"); const t = selectEl([[20, "20 s"], [30, "30 s"], [40, "40 s"], [60, "1 min"]], 40); body.append(t);
+    collect = () => ({ type, questions: [...list.children].map((b) => ({ q: b.children[0].value, a: b.children[1].value })).filter((x) => x.q.trim() && x.a.trim()), secs: +t.value });
+  } else if (type === "dibujo") {
+    label("Palabras para dibujar (separadas por coma o renglón)");
+    hint("Si las dejás vacías, uso las de siempre. Si ponés las tuyas, vos no adivinás 😉");
+    const ta = el("textarea", "field"); ta.rows = 3; ta.placeholder = "mate, bandoneón, Obelisco, alfajor, colectivo"; ta.style.resize = "vertical"; body.append(ta);
+    const r2 = el("div", "row2");
+    const r = selectEl([[3, "3 rondas"], [5, "5 rondas"], [8, "8 rondas"], [10, "10 rondas"]], 5);
+    const t = selectEl([[45, "45 s"], [60, "1 min"], [90, "1:30 min"], [120, "2 min"]], 90);
+    r2.append(r, t); label("Rondas y tiempo por dibujo"); body.append(r2);
+    collect = () => ({ type, words: lines(ta.value), rounds: +r.value, secs: +t.value });
+  } else if (type === "ahorcado") {
+    label("Palabra o frase secreta");
+    hint("Solo letras y espacios. Nadie la ve; vos no jugás 😉");
+    const w = el("input", "field"); w.type = "password"; w.maxLength = 30; w.placeholder = "Ej: dulce de leche"; w.autocomplete = "off"; body.append(w);
+    const show = el("label", "chk"); const cb = el("input"); cb.type = "checkbox"; cb.onchange = () => w.type = cb.checked ? "text" : "password"; show.append(cb, "Mostrar"); body.append(show);
+    label("Vidas"); const l = selectEl([[3, "3 (difícil)"], [6, "6 (normal)"], [8, "8"], [10, "10 (fácil)"]], 6); body.append(l);
+    collect = () => ({ type, word: w.value, lives: +l.value });
+  } else if (type === "numero") {
+    label("Rango"); const m = selectEl([[10, "1 a 10"], [50, "1 a 50"], [100, "1 a 100"], [500, "1 a 500"], [1000, "1 a 1000"], [9999, "1 a 9999"]], 100); body.append(m);
+    label("Tiempo"); const t = selectEl([[60, "1 min"], [180, "3 min"], [300, "5 min"]], 180); body.append(t);
+    collect = () => ({ type, max: +m.value, secs: +t.value });
+  } else if (type === "eliminatorio") {
+    label("Cada cruce de piedra, papel o tijera"); const b = selectEl([[1, "A una sola mano"], [3, "Al mejor de 3"], [5, "Al mejor de 5"]], 3); body.append(b);
+    label("Tiempo de inscripción"); const t = selectEl([[30, "30 s"], [60, "1 min"], [120, "2 min"]], 60); body.append(t);
+    collect = () => ({ type, bestOf: +b.value, secs: +t.value });
+  } else if (type === "turing") {
+    label("Minutos de charla antes de votar"); const t = selectEl([[2, "2 min"], [3, "3 min"], [4, "4 min"], [5, "5 min"]], 3); body.append(t);
+    hint("Necesita la IA activada. La IA juega con un apodo de animal como uno más.");
+    collect = () => ({ type, mins: +t.value });
+  } else if (type === "impostor") {
+    label("Palabras (opcional)"); hint("La primera la reciben todos; la segunda, solo el impostor. Vacías = las elige la IA o el bot.");
+    const r2 = el("div", "row2"); const a = el("input", "field"); a.placeholder = "Ej: playa"; a.maxLength = 30; const b = el("input", "field"); b.placeholder = "Ej: pileta"; b.maxLength = 30; r2.append(a, b); body.append(r2);
+    hint("Ojo: si las elegís vos, mejor no juegues 😉");
+    collect = () => ({ type, word: a.value, fake: b.value });
+  } else if (type === "mentiroso") {
+    label("Cantidad de rondas"); const r = selectEl([[2, "2"], [3, "3"], [5, "5"], [8, "8"]], 3); body.append(r);
+    hint("Con la IA, cada dato curioso es nuevo. Sin IA, uso datos guardados.");
+    collect = () => ({ type, rounds: +r.value });
+  } else if (type === "asesinato") {
+    label("¿Dónde pasa el crimen? (opcional)"); const t = el("input", "field"); t.maxLength = 60; t.placeholder = "Ej: un crucero, un asado familiar, una oficina"; body.append(t);
+    hint("La IA inventa la historia, los personajes y quién fue. Son 4 minutos de interrogatorio + votación.");
+    collect = () => ({ type, tema: t.value });
+  } else if (type === "vor") {
+    hint("En Verdad o reto las consignas ya las inventan los jugadores en cada turno ✍️");
+    collect = () => ({ type });
+  }
+  const err = el("div", "err"); sh.append(err);
+  sbtn(sh, "▶️ Empezar", () => {
+    socket.emit("game-custom", collect(), (r) => { if (r?.ok) { closeSheet(); if (current !== JUEGOS) openChat(JUEGOS); } else err.textContent = r?.error || "No se pudo empezar."; });
+  }, "primary");
+  sbtn(sh, "Cancelar", closeSheet);
+}
+
 // ---------- 100 rotos dicen ----------
 let rotosQ = null, rotosTick = null, rotosN = 0;
 socket.on("rotos-count", (n) => { rotosN = n; });
 socket.on("rotos-q", (q) => {
   rotosQ = q; clearInterval(rotosTick); rotosN = 0;
   if (q) { if (current !== JUEGOS) push(JUEGOS, { type: "sys", text: "📊 Nueva pregunta de 100 rotos dicen" }); beep(880);
-    const tick = () => { const s = Math.max(0, Math.ceil((q.endsAt - Date.now()) / 1000)); $("rotosHint").textContent = `🤫 Escribí tu respuesta secreta en el chat · ⏱️ ${s}s · ✍️ ${rotosN} respondieron`; };
-    tick(); rotosTick = setInterval(tick, 500); $("rotosQ").textContent = "📊 " + q.q; }
+    const tick = () => { const s = Math.max(0, Math.ceil((q.endsAt - Date.now()) / 1000)); $("rotosHint").textContent = `${q.hint || "🤫 Escribí tu respuesta secreta en el chat"} · ⏱️ ${s}s · ✍️ ${rotosN}`; };
+    tick(); rotosTick = setInterval(tick, 500); $("rotosQ").textContent = (q.q.startsWith("🃏") ? "" : "📊 ") + q.q; }
   applyView();
 });
 
@@ -1283,11 +1389,12 @@ function openJuicioSheet() {
   if (!others.length) { sh.append(el("div", "stline", "No hay nadie más conectado.")); return sbtn(sh, "Cerrar", closeSheet); }
   const who = el("select", "field"); others.forEach((n) => { const o = el("option", null, n); o.value = n; who.append(o); }); sh.append(who);
   const cargo = el("input", "field"); cargo.maxLength = 120; cargo.placeholder = "Cargo. Ej: no saludó al entrar"; sh.append(cargo);
+  const condena = el("input", "field"); condena.maxLength = 120; condena.placeholder = "Condena si es culpable (opcional). Ej: cantar el arroz con leche"; sh.append(condena);
   sh.append(el("div", "hint", "Ideas: mandó 40 stickers seguidos · se fue sin despedirse · nunca contesta los audios"));
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "🔨 Iniciar juicio", () => {
     if (cargo.value.trim().length < 4) return (err.textContent = "Escribí el cargo.");
-    socket.emit("juicio-start", { to: who.value, cargo: cargo.value.trim() }); closeSheet(); if (current !== JUEGOS) openChat(JUEGOS);
+    socket.emit("juicio-start", { to: who.value, cargo: cargo.value.trim(), condena: condena.value.trim() }); closeSheet(); if (current !== JUEGOS) openChat(JUEGOS);
   }, "primary");
   sbtn(sh, "Cancelar", closeSheet);
 }
@@ -1848,6 +1955,7 @@ $("gameBar").addEventListener("click", (e) => {
   if (c === "ppt") { $("text").value = "/ppt "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "✊ Completá con piedra, papel o tijera y mandá." }); }
   if (c === "bola") { $("text").value = "/bola "; $("text").focus(); return; }
   if (c === "juicio") return openJuicioSheet();
+  if (c === "custom") return openCustomGame();
   if (c === "ronda") return openRoundSheet();
   sendText(c);
 });
