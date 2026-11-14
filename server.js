@@ -11,6 +11,11 @@ const io = new Server(server, { maxHttpBufferSize: 4e6 }); // permite fotos de h
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "Public")));
 app.get("/ping", (req, res) => res.send("ok"));
+app.get("/avatar/:nick", (req, res) => {
+  const t = byNick(req.params.nick);
+  if (!t || !t.c.avatar) return res.status(404).end();
+  res.set("Cache-Control", "public, max-age=31536000, immutable").type(t.c.avatarType || "image/jpeg").send(t.c.avatar);
+});
 // Config pública para el navegador (la clave de GIPHY es pública por diseño)
 // Servidores para las llamadas de voz. STUN gratis de Google; TURN opcional (mejora la conexión en datos móviles)
 const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
@@ -20,7 +25,7 @@ app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY 
 // ================== Configuración ==================
 const BOT = "Fastidio";
 const CRUPIER = "Crupier";
-const ROOMS = ["general", "juegos", "confesiones", "mods"]; // "mods" = sala privada de moderadores · "confesiones" = anónima
+const ROOMS = ["general", "juegos", "voz", "confesiones", "mods"]; // "mods" = sala privada de moderadores · "confesiones" = anónima
 const lockedRooms = new Set();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim(); // clave del dueño (👑), se configura en Render
 // Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
@@ -33,7 +38,7 @@ const genKey = () => Array.from({ length: 8 }, () => "abcdefghjkmnpqrstuvwxyz234
 const MAX_MSG = 500;
 const STATUSES = ["disponible", "hablar", "escucho", "ausente", "nomolestar"];
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
-const RESERVED = ["fastidio", "guardian", "crupier", "admin", "administrador", "moderador", "mod", "sistema", "bot", "__general__"];
+const RESERVED = ["anonimo", "vos", "fastidio", "guardian", "crupier", "admin", "administrador", "moderador", "mod", "sistema", "bot", "__general__"];
 
 // Vacía: los insultos están permitidos. El admin puede sumar palabras con /filtro +palabra
 let BAD_WORDS = [];
@@ -73,7 +78,7 @@ const blockedPair = (a, b) => a !== b && a.nick && b.nick && !a.admin && !b.admi
 const role = (c) => c.owner ? "owner" : c.admin ? "mod" : null;
 const userList = (viewer) =>
   [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick) }))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "" }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
@@ -223,7 +228,7 @@ function runCommand(c, id, text, room = "general") {
     if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo" +
-      "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
+      "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinavatar <apodo> (quitar foto de perfil) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
       "\n• Salas: /cerrar · /abrir (en la sala actual) · /lento <seg> · /limpiar · /fijar <texto> · /desfijar · /anuncio <texto>" +
       "\n• Listas: /silenciados · /reportes · /filtro +palabra | -palabra | lista" +
       "\n• Sala 🛡️ Moderación: chat privado solo para moderadores";
@@ -247,7 +252,7 @@ function runCommand(c, id, text, room = "general") {
     io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  const MOD_ONLY = ["db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  const MOD_ONLY = ["sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
   if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
     ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
     : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
@@ -388,6 +393,13 @@ function runCommand(c, id, text, room = "general") {
       pushUsers();
       return botSay(`✏️ ${viejo} ahora se llama ${nuevo}.`);
     }
+    case "sinavatar": {
+      if (!target) return notice(id, "No encuentro a ese usuario.");
+      if (target.c.admin && !c.owner) return notice(id, "No podés hacer eso con otro moderador.");
+      target.c.avatar = null; target.c.noAvatar = true; pushUsers();
+      notice(target.id, "🖼️ Un moderador quitó tu foto de perfil.", "warn");
+      return notice(id, `🖼️ Quitaste la foto de perfil de ${target.c.nick} (no puede poner otra hasta que se reconecte).`, "mod");
+    }
     case "sinfotos": case "confotos": {
       if (!target) return notice(id, "No encuentro a ese usuario.");
       target.c.noMedia = cmd === "sinfotos";
@@ -461,7 +473,7 @@ function buildReply(replyTo, room, me, other) {
 }
 
 // ================== Juegos ==================
-const GAME_CMDS = ["dibujo", "torneo", "ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
+const GAME_CMDS = ["100rotos", "rotos", "juicio", "eliminatorio", "llaves", "vor", "verdadoreto", "dibujo", "torneo", "ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
 const points = new Map(); // apodo -> puntos
 const addPoints = (nick, n) => { points.set(nick, (points.get(nick) || 0) + n); weekly.points.set(nick, (weekly.points.get(nick) || 0) + n); dirty(); };
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -671,7 +683,18 @@ function gameCommand(c, id, cmd, arg) {
         : `🤖 IA: ❌ falla: ${aiLastError}.`));
     }
     case "juegos":
-      return notice(id, "🎮 Juegos: /dibujo [rondas] (dibujá y adiviná) · ⚔️ duelos: tocá el nombre de alguien · /torneo (tabla semanal) · /trivia [tema] · /trivia ronda [cantidad] [temas] (ej: /trivia ronda 10 cine, fútbol) · /numero · /ahorcado · /ppt piedra|papel|tijera · /dado [caras] · /moneda · /bola <pregunta> · /ranking · /rendirse (corta el juego en curso) · /ia (estado de la IA)\nEn trivia, número y ahorcado respondés escribiendo normal en la sala. ¡El primero que acierta suma puntos!");
+      return notice(id, "🎮 JUEGOS (o usá los botones de abajo)\n" +
+        "🎭 /vor — Verdad o reto\n" +
+        "📊 /100rotos — 100 rotos dicen (pensá como la mayoría)\n" +
+        "⚖️ /juicio Nombre cargo — Juicio popular en broma\n" +
+        "🖍️ /dibujo [rondas] — Dibujá y adiviná\n" +
+        "❓ /trivia [tema] — una pregunta\n" +
+        "🏁 /trivia ronda 10 cine, música — varias seguidas\n" +
+        "🔢 /numero · 🪢 /ahorcado\n" +
+        "✊ /ppt piedra · 🎲 /dado · 🪙 /moneda · 🎱 /bola ¿pregunta?\n" +
+        "⚔️ Duelos: tocá el nombre de alguien · 🏟️ /eliminatorio — torneo con llaves (/llaves para verlas)\n" +
+        "🏆 /torneo · 📊 /ranking · 🏳️ /rendirse · 🤖 /ia\n" +
+        "Las respuestas se escriben normal en el chat. ¡El primero que acierta suma!");
     case "dado": {
       const caras = Math.min(1000, Math.max(2, parseInt(arg) || 6));
       return gameSay(`🎲 ${c.nick} tiró un dado de ${caras} caras y salió… ${1 + Math.floor(Math.random() * caras)}`);
@@ -694,6 +717,24 @@ function gameCommand(c, id, cmd, arg) {
       return gameSay(rankingText());
     case "torneo":
       return gameSay(weeklyText());
+    case "100rotos": case "rotos": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startRotos(c.nick, Math.min(10, Math.max(1, parseInt(arg) || 5)));
+    }
+    case "juicio": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      const [who, ...cargo] = arg.replace(/^@/, "").split(" ");
+      return startJuicio(c, id, who, cargo.join(" "));
+    }
+    case "eliminatorio": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startBracket(c.nick);
+    }
+    case "llaves": return gameSay(bracketText());
+    case "vor": case "verdadoreto": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startVor(c.nick);
+    }
     case "dibujo": {
       if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
       const rondas = Math.min(10, Math.max(1, parseInt(arg) || 5));
@@ -701,11 +742,16 @@ function gameCommand(c, id, cmd, arg) {
     }
     case "rendirse":
       if (!game || game.type === "cargando") return notice(id, "No hay ningún juego en curso.");
+      if (game.type === "llaves" && game.starter !== c.nick && !c.admin) return notice(id, "Solo quien arrancó el torneo (o un moderador) lo puede cancelar.");
       if (triviaRound?.duel) {
         if (![triviaRound.duel.a, triviaRound.duel.b].includes(c.nick) && !c.admin) return notice(id, "Es un duelo: solo lo pueden cortar ellos dos.");
         const d = duels.get(triviaRound.duel.id); if (d) duelExpire(d);
       }
       { const g = game; endGame(); triviaRound = null;
+        if (g.type === "rotos") return gameSay(`🏳️ ${c.nick} cortó 100 rotos dicen.`);
+        if (g.type === "juicio") return gameSay(`🏳️ ${c.nick} suspendió el juicio. ¡Se levanta la sesión!`);
+        if (g.type === "llaves") return gameSay(`🏳️ ${c.nick} canceló el torneo eliminatorio.`);
+        if (g.type === "vor") return gameSay(`🏳️ ${c.nick} terminó Verdad o reto. ¡Gracias por jugar!`);
         if (g.type === "dibujo") return gameSay(`🏳️ ${c.nick} cortó el juego. La palabra era: ${g.word.toUpperCase()}`);
         return gameSay(`🏳️ ${c.nick} cortó el juego. ${g.type === "trivia" ? `La respuesta era: ${g.shown}` : g.type === "numero" ? `El número era ${g.n}` : `La palabra era: ${g.word.toUpperCase()}`}`); }
     case "trivia": case "numero": case "número": case "ahorcado":
@@ -741,6 +787,14 @@ function gameGuess(nick, text) {
   if (game.type === "trivia") {
     if (game.only && !game.only.includes(nick)) return;
     if (isCorrect(t, game.answers)) finishTrivia(nick);
+    return;
+  }
+  if (game.type === "vor") return vorGuess(nick, t);
+  if (game.type === "llaves") {
+    if (game.phase === "inscripcion" && /^(yo|me anoto|yo juego)$/.test(t) && !game.players.has(nick)) {
+      if (game.players.size >= 16) return gameSay("🏟️ Ya hay 16 anotados, ¡cupo lleno!");
+      game.players.add(nick); gameSay(`✍️ ${nick} se anotó (${game.players.size}).`);
+    }
     return;
   }
   if (game.type === "numero") {
@@ -869,6 +923,75 @@ function picIntercept(c, sid, text) {
   return false;
 }
 
+// ================== Verdad o reto (las verdades y retos los inventan los jugadores) ==================
+function vorNames() { return [...game.players].join(", "); }
+function startVor(starter) {
+  game = { type: "vor", phase: "join", players: new Set([starter]), turns: 0, last: "", lastAsker: "", timers: [],
+    cleanup() { this.timers.forEach(clearTimeout); } };
+  gameSay(`🎭 VERDAD O RETO — ${starter} arrancó una partida.\n✋ Escriban "yo" para sumarse (25 s).\nEn cada turno, alguien del grupo inventa la verdad o el reto. Con respeto: si no querés hacer algo, escribís "paso" y listo.`);
+  game.timers.push(setTimeout(() => {
+    if (!game || game.type !== "vor") return;
+    if (game.players.size < 2) { gameSay("🎭 Se necesitan al menos 2 para jugar. Partida cancelada."); return endGame(); }
+    gameSay(`🎭 ¡Arrancamos! Juegan: ${vorNames()}. (Pueden sumarse en cualquier momento escribiendo "yo")`);
+    vorNext();
+  }, 25000));
+}
+function vorClear() { game.timers.forEach(clearTimeout); game.timers = []; }
+function vorNext() {
+  if (!game || game.type !== "vor") return;
+  vorClear();
+  for (const n of [...game.players]) if (!byNick(n)) game.players.delete(n);
+  if (game.players.size < 2) { gameSay("🎭 Quedan menos de 2 jugadores. ¡Fin de Verdad o reto!"); return endGame(); }
+  if (game.turns >= 30) { gameSay("🎭 ¡Fin de la partida de Verdad o reto! Gracias por jugar 🫶"); return endGame(); }
+  game.turns++;
+  const options = [...game.players].filter((n) => n !== game.last);
+  game.current = pick(options); game.last = game.current; game.phase = "choose"; game.kind = ""; game.asker = "";
+  const t = byNick(game.current); if (t) io.to(t.id).emit("vor-choose");
+  gameSay(`🎭 Turno ${game.turns}: le toca a ${game.current}. ¿VERDAD 🗣️ o RETO 🔥? (escribí "verdad" o "reto")`);
+  game.timers.push(setTimeout(() => vorPick(pick(["verdad", "reto"]), true), 45000));
+}
+function vorPick(kind, auto) {
+  if (!game || game.type !== "vor" || game.phase !== "choose") return;
+  vorClear();
+  game.kind = kind; game.phase = "asking";
+  const others = [...game.players].filter((n) => n !== game.current && byNick(n));
+  const fresh = others.filter((n) => n !== game.lastAsker);
+  game.asker = pick(fresh.length ? fresh : others); game.lastAsker = game.asker;
+  const que = kind === "verdad" ? "la pregunta 🗣️" : "el reto 🔥";
+  const t = byNick(game.asker); if (t) io.to(t.id).emit("vor-ask", { target: game.current, kind });
+  gameSay(`${auto ? `⏰ ${game.current} no eligió a tiempo: va ` : `${game.current} eligió `}${kind === "verdad" ? "🗣️ VERDAD" : "🔥 RETO"}.\n✍️ ${game.asker}, inventá ${que} para ${game.current}. Escribilo acá en el chat (60 s).`);
+  game.timers.push(setTimeout(() => {
+    if (!game || game.type !== "vor" || game.phase !== "asking") return;
+    game.phase = "asking-open";
+    gameSay(`⏰ ${game.asker} no escribió. ¡Cualquiera puede inventar ${que} para ${game.current}! El primero que escriba gana (30 s).`);
+    game.timers.push(setTimeout(() => { if (game?.type === "vor" && game.phase === "asking-open") { gameSay("🤷 Nadie inventó nada. Pasamos al siguiente turno."); vorNext(); } }, 30000));
+  }, 60000));
+}
+// El mensaje de quien inventa se convierte en la verdad o el reto (no se publica dos veces)
+function vorIntercept(c, sid, text) {
+  if (!game || game.type !== "vor") return false;
+  const writer = (game.phase === "asking" && c.nick === game.asker) || (game.phase === "asking-open" && c.nick !== game.current && game.players.has(c.nick));
+  if (!writer) return false;
+  const t = plain(text);
+  if (["yo", "verdad", "reto", "listo", "paso"].includes(t)) return false;
+  if (text.trim().length < 4) { notice(sid, "✍️ Escribí algo un poco más largo 😉", "help"); return true; }
+  vorClear();
+  game.phase = "doing";
+  gameSay(`${game.kind === "verdad" ? "🗣️ VERDAD" : "🔥 RETO"} de ${c.nick} para ${game.current}:\n«${text.trim().slice(0, 300)}»\n${game.current}, cuando termines escribí "listo" (o "paso" si no querés).`);
+  game.timers.push(setTimeout(() => { if (game?.type === "vor" && game.phase === "doing") { gameSay("⏰ Se terminó el tiempo de este turno."); vorNext(); } }, 3 * 60000));
+  return true;
+}
+function vorGuess(nick, t) {
+  if (t === "yo" || t === "yo juego" || t === "me sumo") {
+    if (!game.players.has(nick)) { game.players.add(nick); gameSay(`✋ ${nick} se sumó. Juegan: ${vorNames()}`); }
+    return;
+  }
+  if (nick !== game.current) return;
+  if (game.phase === "choose" && (t === "verdad" || t === "reto")) return vorPick(t);
+  if (game.phase === "doing" && /^(listo|ya|hecho|termine)$/.test(t)) { gameSay(`👏 ¡Bien ${nick}!`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2500)); }
+  if (["doing", "choose", "asking", "asking-open"].includes(game.phase) && /^(paso|me planto)$/.test(t)) { vorClear(); gameSay(`🙅 ${nick} pasó. Sin drama 🫶`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2000)); }
+}
+
 // ================== Duelos 1 contra 1 ==================
 const duels = new Map(); // id -> { id, a, b, kind, state, wins: {}, picks: {}, round, timer }
 const inDuel = (nick) => [...duels.values()].some((d) => d.state === "on" && (d.a === nick || d.b === nick));
@@ -882,13 +1005,26 @@ function pptAsk(d) {
   clearTimeout(d.timer);
   d.timer = setTimeout(() => {
     const faltan = [d.a, d.b].filter((n) => !d.picks[n]);
+    if (d.tour) { // en el torneo nadie queda trabado: pierde el que no eligió
+      const picked = [d.a, d.b].filter((n) => d.picks[n]);
+      const w = picked.length === 1 ? picked[0] : pick([d.a, d.b]);
+      gameSay(`⏰ ${faltan.join(" y ")} no eligió a tiempo.${picked.length === 1 ? "" : " Se define por sorteo 🎲"}`);
+      return finishDuel(d, w, w === d.a ? d.b : d.a);
+    }
     gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${faltan.join(" y ")} no eligió a tiempo.`);
     duelExpire(d);
   }, 45000);
-  [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-ppt", { id: d.id, opp, round: d.round, me: d.wins[me] || 0, them: d.wins[opp] || 0 }); });
+  [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-ppt", { id: d.id, opp, round: d.round, me: d.wins[me] || 0, them: d.wins[opp] || 0, tour: d.tour ? d.tourLabel : "" }); });
 }
 function finishDuel(d, winner, loser) {
   clearTimeout(d.timer); duels.delete(d.id);
+  if (d.tour) {
+    addPoints(winner, 2);
+    const isFinal = game?.type === "llaves" && game.rounds[game.rounds.length - 1]?.length === 1;
+    gameSay(`🏟️ ${winner} le ganó a ${loser} (${d.wins[winner] || 0}-${d.wins[loser] || 0})${isFinal ? " ¡y gana la FINAL!" : " y avanza."} +2 pts`);
+    [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-end", { id: d.id, opp, kind: d.kind, won: me === winner, tour: true }); });
+    return bracketResult(d.match, winner);
+  }
   addPoints(winner, 3);
   gameSay(`🏆 ¡${winner} ganó el duelo de ${d.kind === "ppt" ? "piedra, papel o tijera" : "trivia"} contra ${loser}! +3 pts`);
   [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-end", { id: d.id, opp, kind: d.kind, won: me === winner }); });
@@ -904,7 +1040,7 @@ function endDuelTrivia(id, a, b) {
 }
 
 // ================== Canales de voz (llamada grupal) ==================
-const VOICE_ROOMS = ["general", "juegos", "mods"];
+const VOICE_ROOMS = ["voz"]; // la Sala de voz (tiene su propio chat de texto también)
 const VOICE_MAX = 8;
 const voice = new Map(VOICE_ROOMS.map((r) => [r, new Set()])); // sala -> socket ids
 const voiceOf = (sid) => { for (const [r, set] of voice) if (set.has(sid)) return r; return null; };
@@ -919,6 +1055,209 @@ function voiceLeave(sid) {
   for (const other of voice.get(room)) io.to(other).emit("voice-peer-leave", { sid });
   io.to(sid).emit("voice-left", { room });
   pushVoice(room);
+}
+
+// ================== Torneo eliminatorio (llaves) ==================
+const roundName = (n) => n === 2 ? "FINAL" : n === 4 ? "SEMIFINALES" : n === 8 ? "CUARTOS DE FINAL" : n === 16 ? "OCTAVOS DE FINAL" : `RONDA DE ${n}`;
+function startBracket(starter) {
+  game = { type: "llaves", phase: "inscripcion", starter, players: new Set([starter]), rounds: [], timers: [],
+    cleanup() { this.timers.forEach(clearTimeout); for (const d of [...duels.values()]) if (d.tour) duelExpire(d, "🏟️ Se canceló el torneo."); } };
+  gameSay(`🏟️ TORNEO ELIMINATORIO de piedra, papel o tijera — lo arrancó ${starter}.\n✋ Escriban "yo" para anotarse (60 s). Mínimo 3, máximo 16.\nCada cruce es al mejor de 3. El campeón se lleva +10 pts y la gloria 🏆`);
+  game.timers.push(setTimeout(() => {
+    if (!game || game.type !== "llaves") return;
+    const players = [...game.players].filter((n) => byNick(n));
+    if (players.length < 3) { gameSay("🏟️ No se anotaron suficientes (mínimo 3). Torneo cancelado."); return endGame(); }
+    for (let i = players.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
+    let size = 2; while (size < players.length) size *= 2;
+    const slots = [...players, ...Array(size - players.length).fill(null)];
+    // repartir los "pases libres" para que no se enfrenten dos vacíos
+    const first = [];
+    for (let i = 0; i < size / 2; i++) first.push({ a: slots[i], b: slots[size - 1 - i], winner: null });
+    game.rounds = [first]; game.phase = "jugando";
+    playBracketRound();
+  }, 60000));
+}
+function bracketText() {
+  if (!game || game.type !== "llaves" || !game.rounds.length) return "🏟️ No hay torneo eliminatorio en curso.";
+  return "🏟️ LLAVES\n" + game.rounds.map((r) => `— ${roundName(r.length * 2)} —\n` + r.map((m) => {
+    const fmt = (n) => !n ? "(libre)" : m.winner === n ? `✅ ${n}` : m.winner ? `❌ ${n}` : n;
+    return `${fmt(m.a)}  vs  ${fmt(m.b)}`;
+  }).join("\n")).join("\n");
+}
+function playBracketRound() {
+  if (!game || game.type !== "llaves") return;
+  const round = game.rounds[game.rounds.length - 1];
+  const label = roundName(round.length * 2);
+  for (const m of round) {
+    if (!m.b || !byNick(m.b)) { if (!m.winner && m.a) m.winner = m.a; }
+    else if (!m.a || !byNick(m.a)) { if (!m.winner) m.winner = m.b; }
+  }
+  gameSay(`🏟️ ${label}\n` + round.map((m) => m.a && m.b ? `⚔️ ${m.a} vs ${m.b}` : `🎟️ ${m.a || m.b} pasa directo`).join("\n") + "\nA los que juegan les aparecen los botones. ¡Suerte!");
+  for (const m of round) {
+    if (m.winner) continue;
+    const d = { id: newId(), a: m.a, b: m.b, kind: "ppt", state: "on", wins: {}, picks: {}, round: 0, tour: true, tourLabel: label, match: m };
+    duels.set(d.id, d);
+    pptAsk(d);
+  }
+  checkBracketRound();
+}
+function bracketResult(match, winner) { match.winner = winner; checkBracketRound(); }
+function checkBracketRound() {
+  if (!game || game.type !== "llaves") return;
+  const round = game.rounds[game.rounds.length - 1];
+  if (round.some((m) => !m.winner)) return;
+  const winners = round.map((m) => m.winner);
+  if (winners.length === 1) {
+    const champ = winners[0];
+    addPoints(champ, 10);
+    io.emit("announce", { text: `🏆 ¡${champ} es el/la CAMPEÓN/A del torneo eliminatorio! +10 pts`, ts: now() });
+    gameSay(bracketText() + `\n\n🏆 CAMPEÓN/A: ${champ} 🎉`);
+    return endGame();
+  }
+  const next = [];
+  for (let i = 0; i < winners.length; i += 2) next.push({ a: winners[i], b: winners[i + 1], winner: null });
+  game.rounds.push(next);
+  game.timers.push(setTimeout(playBracketRound, 4000));
+}
+
+// ================== Decidí por mí (votaciones) ==================
+const polls = new Map(); // id -> { room, author, question, options, votes: Map, endsAt, timer }
+const pollCounts = (p) => p.options.map((_, i) => [...p.votes.values()].filter((v) => v === i).length);
+function endPoll(id) {
+  const p = polls.get(id); if (!p) return;
+  polls.delete(id); clearTimeout(p.timer);
+  const counts = pollCounts(p), total = counts.reduce((a, b) => a + b, 0);
+  io.emit("poll-end", { id, counts });
+  if (p.onEnd) return p.onEnd(counts, total);
+  if (!total) return botSay(`⚖️ «${p.question}» — nadie votó 🤷`, p.room);
+  const max = Math.max(...counts), top = p.options.filter((_, i) => counts[i] === max);
+  botSay(top.length > 1
+    ? `⚖️ Veredicto de «${p.question}»: ¡EMPATE entre ${top.join(" y ")}! (${max} voto${max === 1 ? "" : "s"} cada una) 🤝`
+    : `⚖️ Veredicto de «${p.question}»: ¡${top[0].toUpperCase()}! (${max} de ${total} voto${total === 1 ? "" : "s"})`, p.room);
+}
+
+// ================== 100 rotos dicen ==================
+// La encuesta es el propio grupo: todos responden en secreto y suman los que coinciden con la mayoría.
+const ROTOS_Q = [
+  "Algo que no puede faltar en un asado", "Una comida de domingo", "Un sabor de helado", "Una golosina de kiosco", "Un relleno de empanada",
+  "Algo que hay en toda heladera", "Algo que se compra en el chino", "Algo que se toma en el desayuno", "Una excusa para llegar tarde",
+  "Una excusa para no ir a una juntada", "Algo que se pierde siempre", "Algo que se lleva a la playa", "Algo que hacés cuando no podés dormir",
+  "Algo que hacés cuando estás triste", "Algo que te pone de buen humor", "Una palabra para decir que algo está buenísimo", "Una frase típica de tu vieja",
+  "Un apodo típico argentino", "Una banda de rock nacional", "Un jugador de fútbol argentino", "Una provincia para ir de vacaciones",
+  "Una app que usás todos los días", "Una serie que vio todo el mundo", "Un superhéroe", "Un animal que te gustaría tener de mascota",
+  "Un lugar para una primera cita", "Un regalo de último momento", "Una materia que odiabas en la escuela", "Algo que hay en una mochila",
+  "Un deporte para ver por tele", "Un personaje de Los Simpson", "Algo que se hace en Navidad", "Algo que te da miedo de noche",
+  "Una cosa que se rompe siempre en casa", "Un color de auto", "Algo que se hace en un colectivo", "Una bebida para una juntada",
+  "Algo que se dice cuando te pegás en el dedo chiquito", "Un trabajo que te gustaría probar un día", "Algo que hacés apenas te levantás",
+];
+const STOP = new Set(["el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "mi", "tu", "con"]);
+const rotosKey = (t) => plain(t).split(" ").filter((w) => w && !STOP.has(w)).map((w) => w.length > 4 ? w.replace(/(es|s)$/, "") : w).join(" ");
+function startRotos(starter, rounds) {
+  const pool = [...ROTOS_Q].sort(() => Math.random() - 0.5).slice(0, rounds);
+  game = { type: "rotos", phase: "", qs: pool, round: 0, total: rounds, scores: new Map(), answers: new Map(), timers: [], cleanup() { this.timers.forEach(clearTimeout); } };
+  gameSay(`📊 100 ROTOS DICEN — ${rounds} preguntas.\nEl bot pregunta y cada uno responde EN SECRETO escribiendo en el chat (nadie ve tu respuesta hasta el final).\nSumás si pensás igual que la mayoría: 🥇 +3 · 🥈 +2 · 🥉 +1`);
+  game.timers.push(setTimeout(rotosNext, 4000));
+}
+function rotosNext() {
+  if (!game || game.type !== "rotos") return;
+  game.timers.forEach(clearTimeout); game.timers = [];
+  if (game.round >= game.total) {
+    const res = [...game.scores].sort((a, b) => b[1] - a[1]);
+    gameSay(res.length ? `🏁 Fin de 100 rotos dicen. Ganó ${res[0][0]} con ${res[0][1]} pts — ¡la persona más "promedio" del chat! 😂\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin de 100 rotos dicen. ¡Nadie sumó!");
+    return endGame();
+  }
+  game.round++; game.answers = new Map(); game.phase = "answering";
+  game.q = game.qs[game.round - 1];
+  game.endsAt = now() + 40000;
+  io.emit("rotos-q", { q: game.q, round: game.round, total: game.total, endsAt: game.endsAt });
+  gameSay(`📊 Pregunta ${game.round}/${game.total}: «${game.q}»\n🤫 Escribí tu respuesta en el chat (40 s). Es secreta: nadie la ve hasta que revelemos.`);
+  game.timers.push(setTimeout(rotosReveal, 40000));
+}
+function rotosReveal() {
+  if (!game || game.type !== "rotos" || game.phase !== "answering") return;
+  game.phase = "reveal";
+  io.emit("rotos-q", null);
+  const groups = []; // { key, labels: Map(texto -> veces), people: [] }
+  for (const [nick, ans] of game.answers) {
+    const k = rotosKey(ans); if (!k) continue;
+    let g = groups.find((x) => x.key === k || (k.length >= 5 && lev(x.key, k) <= 1));
+    if (!g) groups.push(g = { key: k, labels: new Map(), people: [] });
+    g.labels.set(ans.trim(), (g.labels.get(ans.trim()) || 0) + 1); g.people.push(nick);
+  }
+  if (game.answers.size < 2) { gameSay(`📊 «${game.q}»: llegaron ${game.answers.size} respuesta${game.answers.size === 1 ? "" : "s"}. ¡Se necesitan al menos 2! Seguimos…`); return game.timers.push(setTimeout(rotosNext, 5000)); }
+  groups.sort((a, b) => b.people.length - a.people.length);
+  const total = game.answers.size;
+  const medals = ["🥇", "🥈", "🥉"], pts = [3, 2, 1];
+  // los puestos se cuentan por cantidad de gente (empates comparten puesto)
+  let place = 0, prev = -1;
+  const lines = groups.slice(0, 6).map((g, i) => {
+    if (g.people.length !== prev) { place = i; prev = g.people.length; }
+    const label = [...g.labels].sort((a, b) => b[1] - a[1])[0][0];
+    if (place < 3 && g.people.length >= 2) for (const n of g.people) { addPoints(n, pts[place]); game.scores.set(n, (game.scores.get(n) || 0) + pts[place]); }
+    return `${place < 3 && g.people.length >= 2 ? medals[place] : "▫️"} ${label.toUpperCase()} — ${g.people.length} voto${g.people.length === 1 ? "" : "s"}\n      (${g.people.join(", ")})`;
+  });
+  const solos = groups.filter((g) => g.people.length === 1).length;
+  gameSay(`📊 «${game.q}» — ${total} rotos dijeron:\n${lines.join("\n")}${solos ? `\n(${solos} respuesta${solos === 1 ? "" : "s"} única${solos === 1 ? "" : "s"}: originales, pero no suman 😅)` : ""}`);
+  game.timers.push(setTimeout(rotosNext, 7000));
+}
+// Durante la pregunta, lo que escribís en Juegos es tu respuesta secreta (no se publica)
+function rotosIntercept(c, sid, text) {
+  if (!game || game.type !== "rotos" || game.phase !== "answering") return false;
+  const ans = text.trim().slice(0, 40);
+  if (!rotosKey(ans)) return false;
+  const had = game.answers.has(c.nick);
+  game.answers.set(c.nick, ans);
+  notice(sid, `🤫 ${had ? "Cambiaste tu respuesta" : "Respuesta guardada"}: «${ans}». Podés cambiarla hasta que termine el tiempo.`, "help");
+  if (!had) io.emit("rotos-count", game.answers.size);
+  return true;
+}
+
+// ================== Juicio popular ==================
+const CONDENAS = [
+  "mandar un audio cantando el feliz cumpleaños 🎤", "usar solo emojis en sus próximos 5 mensajes", "decir algo lindo de cada miembro del jurado",
+  "contar el chiste más malo que sepa", "cambiar su estado a 🌙 Ausente por 10 minutos (aunque esté presente)", "dibujar a la persona que lo acusó en 🖍️ Pizarra",
+  "escribir un poema de disculpas de 4 versos", "mandar un audio imitando a un/a relator/a de fútbol", "elegir una canción y dedicársela al grupo",
+  "escribir sus próximos 3 mensajes en MAYÚSCULAS DE FURIA", "contar una anécdota vergonzosa (suave)", "decir 3 cosas que le gustan de la persona que lo acusó",
+];
+const ABSOLUCIONES = ["queda libre y con el honor intacto 🕊️", "sale absuelto/a entre aplausos 👏", "es declarado/a inocente: el que acusó paga los facturas 🥐"];
+function startJuicio(c, sid, targetNick, cargo) {
+  const t = byNick(targetNick);
+  if (!t || t.id === sid) return notice(sid, "Elegí a alguien conectado (que no seas vos).");
+  if (blockedPair(c, t.c)) return notice(sid, "No podés enjuiciar a esa persona.");
+  cargo = censor(String(cargo || "").trim().slice(0, 120)).text;
+  if (cargo.length < 4) return notice(sid, "Escribí de qué lo/la acusás. Ej: /juicio Pedro no saludó al entrar");
+  game = { type: "juicio", phase: "consent", fiscal: c.nick, acusado: t.c.nick, cargo, timers: [], cleanup() { this.timers.forEach(clearTimeout); if (this.pollId) { const p = polls.get(this.pollId); if (p) { clearTimeout(p.timer); polls.delete(this.pollId); } } } };
+  io.to(t.id).emit("juicio-request", { fiscal: c.nick, cargo });
+  gameSay(`⚖️ ${c.nick} quiere llevar a juicio a ${t.c.nick} por: «${cargo}».\nEsperando que ${t.c.nick} acepte (30 s)…`);
+  game.timers.push(setTimeout(() => { if (game?.type === "juicio" && game.phase === "consent") { gameSay(`⚖️ ${game.acusado} no respondió. Juicio suspendido.`); endGame(); } }, 30000));
+}
+function juicioAnswer(c, accept) {
+  if (!game || game.type !== "juicio" || game.phase !== "consent" || c.nick !== game.acusado) return;
+  game.timers.forEach(clearTimeout); game.timers = [];
+  if (!accept) { gameSay(`⚖️ ${game.acusado} rechazó el juicio. ¡Se respeta! 🙌`); return endGame(); }
+  game.phase = "defensa";
+  gameSay(`🔨 ¡Comienza el juicio!\nAcusado/a: ${game.acusado} · Fiscal: ${game.fiscal}\nCargo: «${game.cargo}»\n🗣️ ${game.acusado}, tenés 60 s para defenderte en el chat. El fiscal y los testigos también pueden hablar.`);
+  game.timers.push(setTimeout(juicioVoto, 60000));
+}
+function juicioVoto() {
+  if (!game || game.type !== "juicio" || game.phase !== "defensa") return;
+  game.phase = "voto";
+  const id = newId(), endsAt = now() + 45000, options = ["🔨 Culpable", "🕊️ Inocente"];
+  const g = game;
+  const p = { room: "juegos", author: CRUPIER, question: `¿${g.acusado} es culpable de «${g.cargo}»?`, options, votes: new Map(), endsAt, exclude: [g.acusado],
+    onEnd(counts, total) {
+      if (game !== g) return;
+      if (!total) { gameSay("⚖️ El jurado no votó. Caso archivado 🗄️"); return endGame(); }
+      if (counts[0] > counts[1]) gameSay(`🔨 VEREDICTO: ¡CULPABLE! (${counts[0]} a ${counts[1]})\n📜 Condena: ${g.acusado} deberá ${pick(CONDENAS)}.`);
+      else if (counts[1] > counts[0]) gameSay(`🕊️ VEREDICTO: ¡INOCENTE! (${counts[1]} a ${counts[0]})\n${g.acusado} ${pick(ABSOLUCIONES)}`);
+      else gameSay(`⚖️ VEREDICTO: ¡EMPATE! (${counts[0]} a ${counts[1]}). El tribunal declara el caso… un misterio 🤷`);
+      endGame();
+    } };
+  p.timer = setTimeout(() => endPoll(id), 45000);
+  polls.set(id, p); g.pollId = id;
+  remember(id, { chat: "juegos", from: CRUPIER, text: "⚖️ " + p.question, ts: now(), media: true });
+  io.emit("public-message", { id, room: "juegos", from: CRUPIER, bot: true, text: p.question, poll: { options, counts: [0, 0], endsAt }, ts: now() });
+  gameSay(`🧑‍⚖️ ¡A votar, jurado! Tienen 45 s. (${g.acusado} no vota)`);
 }
 
 // ================== Charla al azar ==================
@@ -1010,6 +1349,8 @@ io.on("connection", (socket) => {
     const media = checkMedia(c, socket.id, p);
     if (!media) return;
     if (room === "juegos" && text && picIntercept(c, socket.id, text)) return;
+    if (room === "juegos" && text && vorIntercept(c, socket.id, text)) return;
+    if (room === "juegos" && text && rotosIntercept(c, socket.id, text)) return;
     if (room === "juegos") recentPlayers.set(c.nick, now());
     const id = newId();
     const reply = buildReply(p.replyTo, room);
@@ -1086,6 +1427,69 @@ io.on("connection", (socket) => {
     else if (m.chat !== "private") io.emit("reactions", payload);
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("reactions", payload); });
   });
+
+  // ---- Decidí por mí ----
+  socket.on("poll-create", ({ room, question, options, minutes } = {}, cb) => {
+    if (!c.nick) return;
+    room = ["general", "juegos", "voz", "confesiones"].includes(room) ? room : "general";
+    const q = checkMessage(c, socket.id, String(question || "").slice(0, 200), room);
+    if (q === null) return cb && cb({ ok: false });
+    if (q.length < 3) return cb && cb({ ok: false, error: "Escribí el dilema." });
+    let opts = (Array.isArray(options) ? options : []).map((o) => censor(String(o || "").trim().slice(0, 60)).text).filter(Boolean);
+    opts = [...new Set(opts)].slice(0, 6);
+    if (opts.length < 2) opts = ["Sí", "No"];
+    if ([...polls.values()].some((p) => p.author === c.nick)) return cb && cb({ ok: false, error: "Ya tenés una votación abierta. Esperá a que termine." });
+    const mins = Math.min(10, Math.max(1, parseInt(minutes) || 2));
+    const id = newId(), endsAt = now() + mins * 60000;
+    const p = { room, author: c.nick, question: q, options: opts, votes: new Map(), endsAt };
+    p.timer = setTimeout(() => endPoll(id), mins * 60000);
+    polls.set(id, p);
+    remember(id, { chat: room, from: c.nick, text: "🗳️ " + q, ts: now(), media: true });
+    const poll = { options: opts, counts: opts.map(() => 0), endsAt };
+    if (room === "confesiones") {
+      const anon = { id, room, from: "Anónimo", anon: true, text: q, poll, ts: now() };
+      for (const [sid, rc] of clients) { if (!rc.nick || blockedPair(rc, c)) continue; io.to(sid).emit("public-message", rc === c ? { ...anon, mine: true } : rc.admin ? { ...anon, realFrom: c.nick } : anon); }
+    } else emitFrom(c, "public-message", { id, room, from: c.nick, admin: c.admin, role: role(c), text: q, poll, ts: now() });
+    cb && cb({ ok: true });
+  });
+  socket.on("poll-vote", ({ id, idx } = {}) => {
+    const p = polls.get(id); if (!p || !c.nick) return;
+    if (p.exclude?.includes(c.nick)) return notice(socket.id, "No podés votar en tu propio juicio 😅");
+    idx = parseInt(idx); if (!(idx >= 0 && idx < p.options.length)) return;
+    p.votes.set(c.nick, idx);
+    const counts = pollCounts(p);
+    io.emit("poll-update", { id, counts });
+  });
+
+  // ---- Juicio: el acusado acepta o rechaza ----
+  socket.on("juicio-answer", (accept) => juicioAnswer(c, !!accept));
+  socket.on("juicio-start", ({ to, cargo } = {}) => {
+    if (!c.nick) return;
+    if (game) return notice(socket.id, "Ya hay un juego en curso en 🎮 Juegos. Esperá a que termine.");
+    startJuicio(c, socket.id, to, cargo);
+  });
+
+  // ---- Perfil (foto + frase) ----
+  socket.on("profile", ({ avatar, bio } = {}, cb) => {
+    if (!c.nick) return;
+    if (bio !== undefined) {
+      const r = censor(String(bio || "").trim().replace(/\s+/g, " ").slice(0, 80));
+      if (r.harm && !c.admin) { cb && cb({ ok: false, error: "Esa frase no está permitida." }); }
+      else c.bio = r.text;
+    }
+    if (avatar === null) { c.avatar = null; }
+    else if (avatar !== undefined) {
+      const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(avatar));
+      if (c.noAvatar && !c.admin) { cb && cb({ ok: false, error: "Un moderador te sacó el permiso de poner foto de perfil." }); }
+      else if (!m || avatar.length > 120000) { cb && cb({ ok: false, error: "La imagen no es válida o es muy pesada." }); }
+      else { c.avatar = Buffer.from(m[2], "base64"); c.avatarType = m[1]; c.avVer = now(); }
+    }
+    pushUsers();
+    cb && cb({ ok: true });
+  });
+
+  // ---- Verdad o reto: el que tiene el turno elige con botones ----
+  socket.on("vor-pick", (kind) => { if (game?.type === "vor" && game.current === c.nick && game.phase === "choose" && ["verdad", "reto"].includes(kind)) vorPick(kind); });
 
   // ---- Dibujá y adiviná ----
   socket.on("pic-get", () => { socket.emit("pic-state", picState()); if (game?.type === "dibujo") { socket.emit("pic-board", game.pieces); if (game.drawer === c.nick && game.word) socket.emit("pic-word", game.word); } });
@@ -1332,9 +1736,11 @@ io.on("connection", (socket) => {
     if (!c.nick) return;
     if (c.inCall || c.callWith) hangup(c.inCall || c.callWith);
     for (const d of [...duels.values()]) if (d.a === c.nick || d.b === c.nick) {
+      if (d.tour) { gameSay(`🏟️ ${c.nick} se desconectó: pierde por abandono.`); finishDuel(d, d.a === c.nick ? d.b : d.a, c.nick); continue; }
       if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
       gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
     }
+    if (game?.type === "juicio" && game.acusado === c.nick) { gameSay(`⚖️ ${c.nick} se fugó del tribunal 🏃 Juicio suspendido.`); endGame(); }
     if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`🖍️ ${c.nick} se desconectó mientras dibujaba.`); endPicRound(null); }
     users.delete(c.nick.toLowerCase());
     emitFrom(c, "user-left", c.nick);
