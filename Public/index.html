@@ -172,9 +172,11 @@
   /* Dibujá y adiviná */
   #picPanel { background: var(--panel); border-bottom: 2px solid var(--accent); padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
   #picPanel[hidden] { display: none; }
-  .pic-info { display: flex; gap: 8px; align-items: center; font-size: 13px; flex-wrap: wrap; }
-  #picWho { font-weight: 700; } #picMask { flex: 1; text-align: center; font-weight: 800; letter-spacing: .08em; color: var(--ink); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .pic-info { flex-wrap: nowrap !important; }
+  .pic-info { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 13px; }
+  #picWho { font-weight: 700; } #picMask { text-align: center; font-weight: 800; letter-spacing: .12em; color: var(--ink); font-size: 18px; overflow-wrap: anywhere; line-height: 1.3; }
+  #picMask.secret { background: var(--accent); color: var(--accent-text); border-radius: 10px; padding: 6px 10px; letter-spacing: .04em; font-size: 17px; }
+  #picMask.secret small { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0; opacity: .75; }
+  #picWho { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #picTime { font-variant-numeric: tabular-nums; color: var(--muted); }
   .pic-wrap { display: flex; justify-content: center; }
   #picCanvas { background: #fff; border-radius: 6px; touch-action: none; width: min(100%, 520px, calc(34dvh * 4 / 3)); height: auto; }
@@ -197,9 +199,33 @@
   .call-btns button { border: 0; border-radius: 50px; padding: 14px 18px; font-weight: 800; font-size: 15px; }
   .cb-ok { background: #2ecc71; color: #062; } .cb-no { background: #ff4d4d; color: #fff; } .cb-mid { background: var(--panel2); color: var(--text); border: 1px solid var(--border) !important; }
   .call-av.ring { animation: ring 1s infinite; } @keyframes ring { 0%,100% { transform: rotate(0) } 25% { transform: rotate(-12deg) } 75% { transform: rotate(12deg) } }
+  /* Fotos de perfil */
+  .av { border-radius: 50%; object-fit: cover; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; color: #0b0b0b; overflow: hidden; vertical-align: middle; }
+  .av-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+  .av-wrap .st-badge { position: absolute; right: -4px; bottom: -4px; font-size: 10px; line-height: 1; }
+  .me-top { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .me-txt { display: flex; flex-direction: column; min-width: 0; }
+  .me-txt small { font-size: 11px; color: var(--muted); }
+  .msg .bubble .av { margin-right: 6px; }
+  .prof-head { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 10px; text-align: center; }
+  .prof-head .bio { font-style: italic; color: var(--muted); font-size: 14px; max-width: 280px; overflow-wrap: anywhere; }
+
+  /* Sala de voz */
+  #voicePanel { background: linear-gradient(180deg, #12301f, var(--panel)); border-bottom: 2px solid #2ecc71; padding: 14px 10px 12px; flex-shrink: 0; }
+  [data-theme="light"] #voicePanel { background: linear-gradient(180deg, #dff7e8, var(--panel)); }
+  #voicePanel[hidden] { display: none; }
+  .vp-grid { display: flex; flex-wrap: wrap; gap: 14px 10px; justify-content: center; margin-bottom: 12px; min-height: 40px; }
+  .vp-p { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 70px; cursor: pointer; }
+  .vp-p .ring { border-radius: 50%; padding: 3px; border: 3px solid transparent; transition: border-color .1s, box-shadow .1s; position: relative; }
+  .vp-p.talk .ring { border-color: #2ecc71; box-shadow: 0 0 14px #2ecc71aa; }
+  .vp-p .mut { position: absolute; right: -4px; bottom: -2px; font-size: 15px; }
+  .vp-p .nm { font-size: 12px; font-weight: 700; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vp-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 6px; }
+  .vp-actions { display: flex; gap: 8px; justify-content: center; }
+  .vp-actions button { border: 0; border-radius: 30px; padding: 11px 18px; font-weight: 800; font-size: 15px; }
+  .vp-join { background: #2ecc71; color: #062; } .vp-leave { background: #ff4d4d; color: #fff; } .vp-mute { background: var(--panel2); color: var(--text); border: 1px solid var(--border) !important; }
+
   /* Voz grupal */
-  #voiceBtn { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; font-weight: 700; }
-  #voiceBtn.on { background: #1f6f3f; border-color: #2ecc71; color: #fff; }
   #voiceBar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #12301f; border-bottom: 2px solid #2ecc71; flex-shrink: 0; }
   [data-theme="light"] #voiceBar { background: #dff7e8; }
   #voiceBar[hidden] { display: none; }
@@ -217,6 +243,27 @@
   .ppt-row { display: flex; gap: 8px; margin: 10px 0; }
   .ppt-row button { flex: 1; font-size: 34px !important; padding: 14px 0 !important; text-align: center !important; margin: 0 !important; }
   .big-res { font-size: 44px; text-align: center; margin: 6px 0; }
+
+  /* 100 rotos dicen */
+  #rotosBar { background: var(--accent); color: var(--accent-text); padding: 8px 12px; text-align: center; flex-shrink: 0; }
+  #rotosBar[hidden] { display: none; }
+  #rotosQ { font-weight: 900; font-size: 1.05em; }
+  #rotosHint { font-size: 12px; font-weight: 600; opacity: .8; margin-top: 2px; }
+
+  /* Votaciones */
+  .poll { margin-top: 4px; width: min(240px, 62vw); max-width: 100%; }
+  .msg.me .poll .pf { color: #0b0b0bb3; }
+  .poll .pq { font-weight: 800; margin-bottom: 6px; }
+  .poll .po { position: relative; display: block; width: 100%; text-align: left; margin: 0 0 5px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); overflow: hidden; font-size: .92em; }
+  .poll .po .bar { position: absolute; inset: 0 auto 0 0; background: #ffd40033; transition: width .3s; }
+  .poll .po.mine { border-color: var(--accent); }
+  .poll .po.win { border-color: #2ecc71; background: #2ecc7122; }
+  .poll .po span { position: relative; display: flex; justify-content: space-between; gap: 8px; }
+  .poll .po em { white-space: nowrap; flex-shrink: 0; font-size: .88em; align-self: center; }
+  .poll .pf { font-size: .78em; color: var(--muted); }
+  .msg.me .poll .po { color: var(--text); }
+  #sheet .opt-row { display: flex; gap: 6px; } #sheet .opt-row .field { flex: 1; }
+  #sheet .opt-row button { width: 44px !important; margin: 0 0 6px !important; text-align: center !important; }
 
   /* Menciones */
   #mentionBox { position: absolute; bottom: 62px; left: 10px; right: 10px; max-width: 320px; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 4px; z-index: 11; box-shadow: 0 6px 24px #0008; }
@@ -308,6 +355,12 @@
     #attachMenu { left: 8px; }
     .bacts .lbl { display: none; }
     #voiceBar { flex-wrap: wrap; row-gap: 6px; }
+    .me-txt small, .me-txt .sos { display: none; }
+    #picCanvas { width: min(100%, calc(26dvh * 4 / 3)); }
+    #picPanel { padding: 5px 6px; gap: 4px; }
+    .pic-tools > button { height: 28px; min-width: 30px; }
+    #picColors button { width: 22px; height: 22px; }
+    .me-top { gap: 6px; } .me-txt b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vb-title { flex: 1; }
     .vb-people { order: 3; flex-basis: 100%; }
     .bcolors button { width: 24px; height: 24px; }
@@ -359,7 +412,7 @@
 <div id="app">
   <aside id="sidebar">
     <div class="me-row">
-      Sos <b id="meName"></b><span id="meAdmin" hidden> 🛡️</span>
+      <div class="me-top" id="meTop" title="Mi perfil"><span id="meAv"></span><span class="me-txt"><span class="sos">Sos </span><b id="meName"></b><span id="meAdmin" hidden> 🛡️</span><small>✏️ Mi perfil</small></span></div>
       <button id="modPanelBtn" class="modbtn" hidden>🛡️ Panel de moderación</button>
       <select id="statusSel" title="Tu estado">
         <option value="disponible">🟢 Disponible</option>
@@ -380,7 +433,11 @@
     <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 👑 dueño · 🛡️ moderador</div>
   </aside>
   <section id="main">
-    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="voiceBtn" hidden title="Voz grupal">🎙️</button><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button></div>
+    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button></div>
+    <div id="voicePanel" hidden>
+      <div class="vp-grid" id="vpGrid"></div>
+      <div class="vp-actions" id="vpActions"></div>
+    </div>
     <div id="voiceBar" hidden>
       <span class="vb-title" id="vbTitle">🎙️</span>
       <div class="vb-people" id="vbPeople"></div>
@@ -388,8 +445,10 @@
       <button type="button" id="vbLeave" class="vb-leave" title="Salir de la voz">📕</button>
     </div>
     <div id="pinned" hidden></div>
+    <div id="rotosBar" hidden><div id="rotosQ"></div><div id="rotosHint"></div></div>
     <div id="picPanel" hidden>
-      <div class="pic-info"><span id="picWho"></span><span id="picMask"></span><span id="picTime"></span></div>
+      <div class="pic-info"><span id="picWho"></span><span id="picTime"></span></div>
+      <div id="picMask"></div>
       <div class="pic-wrap" id="picWrap"><canvas id="picCanvas" width="800" height="600"></canvas></div>
       <div class="pic-tools" id="picTools" hidden>
         <span id="picColors"></span>
@@ -420,6 +479,11 @@
     </div>
     <div id="typing"></div>
     <div id="gameBar" hidden>
+      <button type="button" data-cmd="/vor">🎭 Verdad o reto</button>
+      <button type="button" data-cmd="/dibujo">🖍️ Dibujo</button>
+      <button type="button" data-cmd="/100rotos">📊 100 rotos</button>
+      <button type="button" data-cmd="juicio">⚖️ Juicio</button>
+      <button type="button" data-cmd="/eliminatorio">🏟️ Eliminatorio</button>
       <button type="button" data-cmd="/trivia">❓ Trivia</button>
       <button type="button" data-cmd="ronda">🏁 Ronda</button>
       <button type="button" data-cmd="/numero">🔢 Número</button>
@@ -428,7 +492,6 @@
       <button type="button" data-cmd="/dado">🎲 Dado</button>
       <button type="button" data-cmd="/moneda">🪙 Moneda</button>
       <button type="button" data-cmd="bola">🎱 Bola 8</button>
-      <button type="button" data-cmd="/dibujo">🖍️ Dibujo</button>
       <button type="button" data-cmd="/torneo">🏆 Torneo</button>
       <button type="button" data-cmd="/ranking">📊 Ranking</button>
       <button type="button" data-cmd="/rendirse">🏳️ Rendirse</button>
@@ -444,8 +507,10 @@
       <div id="attachMenu" hidden>
         <button type="button" id="pickPhoto">📷 Foto o GIF del celu</button>
         <button type="button" id="pickGif" hidden>🔍 Buscar GIF</button>
+        <button type="button" id="pickPoll">🗳️ Decidí por mí (votación)</button>
       </div>
       <input type="file" id="fileInput" accept="image/*" hidden>
+      <input type="file" id="avatarInput" accept="image/*" hidden>
       <input class="field" id="text" maxlength="500" placeholder="Escribí un mensaje…">
       <button class="primary" id="sendBtn"><span class="t">Enviar</span><span class="i">➤</span><span class="m">🎤</span></button>
     </form>
@@ -490,8 +555,8 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-const GENERAL = "#general", JUEGOS = "#juegos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra";
-const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
+const GENERAL = "#general", JUEGOS = "#juegos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz";
+const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
 const isRoom = (c) => c.startsWith("#");
 const BOT = "Fastidio", CRUPIER = "Crupier";
@@ -502,7 +567,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 let me = "", isAdmin = false, isOwner = false, current = GENERAL;
 let online = [];                // [{nick, status, admin}]
-const history = { [GENERAL]: [], [JUEGOS]: [], [CONF]: [], [BOARD]: [], [MODS]: [] };
+const history = { [GENERAL]: [], [JUEGOS]: [], [VOZ]: [], [CONF]: [], [BOARD]: [], [MODS]: [] };
 let editing = null; // id del mensaje que se está editando
 let replyTo = null;
 const unread = {};
@@ -637,6 +702,7 @@ function join(nick, onFail) {
     const st = store.get("gr-status", "disponible");
     $("statusSel").value = st; socket.emit("status", st);
     blocked.forEach((b) => socket.emit("block", { target: b, on: true }));
+    if (myAvatar || myBio) sendProfile();
     const savedKey = store.get("gr-key", "");
     if (savedKey) socket.emit("reauth", savedKey);
     renderUsers(); renderMessages();
@@ -688,7 +754,7 @@ function sideItem(chat, label, opts = {}) {
   const room = isRoom(chat);
   const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (!room && isBlocked(chat) ? " blocked" : ""));
   div.dataset.chat = chat;
-  if (!room) div.append(el("span", "st", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢")));
+  if (!room) { const w = el("span", "av-wrap"); w.append(avatarEl(chat, 22), el("span", "st-badge", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢"))); div.append(w); }
   const name = el("span", "name", label);
   if (!room) name.style.color = nickColor(chat);
   div.append(name);
@@ -727,7 +793,7 @@ function openChat(chat) {
   $("text").placeholder = isRoom(current) ? (current === JUEGOS ? "Jugá o escribí…" : "Escribí un mensaje…") : `Mensaje privado a ${current}…`;
   cancelReply();
   if (chat === JUEGOS) socket.emit("pic-get");
-  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a a la sala de juegos! Tocá un botón de abajo o escribí /juegos para ver todo. En trivia, número y ahorcado se responde escribiendo normal en el chat.\n❓ Trivia con tema: /trivia fútbol · Ronda: botón 🏁 o /trivia ronda 10 cine, música" });
+  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a! Usá los botones de abajo (deslizá para ver todos) o escribí /juegos.\nLas respuestas se escriben normal en el chat." });
   $("text").focus();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me) { unread[current] = 0; renderUsers(); } });
@@ -745,7 +811,7 @@ function renderMessage(m) {
   if (isBlocked(m.from)) return null;
   const mine = isMine(m);
   const d = el("div", "msg" + (mine ? " me" : "") + (m.bot ? " bot" : "") + (m.from === CRUPIER ? " crupier" : "") + (m.deleted ? " deleted" : "")
-    + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && !m.audio && onlyEmoji(m.text) ? " big" : ""));
+    + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && !m.audio && !m.poll && onlyEmoji(m.text) ? " big" : ""));
   d.dataset.id = m.id || "";
   const meta = el("div", "meta");
   if (m.admin) meta.append(el("span", "mod", m.role === "owner" ? "👑 dueño" : "🛡️ mod"));
@@ -763,8 +829,26 @@ function renderMessage(m) {
   const w = el("span", "who", (m.anon ? (mine ? "🤫 Vos (anónimo)" : "🤫 Anónimo") : m.bot ? (m.from === CRUPIER ? "🎲 " : "🤖 ") + m.from : m.from) + ": ");
   if (!mine) w.style.color = m.bot ? "var(--ink)" : m.anon ? "var(--muted)" : nickColor(m.from);
   if (!mine && !m.bot && !m.anon) w.onclick = (e) => { e.stopPropagation(); openSheet(m.from); };
+  if (!mine && !m.bot && !m.anon && isRoom(current)) b.append(avatarEl(m.from, 22));
   b.append(w);
   if (m.deleted) b.append(m.deletedByMod ? "🚫 Mensaje eliminado por moderación" : "🚫 Mensaje eliminado");
+  else if (m.poll) {
+    const pl = m.poll, total = pl.counts.reduce((a, c) => a + c, 0), max = Math.max(...pl.counts);
+    const box = el("div", "poll");
+    box.append(el("div", "pq", "🗳️ " + m.text));
+    pl.options.forEach((o, i) => {
+      const pct = total ? Math.round(pl.counts[i] * 100 / total) : 0;
+      const b = el("button", "po" + (pl.myVote === i ? " mine" : "") + (pl.ended && pl.counts[i] === max && total ? " win" : "")); b.type = "button";
+      const bar = el("i", "bar"); bar.style.width = pct + "%";
+      const row = el("span"); row.append(el("b", null, (pl.myVote === i ? "✓ " : "") + o), el("em", null, total ? `${pl.counts[i]} · ${pct}%` : ""));
+      b.append(bar, row);
+      if (!pl.ended) b.onclick = (e) => { e.stopPropagation(); pl.myVote = i; socket.emit("poll-vote", { id: m.id, idx: i }); renderMessages(); };
+      box.append(b);
+    });
+    const left = Math.max(0, Math.ceil((pl.endsAt - Date.now()) / 1000));
+    box.append(el("div", "pf", pl.ended ? `Terminó · ${total} voto${total === 1 ? "" : "s"}` : `${total} voto${total === 1 ? "" : "s"} · cierra en ${left >= 60 ? Math.ceil(left / 60) + " min" : left + " s"} · podés cambiar tu voto`));
+    b.append(box);
+  }
   else if (m.audio) {
     d.classList.add("has-media");
     const au = el("audio", "voice"); au.controls = true; au.preload = "metadata"; au.src = m.audio;
@@ -805,13 +889,15 @@ function renderMessages() {
   $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : (lockedRooms.has(current) ? "🔒 Cerrada por moderación" : ROOMS[current][2]);
   $("titleMore").hidden = !priv;
   $("callBtn").hidden = !priv || !info;
-  renderVoiceBtn();
+
   $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
   $("gameBar").hidden = current !== JUEGOS;
   applyView();
   renderTyping();
 }
 function applyView() {
+  $("rotosBar").hidden = !(current === JUEGOS && rotosQ);
+  renderVoiceBar();
   $("picPanel").hidden = !(current === JUEGOS && picState.active);
   const isBoard = current === BOARD;
   $("boardView").hidden = !isBoard;
@@ -877,8 +963,10 @@ function openSheet(nick) {
   const info = userInfo(nick);
   const sheet = $("sheet");
   sheet.replaceChildren();
-  const h = el("h4", null, nick + (info?.role === "owner" ? " 👑" : info?.admin ? " 🛡️" : "")); h.style.color = nickColor(nick);
-  sheet.append(h, el("div", "stline", info ? STATUS[info.status]?.join(" ") : "Desconectado/a"));
+  const h = el("h4", null, nick + (info?.champ ? " 🏆" : "") + (info?.role === "owner" ? " 👑" : info?.admin ? " 🛡️" : "")); h.style.color = nickColor(nick);
+  const head = el("div", "prof-head"); head.append(avatarEl(nick, 84), h, el("div", "stline", info ? STATUS[info.status]?.join(" ") : "Desconectado/a"));
+  if (info?.bio) head.append(el("div", "bio", "“" + info.bio + "”"));
+  sheet.append(head);
   const btn = (txt, fn, cls) => { const b = el("button", cls, txt); b.onclick = () => { closeSheet(); fn(); }; sheet.append(b); };
   if (info && current !== nick) btn("💬 Mensaje privado", () => openChat(nick));
   if (info && !vRoom) btn("📞 Llamar", () => startCall(nick));
@@ -899,6 +987,7 @@ function openSheet(nick) {
     btn("🔇 Silenciar 10 min", () => cmd(`/silenciar ${nick} 10`));
     btn("🔇 Silenciar 1 hora", () => cmd(`/silenciar ${nick} 60`));
     btn("🔊 Quitar silencio", () => cmd(`/desilenciar ${nick}`));
+    if (info?.av) btn("🖼️ Quitar su foto de perfil", () => cmd(`/sinavatar ${nick}`));
     btn("✏️ Cambiar apodo", () => { const n = prompt(`Nuevo apodo para ${nick}:`, ""); if (n) cmd(`/apodo ${nick} ${n}`); });
     btn("📷 Quitarle fotos y GIFs", () => cmd(`/sinfotos ${nick}`));
     btn("📷 Devolverle fotos y GIFs", () => cmd(`/confotos ${nick}`));
@@ -1055,6 +1144,72 @@ $("gifQuery").oninput = () => { clearTimeout(gifTimer); gifTimer = setTimeout(()
 function openViewer(src) { $("viewer").querySelector("img").src = src; $("viewer").hidden = false; }
 $("viewer").onclick = () => $("viewer").hidden = true;
 
+// ---------- Fotos de perfil ----------
+function avatarEl(nick, size = 24) {
+  const info = userInfo(nick);
+  if (info?.av) { const im = el("img", "av"); im.src = `/avatar/${encodeURIComponent(nick)}?v=${info.av}`; im.alt = ""; im.style.width = im.style.height = size + "px"; im.loading = "lazy"; return im; }
+  const d = el("span", "av", (nick || "?").trim()[0]?.toUpperCase() || "?");
+  d.style.width = d.style.height = size + "px"; d.style.fontSize = Math.round(size * 0.45) + "px"; d.style.background = nickColor(nick || "?");
+  return d;
+}
+let myAvatar = store.get("gr-avatar", ""), myBio = store.get("gr-bio", "");
+function sendProfile(cb) { socket.emit("profile", { avatar: myAvatar || null, bio: myBio }, (r) => cb && cb(r)); }
+function renderMe() { $("meAv").replaceChildren(avatarEl(me, 34)); }
+async function squareAvatar(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+    const side = Math.min(img.width, img.height), S = 192;
+    const cvs = document.createElement("canvas"); cvs.width = cvs.height = S;
+    cvs.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, S, S);
+    return cvs.toDataURL("image/jpeg", 0.82);
+  } finally { URL.revokeObjectURL(url); }
+}
+function openProfile() {
+  const sh = sheetOpen("profile", "👤 Mi perfil", "Tu foto y tu frase las ven todos al tocar tu nombre.");
+  const head = el("div", "prof-head");
+  const prev = myAvatar ? Object.assign(el("img", "av"), { src: myAvatar }) : avatarEl(me, 96);
+  prev.style.width = prev.style.height = "96px";
+  head.append(prev); sh.append(head);
+  sbtn(sh, "📷 Elegir foto", () => $("avatarInput").click());
+  if (myAvatar) sbtn(sh, "🗑️ Quitar foto", () => { myAvatar = ""; store.set("gr-avatar", ""); sendProfile(); openProfile(); }, "danger");
+  sh.append(el("div", "modsep", "Tu frase (opcional)"));
+  const bio = el("input", "field"); bio.maxLength = 80; bio.placeholder = "Ej: rota pero entera 💛"; bio.value = myBio; sh.append(bio);
+  const err = el("div", "err"); sh.append(err);
+  sbtn(sh, "Guardar", () => { myBio = bio.value.trim(); store.set("gr-bio", myBio); sendProfile((r) => { if (r && !r.ok) err.textContent = r.error; else closeSheet(); }); }, "primary");
+  sbtn(sh, "Cerrar", closeSheet);
+}
+$("meTop").onclick = openProfile;
+$("avatarInput").onchange = async () => {
+  const f = $("avatarInput").files[0]; $("avatarInput").value = ""; if (!f || !f.type.startsWith("image/")) return;
+  try { myAvatar = await squareAvatar(f); store.set("gr-avatar", myAvatar); sendProfile((r) => { if (r && !r.ok) { myAvatar = ""; store.set("gr-avatar", ""); push(current, { type: "notice", kind: "warn", text: r.error }); } }); openProfile(); }
+  catch { push(current, { type: "notice", kind: "warn", text: "No pude abrir esa imagen." }); }
+};
+
+// ---------- Verdad o reto: elegir con botones ----------
+socket.on("vor-choose", () => {
+  beep(990); if (current !== JUEGOS) openChat(JUEGOS);
+  const sh = sheetOpen("vor", "🎭 ¡Te toca!", "¿Verdad o reto? Tenés 45 segundos.");
+  const row = el("div", "ppt-row");
+  [["verdad", "🗣️"], ["reto", "🔥"]].forEach(([k, e]) => { const b = el("button", null, `${e}`); b.type = "button"; b.title = k;
+    const lab = el("div", null, k.toUpperCase()); lab.style.fontSize = "13px"; lab.style.fontWeight = "800"; b.append(lab);
+    b.onclick = () => { socket.emit("vor-pick", k); closeSheet(); }; row.append(b); });
+  sh.append(row);
+  sbtn(sh, "🙅 Paso", () => { socket.emit("public-message", { room: "juegos", text: "paso" }); closeSheet(); });
+});
+
+socket.on("vor-ask", ({ target, kind }) => {
+  beep(990); setTimeout(() => beep(1200), 160); if (current !== JUEGOS) openChat(JUEGOS);
+  const sh = sheetOpen("vor", `✍️ Inventá ${kind === "verdad" ? "la VERDAD 🗣️" : "el RETO 🔥"}`, `Para ${target}. Tenés 60 segundos. Con respeto 🫶`);
+  const inp = el("textarea", "field"); inp.rows = 3; inp.maxLength = 300;
+  inp.placeholder = kind === "verdad" ? "Ej: ¿Cuál fue tu peor cita?" : "Ej: Mandá un audio cantando el feliz cumpleaños";
+  inp.style.resize = "none"; sh.append(inp);
+  const send = () => { const t = inp.value.trim(); if (t.length < 4) return inp.focus(); socket.emit("public-message", { room: "juegos", text: t }); closeSheet(); };
+  sbtn(sh, "Enviar", send, "primary");
+  sbtn(sh, "Cerrar (lo escribo en el chat)", closeSheet);
+  setTimeout(() => inp.focus(), 50);
+});
+
 // ---------- Dibujá y adiviná ----------
 const PW = 800, PH = 600;
 const pcv = $("picCanvas"), pctx = pcv.getContext("2d");
@@ -1077,7 +1232,10 @@ const iDraw = () => picState.active && !picState.waiting && picState.drawer === 
 function renderPic() {
   const st = picState;
   $("picWho").textContent = st.active ? (st.waiting ? `⏳ Ahora dibuja ${st.drawer}` : `🖍️ Dibuja ${st.drawer === me ? "VOS" : st.drawer} · ${st.round}/${st.total}`) : "";
-  $("picMask").textContent = iDraw() ? `Tu palabra: ${picWord.toUpperCase()}` : (st.mask || "");
+  const mk = $("picMask");
+  mk.classList.toggle("secret", iDraw());
+  if (iDraw()) mk.replaceChildren(el("small", null, "🤫 Tu palabra secreta (no la escribas):"), picWord.toUpperCase());
+  else mk.textContent = st.waiting ? "Preparando la próxima ronda…" : (st.mask || "");
   $("picTools").hidden = !iDraw();
   pcv.style.cursor = iDraw() ? "crosshair" : "default";
   clearInterval(picTick);
@@ -1107,6 +1265,72 @@ const picEnd = () => { if (!picDraw) return; clearInterval(picDraw.timer); if (p
 pcv.addEventListener("pointerup", picEnd); pcv.addEventListener("pointercancel", picEnd); pcv.addEventListener("pointerleave", picEnd);
 picRedraw();
 
+// ---------- 100 rotos dicen ----------
+let rotosQ = null, rotosTick = null, rotosN = 0;
+socket.on("rotos-count", (n) => { rotosN = n; });
+socket.on("rotos-q", (q) => {
+  rotosQ = q; clearInterval(rotosTick); rotosN = 0;
+  if (q) { if (current !== JUEGOS) push(JUEGOS, { type: "sys", text: "📊 Nueva pregunta de 100 rotos dicen" }); beep(880);
+    const tick = () => { const s = Math.max(0, Math.ceil((q.endsAt - Date.now()) / 1000)); $("rotosHint").textContent = `🤫 Escribí tu respuesta secreta en el chat · ⏱️ ${s}s · ✍️ ${rotosN} respondieron`; };
+    tick(); rotosTick = setInterval(tick, 500); $("rotosQ").textContent = "📊 " + q.q; }
+  applyView();
+});
+
+// ---------- Juicio popular ----------
+function openJuicioSheet() {
+  const others = online.map((u) => u.nick).filter((n) => n !== me);
+  const sh = sheetOpen("juicio", "⚖️ Juicio popular", "Elegí a quién acusar (en broma). La persona tiene que aceptar.");
+  if (!others.length) { sh.append(el("div", "stline", "No hay nadie más conectado.")); return sbtn(sh, "Cerrar", closeSheet); }
+  const who = el("select", "field"); others.forEach((n) => { const o = el("option", null, n); o.value = n; who.append(o); }); sh.append(who);
+  const cargo = el("input", "field"); cargo.maxLength = 120; cargo.placeholder = "Cargo. Ej: no saludó al entrar"; sh.append(cargo);
+  sh.append(el("div", "hint", "Ideas: mandó 40 stickers seguidos · se fue sin despedirse · nunca contesta los audios"));
+  const err = el("div", "err"); sh.append(err);
+  sbtn(sh, "🔨 Iniciar juicio", () => {
+    if (cargo.value.trim().length < 4) return (err.textContent = "Escribí el cargo.");
+    socket.emit("juicio-start", { to: who.value, cargo: cargo.value.trim() }); closeSheet(); if (current !== JUEGOS) openChat(JUEGOS);
+  }, "primary");
+  sbtn(sh, "Cancelar", closeSheet);
+}
+socket.on("juicio-request", ({ fiscal, cargo }) => {
+  beep(700); setTimeout(() => beep(500), 200); notify("⚖️ Juicio", `${fiscal} te quiere llevar a juicio`);
+  const sh = sheetOpen("juicio", "⚖️ ¡Te quieren enjuiciar!", `${fiscal} te acusa de: «${cargo}». Es un juego: te defendés, vota el jurado y si perdés hay una condena divertida.`);
+  sbtn(sh, "🔨 Acepto, que me juzguen", () => { socket.emit("juicio-answer", true); closeSheet(); openChat(JUEGOS); }, "primary");
+  sbtn(sh, "🙅 No, gracias", () => { socket.emit("juicio-answer", false); closeSheet(); });
+});
+
+// ---------- Decidí por mí ----------
+function openPollSheet(prefill) {
+  $("attachMenu").hidden = true;
+  const room = isRoom(current) && ["#general", "#juegos", "#voz", "#confesiones"].includes(current) ? current : GENERAL;
+  const sh = sheetOpen("poll", "🗳️ Decidí por mí", `Se publica en ${ROOMS[room].slice(0, 2).join(" ")}. El grupo vota y el bot anuncia el veredicto.`);
+  const q = el("textarea", "field"); q.rows = 2; q.maxLength = 200; q.placeholder = "Tu dilema. Ej: ¿Le escribo o no?"; q.style.resize = "none"; q.value = prefill || ""; sh.append(q);
+  sh.append(el("div", "modsep", "Opciones"));
+  const opts = el("div"); sh.append(opts);
+  const addOpt = (v = "") => {
+    if (opts.children.length >= 6) return;
+    const row = el("div", "opt-row"); const inp = el("input", "field"); inp.maxLength = 60; inp.value = v; inp.placeholder = "Opción " + (opts.children.length + 1);
+    const del = el("button", null, "✕"); del.type = "button"; del.onclick = () => { if (opts.children.length > 2) row.remove(); };
+    row.append(inp, del); opts.append(row);
+  };
+  addOpt("Sí"); addOpt("No");
+  sbtn(sh, "➕ Agregar opción", () => addOpt());
+  sh.append(el("div", "modsep", "Duración"));
+  const dur = el("select", "field"); [[1, "1 minuto"], [2, "2 minutos"], [5, "5 minutos"], [10, "10 minutos"]].forEach(([v, t]) => { const o = el("option", null, t); o.value = v; if (v === 2) o.selected = true; dur.append(o); }); sh.append(dur);
+  const err = el("div", "err"); sh.append(err);
+  sbtn(sh, "Publicar votación", () => {
+    const options = [...opts.querySelectorAll("input")].map((i) => i.value.trim()).filter(Boolean);
+    if (q.value.trim().length < 3) return (err.textContent = "Escribí el dilema.");
+    if (options.length < 2) return (err.textContent = "Poné al menos 2 opciones.");
+    socket.emit("poll-create", { room: room.slice(1), question: q.value.trim(), options, minutes: +dur.value }, (r) => { if (r?.ok) { closeSheet(); if (current !== room) openChat(room); } else err.textContent = r?.error || "No se pudo publicar."; });
+  }, "primary");
+  sbtn(sh, "Cancelar", closeSheet);
+  setTimeout(() => q.focus(), 50);
+}
+$("pickPoll").onclick = (e) => { e.stopPropagation(); openPollSheet(); };
+socket.on("poll-update", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; if ((history[current] || []).includes(m)) renderMessages(); });
+socket.on("poll-end", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; m.poll.ended = true; if ((history[current] || []).includes(m)) renderMessages(); });
+setInterval(() => { if ((history[current] || []).some((m) => m.poll && !m.poll.ended)) renderMessages(); }, 15000);
+
 // ---------- Duelos ----------
 function sheetOpen(kind, title, sub) {
   const sh = $("sheet"); sh.dataset.kind = kind; sh.replaceChildren(el("h4", null, title));
@@ -1127,9 +1351,9 @@ socket.on("duel-invite", ({ id, from, kind }) => {
   sbtn(sh, "✅ Aceptar", () => { closeSheet(); socket.emit("duel-answer", { id, accept: true }); }, "primary");
   sbtn(sh, "🙅 Rechazar", () => { closeSheet(); socket.emit("duel-answer", { id, accept: false }); });
 });
-socket.on("duel-ppt", ({ id, opp, round, me: mine, them }) => {
+socket.on("duel-ppt", ({ id, opp, round, me: mine, them, tour }) => {
   beep(990);
-  const sh = sheetOpen("duel", `⚔️ vs ${opp} · ronda ${round}`, `Vas ${mine} a ${them}. Elegí en secreto (45 s):`);
+  const sh = sheetOpen("duel", tour ? `🏟️ ${tour} · vs ${opp}` : `⚔️ vs ${opp} · ronda ${round}`, `${tour ? `Mano ${round} · ` : ""}Vas ${mine} a ${them}. Elegí en secreto (45 s):`);
   sh.dataset.duel = id;
   const row = el("div", "ppt-row");
   [["piedra", "🪨"], ["papel", "📄"], ["tijera", "✂️"]].forEach(([k, e]) => { const b = el("button", null, e); b.type = "button"; b.title = k;
@@ -1139,8 +1363,13 @@ socket.on("duel-ppt", ({ id, opp, round, me: mine, them }) => {
   if (current !== JUEGOS) openChat(JUEGOS);
 });
 socket.on("duel-go", () => { closeSheet(); openChat(JUEGOS); });
-socket.on("duel-end", ({ opp, kind, won }) => {
+socket.on("duel-end", ({ opp, kind, won, tour }) => {
   beep(won ? 1200 : 500);
+  if (tour) {
+    const sh = sheetOpen("duel", won ? "✅ ¡Avanzás!" : "😵 Quedaste afuera", won ? `Le ganaste a ${opp}. Esperá la próxima ronda del torneo.` : `${opp} te ganó. ¡Buen torneo!`);
+    sh.append(el("div", "big-res", won ? "🏟️" : "💀"));
+    return sbtn(sh, "Cerrar", closeSheet);
+  }
   const sh = sheetOpen("duel", won === null ? "🤝 ¡Empate!" : won ? "🏆 ¡Ganaste!" : "😵 Perdiste", `Duelo de ${kind === "ppt" ? "piedra, papel o tijera" : "trivia"} contra ${opp}`);
   sh.append(el("div", "big-res", won === null ? "🤝" : won ? "🏆" : "💀"));
   sbtn(sh, "🔁 Revancha", () => { closeSheet(); socket.emit("duel-invite", { to: opp, kind }); }, "primary");
@@ -1267,19 +1496,34 @@ socket.on("call-failed", (m) => { if (call) endCall(m, false); });
 $("callBtn").onclick = () => startCall(current);
 
 // ---------- Voz grupal (cada persona se conecta con cada una: hasta 8) ----------
-const VOICE_ROOMS = { general: GENERAL, juegos: JUEGOS, mods: MODS };
+const VOICE_ROOMS = { voz: VOZ };
 let vRoom = null, vStream = null, vMuted = false, vPeers = new Map(), voiceCounts = {}, vMeter = null, vLevels = {}, vJoinTimer = null;
-function renderVoiceBtn() {
-  const room = isRoom(current) ? current.slice(1) : null;
-  const ok = room && VOICE_ROOMS[room] && (room !== "mods" || isAdmin);
-  $("voiceBtn").hidden = !ok;
-  if (!ok) return;
-  const n = (voiceCounts[room] || []).length;
-  $("voiceBtn").textContent = vRoom === room ? `🎙️ ${n} · En voz` : n ? `🎙️ ${n} · Unirme` : "🎙️ Voz";
-  $("voiceBtn").classList.toggle("on", vRoom === room);
+function renderVoiceBtn() { renderVoicePanel(); }
+function renderVoicePanel() {
+  const show = current === VOZ;
+  $("voicePanel").hidden = !show;
+  if (!show) return;
+  const list = voiceCounts.voz || [];
+  const grid = $("vpGrid");
+  if (!list.length) grid.replaceChildren(el("div", "vp-empty", "No hay nadie en la voz todavía. ¡Entrá y esperá a que se sume alguien! 🎧"));
+  else grid.replaceChildren(...list.map((u) => {
+    const p = el("div", "vp-p" + ((vLevels[u.nick] || 0) > 0.04 && !u.muted ? " talk" : ""));
+    const ring = el("span", "ring"); ring.append(avatarEl(u.nick, 52)); if (u.muted) ring.append(el("span", "mut", "🔇"));
+    const nm = el("span", "nm", u.nick === me ? "Vos" : u.nick); nm.style.color = u.nick === me ? "var(--ink)" : nickColor(u.nick);
+    p.append(ring, nm);
+    if (u.nick !== me) p.onclick = () => openSheet(u.nick);
+    return p;
+  }));
+  const acts = $("vpActions");
+  const mk = (t, cls, fn) => { const b = el("button", cls, t); b.type = "button"; b.onclick = fn; return b; };
+  if (vRoom === "voz") acts.replaceChildren(
+    mk(vMuted ? "🎤 Activar micrófono" : "🔇 Silenciarme", "vp-mute", () => $("vbMute").click()),
+    mk("📕 Salir", "vp-leave", () => socket.emit("voice-leave")));
+  else acts.replaceChildren(mk(list.length >= 8 ? "🎙️ Llena (8/8)" : "🎙️ Entrar a la voz", "vp-join", () => joinVoice("voz")));
 }
 function renderVoiceBar() {
-  $("voiceBar").hidden = !vRoom;
+  renderVoicePanel();
+  $("voiceBar").hidden = !vRoom || current === VOZ;
   if (!vRoom) return;
   const R2 = VOICE_ROOMS[vRoom];
   $("vbTitle").textContent = "🎙️ " + ROOMS[R2].slice(0, 2).join(" ");
@@ -1381,12 +1625,9 @@ function startMeter() {
     if (changed) renderVoiceBar();
   }, 150);
 }
-$("voiceBtn").onclick = () => {
-  const room = current.slice(1);
-  if (vRoom === room) { if (confirm("¿Salir de la voz?")) socket.emit("voice-leave"); }
-  else joinVoice(room);
-};
+
 $("vbLeave").onclick = () => socket.emit("voice-leave");
+$("vbTitle").onclick = () => openChat(VOZ); $("vbTitle").style.cursor = "pointer";
 $("vbMute").onclick = () => { vMuted = !vMuted; vStream?.getAudioTracks().forEach((t) => t.enabled = !vMuted); socket.emit("voice-mute", vMuted); renderVoiceBar(); };
 socket.on("voice-invite", ({ from, room }) => {
   beep(880); setTimeout(() => beep(1100), 180); notify("🎙️ Voz", `${from} te invita a la voz`);
@@ -1606,6 +1847,7 @@ $("gameBar").addEventListener("click", (e) => {
   const c = b.dataset.cmd;
   if (c === "ppt") { $("text").value = "/ppt "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "✊ Completá con piedra, papel o tijera y mandá." }); }
   if (c === "bola") { $("text").value = "/bola "; $("text").focus(); return; }
+  if (c === "juicio") return openJuicioSheet();
   if (c === "ronda") return openRoundSheet();
   sendText(c);
 });
@@ -1662,6 +1904,13 @@ function openRoundSheet() {
 // ---------- Enviar ----------
 function sendText(text, media = pendingMedia) {
   if (text === "/reglas" && !media) return $("rulesBtn").click();
+  const dec = !media && text.match(/^\/\s*(decidi|decidí|votacion|votación|encuesta)\b\s*(.*)$/i);
+  if (dec) {
+    const parts = dec[2].split("|").map((x) => x.trim()).filter(Boolean);
+    if (!parts.length) return openPollSheet();
+    const room = isRoom(current) && ["#general", "#juegos", "#voz", "#confesiones"].includes(current) ? current : GENERAL;
+    return socket.emit("poll-create", { room: room.slice(1), question: parts[0], options: parts.slice(1), minutes: 2 }, (r) => { if (r && !r.ok && r.error) push(current, { type: "notice", kind: "warn", text: r.error }); });
+  }
   const adm = text.match(/^\/\s*admin\s+(.+)$/i); if (adm) pendingKey = adm[1].trim();
   const rid = replyTo?.id; cancelReply(); clearMedia();
   const extra = media ? { image: media.image, gif: media.gif, audio: media.audio } : {};
@@ -1723,7 +1972,7 @@ socket.on("deleted", ({ id, byMod }) => {
   m.deleted = true; m.deletedByMod = byMod; m.text = ""; m.reactions = {};
   if ((history[current] || []).includes(m)) renderMessages();
 });
-socket.on("users", (list) => { online = list; renderUsers(); if (!isRoom(current)) renderMessages(); });
+socket.on("users", (list) => { online = list; renderUsers(); renderMe(); if (current !== BOARD) renderMessages(); });
 socket.on("user-joined", (n) => push(GENERAL, { type: "sys", text: `${n} entró` }));
 socket.on("user-left", (n) => {
   clearTyping(n);
