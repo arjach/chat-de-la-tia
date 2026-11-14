@@ -20,12 +20,8 @@ const STATUSES = ["disponible", "hablar", "escucho", "ausente", "nomolestar"];
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
 const RESERVED = ["guardian", "admin", "administrador", "moderador", "mod", "sistema", "bot", "__general__"];
 
-// Palabras prohibidas (raíces). El admin puede sumar/quitar con /filtro
-let BAD_WORDS = [
-  "puto", "puta", "putit", "pelotud", "forro", "forra", "conchud", "conchetumadre", "hdp",
-  "hijodeputa", "trolo", "trola", "mogolic", "retrasad", "sorete", "garca", "malparid",
-  "maricon", "tortillera", "bastard", "pajero", "chupapija", "chupame", "gil de mierda",
-];
+// Vacía: los insultos están permitidos. El admin puede sumar palabras con /filtro +palabra
+let BAD_WORDS = [];
 // Incitación a hacerse daño: cuenta doble
 const HARM_WORDS = ["matate", "suicidate", "kys", "ojala te mueras", "ojala te murieras", "anda a morir", "cortate las venas"];
 // Señales de crisis: el bot no bloquea, ofrece ayuda en privado
@@ -159,7 +155,7 @@ function checkMessage(c, id, raw) {
   }
   c.lastMsgAt = t;
   const r = censor(text);
-  if (r.hits && !c.admin) strike(c, id, r.harm ? 2 : 1, r.harm ? "Incitar a hacerse daño" : "Insultos o lenguaje ofensivo");
+  if (r.hits && !c.admin) strike(c, id, r.harm ? 2 : 1, r.harm ? "Incitar a hacerse daño" : "Palabra bloqueada por moderación");
   // Señales de crisis: ayuda privada (máx. una vez cada 10 min) + aviso a moderadores
   if (CRISIS_RE.test(norm(text)) && t - c.lastCrisis > 10 * 60000) {
     c.lastCrisis = t;
@@ -266,7 +262,7 @@ io.on("connection", (socket) => {
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
     if (RESERVED.includes(norm(nick)) || norm(nick).includes("guardian")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
-    if (censor(nick).hits) return cb({ ok: false, error: "Elegí un apodo sin insultos." });
+    if (censor(nick).hits) return cb({ ok: false, error: "Elegí otro apodo." });
     if (users.has(nick.toLowerCase())) return cb({ ok: false, error: "Ese apodo ya está en uso." });
 
     c.nick = nick; c.joinedAt = now();
