@@ -473,7 +473,7 @@ function buildReply(replyTo, room, me, other) {
 }
 
 // ================== Juegos ==================
-const GAME_CMDS = ["100rotos", "rotos", "juicio", "eliminatorio", "llaves", "vor", "verdadoreto", "dibujo", "torneo", "ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
+const GAME_CMDS = ["quienesia", "turing", "mentiroso", "impostor", "asesinato", "100rotos", "rotos", "juicio", "eliminatorio", "llaves", "vor", "verdadoreto", "dibujo", "torneo", "ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
 const points = new Map(); // apodo -> puntos
 const addPoints = (nick, n) => { points.set(nick, (points.get(nick) || 0) + n); weekly.points.set(nick, (weekly.points.get(nick) || 0) + n); dirty(); };
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -564,18 +564,35 @@ function explainGemini(status, body) {
   if (status >= 500) return "Gemini tuvo un error de su lado. Probá de nuevo";
   return `Gemini respondió un error ${status}`;
 }
-async function callGemini(model, prompt) {
+async function callGemini(model, prompt, json = true, temperature = 1) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 12000);
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST", signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 1 } }),
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(json ? { responseMimeType: "application/json" } : {}), temperature } }),
     });
     if (!r.ok) { const body = await r.text(); console.error("Gemini", model, r.status, body.slice(0, 300)); return { status: r.status, body }; }
     return { data: await r.json() };
   } finally { clearTimeout(to); }
+}
+// Pide algo a la IA; devuelve el texto (o el objeto si json) o null
+async function aiCall(prompt, json = true, temperature = 1) {
+  if (!GEMINI_KEY || typeof fetch !== "function") { aiLastError = "la IA no está activada (falta GEMINI_API_KEY)"; return null; }
+  const models = aiWorkingModel ? [aiWorkingModel, ...MODELS.filter((m) => m !== aiWorkingModel)] : MODELS;
+  for (const model of models) {
+    try {
+      const res = await callGemini(model, prompt, json, temperature);
+      if (res.status === 404) continue;
+      if (res.status) { aiLastError = explainGemini(res.status, res.body); return null; }
+      const raw = res.data?.candidates?.[0]?.content?.parts?.map((x) => x.text || "").join("") || "";
+      aiWorkingModel = model; aiLastError = "";
+      if (!json) return raw.trim();
+      return JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim());
+    } catch (e) { aiLastError = e.name === "AbortError" ? "la IA tardó demasiado" : "la IA respondió algo raro"; return null; }
+  }
+  return null;
 }
 async function aiQuestion(tema) {
   if (!GEMINI_KEY) { aiLastError = "la IA no está activada: falta GEMINI_API_KEY en Render (Environment)"; return null; }
@@ -628,16 +645,18 @@ function isCorrect(guess, answers) {
 async function startTrivia(tema) {
   game = { type: "cargando" };
   const t = tema || pick(TOPICS);
-  let q = await aiQuestion(t);
+  const custom = triviaRound?.custom?.length ? triviaRound.custom.shift() : null;
+  let q = custom ? { q: custom.q, shown: custom.a[0], answers: custom.a.map(plain).filter(Boolean), dato: "", ai: false, custom: true } : await aiQuestion(t);
   if (!q) {
     q = bankQuestion();
     if (tema) gameSay(`⚠️ No pude hacer una pregunta de "${tema}": ${aiLastError}. Va una general.`);
   }
   recentQs.push(q.q); if (recentQs.length > 40) recentQs.shift();
   const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
-  game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null,
-    timer: setTimeout(() => finishTrivia(null), 40000) };
-  gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}40 s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : "Escribí la respuesta en el chat."}`);
+  const secs = triviaRound?.secs || 40;
+  game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null, excl: triviaRound?.creator || null,
+    timer: setTimeout(() => finishTrivia(null), secs * 1000) };
+  gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.custom ? `✍️ de ${triviaRound.creator} ` : ""}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}${secs} s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : q.custom ? `Escribí la respuesta en el chat (${triviaRound.creator} no juega: la sabe 😉).` : "Escribí la respuesta en el chat."}`);
 }
 function finishTrivia(winner) {
   const g = game; endGame();
@@ -684,6 +703,7 @@ function gameCommand(c, id, cmd, arg) {
     }
     case "juegos":
       return notice(id, "🎮 JUEGOS (o usá los botones de abajo)\n" +
+        "🤖 /quienesia — ¿Quién es la IA? · 🃏 /mentiroso · 🫣 /impostor · 🔪 /asesinato [tema]\n" +
         "🎭 /vor — Verdad o reto\n" +
         "📊 /100rotos — 100 rotos dicen (pensá como la mayoría)\n" +
         "⚖️ /juicio Nombre cargo — Juicio popular en broma\n" +
@@ -717,6 +737,20 @@ function gameCommand(c, id, cmd, arg) {
       return gameSay(rankingText());
     case "torneo":
       return gameSay(weeklyText());
+    case "quienesia": case "turing":
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startTuring(c.nick, Math.min(6, Math.max(2, parseInt(arg) || 3)));
+    case "mentiroso":
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startMentiroso(c.nick, Math.min(8, Math.max(1, parseInt(arg) || 3)));
+    case "impostor": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      const pr = arg.split(/\s*\/\s*/).map((x) => x.trim()).filter(Boolean);
+      return startImpostor(c.nick, pr.length === 2 ? pr : null);
+    }
+    case "asesinato":
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      return startAsesinato(c.nick, arg.slice(0, 60));
     case "100rotos": case "rotos": {
       if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
       return startRotos(c.nick, Math.min(10, Math.max(1, parseInt(arg) || 5)));
@@ -748,6 +782,7 @@ function gameCommand(c, id, cmd, arg) {
         const d = duels.get(triviaRound.duel.id); if (d) duelExpire(d);
       }
       { const g = game; endGame(); triviaRound = null;
+        if (["turing", "mentiroso", "impostor", "asesinato"].includes(g.type)) return gameSay(`🏳️ ${c.nick} cortó el juego.${g.type === "turing" && g.aiAlias ? ` (La IA era ${g.aiAlias} 🤖)` : g.type === "impostor" && g.impostor ? ` (El impostor era ${g.impostor})` : g.type === "asesinato" && g.culprit ? ` (El asesino era ${g.culprit})` : ""}`);
         if (g.type === "rotos") return gameSay(`🏳️ ${c.nick} cortó 100 rotos dicen.`);
         if (g.type === "juicio") return gameSay(`🏳️ ${c.nick} suspendió el juicio. ¡Se levanta la sesión!`);
         if (g.type === "llaves") return gameSay(`🏳️ ${c.nick} canceló el torneo eliminatorio.`);
@@ -786,10 +821,12 @@ function gameGuess(nick, text) {
   if (!t) return;
   if (game.type === "trivia") {
     if (game.only && !game.only.includes(nick)) return;
+    if (game.excl === nick) return;
     if (isCorrect(t, game.answers)) finishTrivia(nick);
     return;
   }
   if (game.type === "vor") return vorGuess(nick, t);
+  if (["turing", "impostor", "asesinato"].includes(game.type)) return inscriptionGuess(nick, t);
   if (game.type === "llaves") {
     if (game.phase === "inscripcion" && /^(yo|me anoto|yo juego)$/.test(t) && !game.players.has(nick)) {
       if (game.players.size >= 16) return gameSay("🏟️ Ya hay 16 anotados, ¡cupo lleno!");
@@ -798,24 +835,26 @@ function gameGuess(nick, text) {
     return;
   }
   if (game.type === "numero") {
-    if (!/^\d{1,3}$/.test(t)) return;
+    if (!/^\d{1,4}$/.test(t)) return;
     const g = +t; game.tries++;
     if (g === game.n) { const tries = game.tries; endGame(); addPoints(nick, 2); return gameSay(`🎯 ¡${nick} lo adivinó! Era ${g} (en ${tries} intento${tries === 1 ? "" : "s"}). +2 pts`); }
     return gameSay(`${g < game.n ? "⬆️ Más alto" : "⬇️ Más bajo"} que ${g}`);
   }
   if (game.type === "ahorcado") {
+    if (game.excl === nick) return;
     const word = plain(game.word);
     if (t === word) { const w = game.word; endGame(); addPoints(nick, 3); return gameSay(`🎉 ¡${nick} adivinó la palabra: ${w.toUpperCase()}! +3 pts`); }
     if (!/^[a-zñ]$/.test(t)) return;
     if (game.found.has(t) || game.wrong.includes(t)) return gameSay(`La "${t.toUpperCase()}" ya se dijo.`);
+    const lives = game.lives || 6, face = () => GALLOWS[Math.min(6, Math.round(game.wrong.length * 6 / lives))];
     if (word.includes(t)) {
       game.found.add(t);
       if (word.replace(/ /g, "").split("").every((ch) => game.found.has(ch))) { const w = game.word; endGame(); addPoints(nick, 2); return gameSay(`🎉 ¡Completaron la palabra: ${w.toUpperCase()}! ${nick} puso la última letra (+2 pts)`); }
-      return gameSay(`✔️ ¡Está la ${t.toUpperCase()}!\n${hangView()}\n${GALLOWS[game.wrong.length]} Vidas: ${6 - game.wrong.length}${game.wrong.length ? " · Erradas: " + game.wrong.join(" ").toUpperCase() : ""}`);
+      return gameSay(`✔️ ¡Está la ${t.toUpperCase()}!\n${hangView()}\n${face()} Vidas: ${lives - game.wrong.length}${game.wrong.length ? " · Erradas: " + game.wrong.join(" ").toUpperCase() : ""}`);
     }
     game.wrong.push(t);
-    if (game.wrong.length >= 6) { const w = game.word; endGame(); return gameSay(`💀 ¡Ahorcados! La palabra era ${w.toUpperCase()}`); }
-    return gameSay(`❌ No está la ${t.toUpperCase()}.\n${hangView()}\n${GALLOWS[game.wrong.length]} Vidas: ${6 - game.wrong.length} · Erradas: ${game.wrong.join(" ").toUpperCase()}`);
+    if (game.wrong.length >= lives) { const w = game.word; endGame(); return gameSay(`💀 ¡Ahorcados! La palabra era ${w.toUpperCase()}`); }
+    return gameSay(`❌ No está la ${t.toUpperCase()}.\n${hangView()}\n${face()} Vidas: ${lives - game.wrong.length} · Erradas: ${game.wrong.join(" ").toUpperCase()}`);
   }
 }
 
@@ -862,10 +901,10 @@ function picState() {
   if (!game || game.type !== "dibujo") return { active: false };
   return { active: true, drawer: game.drawer, mask: picMask(game.word, game.revealed), endsAt: game.endsAt, round: game.round, total: game.total };
 }
-function startPictionary(starter, total) {
-  game = { type: "dibujo", total, round: 0, scores: new Map(), drawer: starter.nick, word: "", revealed: new Set(), pieces: [], timers: [],
+function startPictionary(starter, total, words, secs) {
+  game = { type: "dibujo", total, round: 0, words: words?.length ? words : null, secs: secs || 90, excl: words?.length ? starter.nick : null, scores: new Map(), drawer: starter.nick, word: "", revealed: new Set(), pieces: [], timers: [],
     cleanup() { this.timers.forEach(clearTimeout); io.emit("pic-state", { active: false }); } };
-  gameSay(`🖍️ DIBUJÁ Y ADIVINÁ — ${total} ronda${total === 1 ? "" : "s"}. El que dibuja recibe una palabra secreta; los demás adivinan escribiendo en el chat.\nAdivinar: +2 · El que dibuja: +1 si alguien adivina.`);
+  gameSay(`🖍️ DIBUJÁ Y ADIVINÁ — ${total} ronda${total === 1 ? "" : "s"} de ${game.secs} s${game.words ? ` · palabras elegidas por ${starter.nick} (no adivina: las conoce 😉)` : ""}. El que dibuja recibe una palabra secreta; los demás adivinan escribiendo en el chat.\nAdivinar: +2 · El que dibuja: +1 si alguien adivina.`);
   nextPicRound(starter.nick);
 }
 function nextPicRound(drawer) {
@@ -873,20 +912,22 @@ function nextPicRound(drawer) {
   game.timers.forEach(clearTimeout); game.timers = [];
   game.round++;
   const used = game.used || (game.used = new Set());
-  const pool = PIC_WORDS.filter((w) => !used.has(w));
-  game.word = pick(pool.length ? pool : PIC_WORDS); used.add(game.word);
-  game.drawer = drawer; game.revealed = new Set(); game.pieces = []; game.endsAt = now() + 90000;
+  const bank = game.words || PIC_WORDS;
+  const pool = bank.filter((w) => !used.has(w));
+  game.word = pick(pool.length ? pool : bank); used.add(game.word);
+  const ms = game.secs * 1000;
+  game.drawer = drawer; game.revealed = new Set(); game.pieces = []; game.endsAt = now() + ms;
   const d = byNick(drawer);
   if (d) io.to(d.id).emit("pic-word", game.word);
   io.emit("pic-board", []);
   io.emit("pic-state", picState());
-  gameSay(`🖍️ Ronda ${game.round}/${game.total}: dibuja ${drawer}. Palabra de ${game.word.replace(/ /g, "").length} letras: ${picMask(game.word, game.revealed)}\n¡Escriban sus respuestas! (90 s)`);
+  gameSay(`🖍️ Ronda ${game.round}/${game.total}: dibuja ${drawer}. Palabra de ${game.word.replace(/ /g, "").length} letras: ${picMask(game.word, game.revealed)}\n¡Escriban sus respuestas! (${game.secs} s)`);
   const reveal = () => {
     if (!game || game.type !== "dibujo") return;
     const hidden = [...game.word].map((ch, i) => i).filter((i) => game.word[i] !== " " && !game.revealed.has(i));
     if (hidden.length > 2) { game.revealed.add(pick(hidden)); io.emit("pic-state", picState()); gameSay(`💡 Pista: ${picMask(game.word, game.revealed)}`); }
   };
-  game.timers.push(setTimeout(reveal, 40000), setTimeout(reveal, 65000), setTimeout(() => endPicRound(null), 90000));
+  game.timers.push(setTimeout(reveal, ms * 0.45), setTimeout(reveal, ms * 0.72), setTimeout(() => endPicRound(null), ms));
 }
 function endPicRound(winner) {
   if (!game || game.type !== "dibujo") return;
@@ -918,6 +959,7 @@ function picIntercept(c, sid, text) {
     if (t.includes(w)) { notice(sid, "🤫 ¡No vale decir la palabra! Dibujala.", "warn"); return true; }
     return false;
   }
+  if (game.excl === c.nick) { if ((" " + t + " ").includes(" " + w + " ")) { notice(sid, "🤫 ¡Vos elegiste las palabras! No vale 😉", "warn"); return true; } return false; }
   if (t === w || (" " + t + " ").includes(" " + w + " ")) { endPicRound(c.nick); return true; }
   if (w.length >= 5 && lev(t, w) === 1) { notice(sid, "🔥 ¡Casi! Estás muy cerca.", "help"); return true; }
   return false;
@@ -1059,10 +1101,11 @@ function voiceLeave(sid) {
 
 // ================== Torneo eliminatorio (llaves) ==================
 const roundName = (n) => n === 2 ? "FINAL" : n === 4 ? "SEMIFINALES" : n === 8 ? "CUARTOS DE FINAL" : n === 16 ? "OCTAVOS DE FINAL" : `RONDA DE ${n}`;
-function startBracket(starter) {
-  game = { type: "llaves", phase: "inscripcion", starter, players: new Set([starter]), rounds: [], timers: [],
+function startBracket(starter, opts = {}) {
+  const insc = Math.min(180, Math.max(20, parseInt(opts.secs) || 60)), bestOf = [1, 3, 5].includes(+opts.bestOf) ? +opts.bestOf : 3;
+  game = { type: "llaves", phase: "inscripcion", starter, players: new Set([starter]), rounds: [], timers: [], need: Math.ceil(bestOf / 2), bestOf,
     cleanup() { this.timers.forEach(clearTimeout); for (const d of [...duels.values()]) if (d.tour) duelExpire(d, "🏟️ Se canceló el torneo."); } };
-  gameSay(`🏟️ TORNEO ELIMINATORIO de piedra, papel o tijera — lo arrancó ${starter}.\n✋ Escriban "yo" para anotarse (60 s). Mínimo 3, máximo 16.\nCada cruce es al mejor de 3. El campeón se lleva +10 pts y la gloria 🏆`);
+  gameSay(`🏟️ TORNEO ELIMINATORIO de piedra, papel o tijera — lo arrancó ${starter}.\n✋ Escriban "yo" para anotarse (${insc} s). Mínimo 3, máximo 16.\nCada cruce es ${bestOf === 1 ? "a una sola mano" : `al mejor de ${bestOf}`}. El campeón se lleva +10 pts y la gloria 🏆`);
   game.timers.push(setTimeout(() => {
     if (!game || game.type !== "llaves") return;
     const players = [...game.players].filter((n) => byNick(n));
@@ -1075,7 +1118,7 @@ function startBracket(starter) {
     for (let i = 0; i < size / 2; i++) first.push({ a: slots[i], b: slots[size - 1 - i], winner: null });
     game.rounds = [first]; game.phase = "jugando";
     playBracketRound();
-  }, 60000));
+  }, insc * 1000));
 }
 function bracketText() {
   if (!game || game.type !== "llaves" || !game.rounds.length) return "🏟️ No hay torneo eliminatorio en curso.";
@@ -1095,7 +1138,7 @@ function playBracketRound() {
   gameSay(`🏟️ ${label}\n` + round.map((m) => m.a && m.b ? `⚔️ ${m.a} vs ${m.b}` : `🎟️ ${m.a || m.b} pasa directo`).join("\n") + "\nA los que juegan les aparecen los botones. ¡Suerte!");
   for (const m of round) {
     if (m.winner) continue;
-    const d = { id: newId(), a: m.a, b: m.b, kind: "ppt", state: "on", wins: {}, picks: {}, round: 0, tour: true, tourLabel: label, match: m };
+    const d = { id: newId(), a: m.a, b: m.b, kind: "ppt", state: "on", wins: {}, picks: {}, round: 0, tour: true, tourLabel: label, match: m, need: game.need };
     duels.set(d.id, d);
     pptAsk(d);
   }
@@ -1152,10 +1195,11 @@ const ROTOS_Q = [
 ];
 const STOP = new Set(["el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "mi", "tu", "con"]);
 const rotosKey = (t) => plain(t).split(" ").filter((w) => w && !STOP.has(w)).map((w) => w.length > 4 ? w.replace(/(es|s)$/, "") : w).join(" ");
-function startRotos(starter, rounds) {
-  const pool = [...ROTOS_Q].sort(() => Math.random() - 0.5).slice(0, rounds);
-  game = { type: "rotos", phase: "", qs: pool, round: 0, total: rounds, scores: new Map(), answers: new Map(), timers: [], cleanup() { this.timers.forEach(clearTimeout); } };
-  gameSay(`📊 100 ROTOS DICEN — ${rounds} preguntas.\nEl bot pregunta y cada uno responde EN SECRETO escribiendo en el chat (nadie ve tu respuesta hasta el final).\nSumás si pensás igual que la mayoría: 🥇 +3 · 🥈 +2 · 🥉 +1`);
+function startRotos(starter, rounds, customQs, secs) {
+  const pool = customQs?.length ? customQs : [...ROTOS_Q].sort(() => Math.random() - 0.5).slice(0, rounds);
+  rounds = pool.length;
+  game = { type: "rotos", phase: "", qs: pool, round: 0, total: rounds, secs: secs || 40, scores: new Map(), answers: new Map(), timers: [], cleanup() { this.timers.forEach(clearTimeout); } };
+  gameSay(`📊 100 ROTOS DICEN — ${rounds} pregunta${rounds === 1 ? "" : "s"}${customQs?.length ? ` de ${starter}` : ""}.\nEl bot pregunta y cada uno responde EN SECRETO escribiendo en el chat (nadie ve tu respuesta hasta el final).\nSumás si pensás igual que la mayoría: 🥇 +3 · 🥈 +2 · 🥉 +1`);
   game.timers.push(setTimeout(rotosNext, 4000));
 }
 function rotosNext() {
@@ -1168,10 +1212,10 @@ function rotosNext() {
   }
   game.round++; game.answers = new Map(); game.phase = "answering";
   game.q = game.qs[game.round - 1];
-  game.endsAt = now() + 40000;
+  game.endsAt = now() + game.secs * 1000;
   io.emit("rotos-q", { q: game.q, round: game.round, total: game.total, endsAt: game.endsAt });
-  gameSay(`📊 Pregunta ${game.round}/${game.total}: «${game.q}»\n🤫 Escribí tu respuesta en el chat (40 s). Es secreta: nadie la ve hasta que revelemos.`);
-  game.timers.push(setTimeout(rotosReveal, 40000));
+  gameSay(`📊 Pregunta ${game.round}/${game.total}: «${game.q}»\n🤫 Escribí tu respuesta en el chat (${game.secs} s). Es secreta: nadie la ve hasta que revelemos.`);
+  game.timers.push(setTimeout(rotosReveal, game.secs * 1000));
 }
 function rotosReveal() {
   if (!game || game.type !== "rotos" || game.phase !== "answering") return;
@@ -1220,13 +1264,14 @@ const CONDENAS = [
   "escribir sus próximos 3 mensajes en MAYÚSCULAS DE FURIA", "contar una anécdota vergonzosa (suave)", "decir 3 cosas que le gustan de la persona que lo acusó",
 ];
 const ABSOLUCIONES = ["queda libre y con el honor intacto 🕊️", "sale absuelto/a entre aplausos 👏", "es declarado/a inocente: el que acusó paga los facturas 🥐"];
-function startJuicio(c, sid, targetNick, cargo) {
+function startJuicio(c, sid, targetNick, cargo, condena) {
   const t = byNick(targetNick);
   if (!t || t.id === sid) return notice(sid, "Elegí a alguien conectado (que no seas vos).");
   if (blockedPair(c, t.c)) return notice(sid, "No podés enjuiciar a esa persona.");
   cargo = censor(String(cargo || "").trim().slice(0, 120)).text;
   if (cargo.length < 4) return notice(sid, "Escribí de qué lo/la acusás. Ej: /juicio Pedro no saludó al entrar");
-  game = { type: "juicio", phase: "consent", fiscal: c.nick, acusado: t.c.nick, cargo, timers: [], cleanup() { this.timers.forEach(clearTimeout); if (this.pollId) { const p = polls.get(this.pollId); if (p) { clearTimeout(p.timer); polls.delete(this.pollId); } } } };
+  condena = censor(String(condena || "").trim().slice(0, 120)).text;
+  game = { type: "juicio", phase: "consent", fiscal: c.nick, acusado: t.c.nick, cargo, condena, timers: [], cleanup() { this.timers.forEach(clearTimeout); if (this.pollId) { const p = polls.get(this.pollId); if (p) { clearTimeout(p.timer); polls.delete(this.pollId); } } } };
   io.to(t.id).emit("juicio-request", { fiscal: c.nick, cargo });
   gameSay(`⚖️ ${c.nick} quiere llevar a juicio a ${t.c.nick} por: «${cargo}».\nEsperando que ${t.c.nick} acepte (30 s)…`);
   game.timers.push(setTimeout(() => { if (game?.type === "juicio" && game.phase === "consent") { gameSay(`⚖️ ${game.acusado} no respondió. Juicio suspendido.`); endGame(); } }, 30000));
@@ -1248,7 +1293,7 @@ function juicioVoto() {
     onEnd(counts, total) {
       if (game !== g) return;
       if (!total) { gameSay("⚖️ El jurado no votó. Caso archivado 🗄️"); return endGame(); }
-      if (counts[0] > counts[1]) gameSay(`🔨 VEREDICTO: ¡CULPABLE! (${counts[0]} a ${counts[1]})\n📜 Condena: ${g.acusado} deberá ${pick(CONDENAS)}.`);
+      if (counts[0] > counts[1]) gameSay(`🔨 VEREDICTO: ¡CULPABLE! (${counts[0]} a ${counts[1]})\n📜 Condena: ${g.acusado} deberá ${g.condena || pick(CONDENAS)}.`);
       else if (counts[1] > counts[0]) gameSay(`🕊️ VEREDICTO: ¡INOCENTE! (${counts[1]} a ${counts[0]})\n${g.acusado} ${pick(ABSOLUCIONES)}`);
       else gameSay(`⚖️ VEREDICTO: ¡EMPATE! (${counts[0]} a ${counts[1]}). El tribunal declara el caso… un misterio 🤷`);
       endGame();
@@ -1258,6 +1303,290 @@ function juicioVoto() {
   remember(id, { chat: "juegos", from: CRUPIER, text: "⚖️ " + p.question, ts: now(), media: true });
   io.emit("public-message", { id, room: "juegos", from: CRUPIER, bot: true, text: p.question, poll: { options, counts: [0, 0], endsAt }, ts: now() });
   gameSay(`🧑‍⚖️ ¡A votar, jurado! Tienen 45 s. (${g.acusado} no vota)`);
+}
+
+// ================== Herramientas comunes para juegos con inscripción ==================
+const ALIASES = ["🦊 Zorro", "🐙 Pulpo", "🦉 Búho", "🐢 Tortuga", "🦩 Flamenco", "🐝 Abeja", "🦔 Erizo", "🐧 Pingüino", "🦎 Lagartija", "🐳 Ballena", "🦜 Loro", "🐌 Caracol", "🦇 Murciélago", "🐞 Vaquita", "🦙 Llama", "🐿️ Ardilla"];
+const shuffle = (a) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function inscription(type, starter, title, rules, secs, min, max, onStart) {
+  game = { type, phase: "inscripcion", starter, players: new Set([starter]), max, timers: [], cleanup() { this.timers.forEach(clearTimeout); this.onCleanup?.(); } };
+  gameSay(`${title}\n${rules}\n✋ Escriban "yo" para jugar (${secs} s). Mínimo ${min}${max ? `, máximo ${max}` : ""}.`);
+  game.timers.push(setTimeout(() => {
+    if (!game || game.type !== type) return;
+    const players = [...game.players].filter((n) => byNick(n));
+    if (players.length < min) { gameSay(`Se necesitan al menos ${min} jugadores. Juego cancelado.`); return endGame(); }
+    game.phase = "jugando"; game.players = new Set(players);
+    onStart(players);
+  }, secs * 1000));
+}
+function inscriptionGuess(nick, t) {
+  if (game.phase !== "inscripcion" || !/^(yo|yo juego|me sumo|me anoto)$/.test(t) || game.players.has(nick)) return;
+  if (game.max && game.players.size >= game.max) return gameSay("¡Cupo lleno!");
+  game.players.add(nick); gameSay(`✍️ ${nick} se sumó (${game.players.size}).`);
+}
+const secretCard = (nick, title, text) => { const t = byNick(nick); if (t) io.to(t.id).emit("secret-card", { title, text }); };
+// Votación con botones en Juegos (reutiliza las votaciones); al terminar llama a onEnd(counts, votes)
+function gamePoll(question, options, secs, onEnd, exclude = []) {
+  const id = newId(), endsAt = now() + secs * 1000, g = game;
+  const p = { room: "juegos", author: CRUPIER, question, options, votes: new Map(), endsAt, exclude,
+    onEnd(counts) { if (game === g) onEnd(counts, p.votes); } };
+  p.timer = setTimeout(() => endPoll(id), secs * 1000);
+  polls.set(id, p); g.pollId = id;
+  remember(id, { chat: "juegos", from: CRUPIER, text: "🗳️ " + question, ts: now(), media: true });
+  io.emit("public-message", { id, room: "juegos", from: CRUPIER, bot: true, text: question, poll: { options, counts: options.map(() => 0), endsAt }, ts: now() });
+  const old = g.cleanup; g.cleanup = function () { old.call(this); const pp = polls.get(id); if (pp) { clearTimeout(pp.timer); polls.delete(id); } };
+}
+const topVoted = (counts) => { const max = Math.max(...counts); return max ? counts.map((c, i) => c === max ? i : -1).filter((i) => i >= 0) : []; };
+
+// ================== 🤖 ¿Quién es la IA? ==================
+const TURING_TOPICS = ["¿Cuál es la peor comida que probaste?", "¿Qué harías con un millón de dólares?", "¿Playa o montaña y por qué?", "Contá algo que te dio vergüenza esta semana",
+  "¿Cuál fue tu primer celular?", "¿Qué serie estás mirando?", "¿Mate dulce o amargo?", "¿Qué superpoder inútil te gustaría tener?", "¿Cuál es tu plan ideal de domingo?", "¿Le tenés miedo a algo raro?"];
+function startTuring(starter, mins = 3) {
+  if (!GEMINI_KEY) return gameSay("🤖 Este juego necesita la IA activada (GEMINI_API_KEY en Render).");
+  inscription("turing", starter, "🤖 ¿QUIÉN ES LA IA?", "Todos reciben un apodo secreto de animal y la IA se mete como un jugador más. Charlen y descubran quién es la máquina.", 45, 3, 10, (players) => {
+    const names = shuffle(ALIASES).slice(0, players.length + 1);
+    game.alias = new Map(players.map((n, i) => [n, names[i]]));
+    game.aiAlias = names[players.length];
+    game.log = []; game.lastAi = 0; game.topic = pick(TURING_TOPICS); game.mins = mins;
+    for (const [n, a] of game.alias) secretCard(n, "🎭 Tu apodo secreto", `Sos ${a}. Todo lo que escribas en Juegos sale con ese nombre.\nHay ${players.length + 1} participantes y UNO es la IA 🤖. ¡Que no te confundan con la máquina!`);
+    gameSay(`🤖 ¡Arranca! Hay ${players.length + 1} participantes con apodo… y uno es la IA.\nTema para romper el hielo: «${game.topic}»\n💬 Charlen ${mins} minutos. Escriban normal: el bot lo publica con su apodo.`);
+    game.timers.push(setTimeout(() => turingAiTalk(true), 7000));
+    game.timers.push(setTimeout(() => { if (game?.type === "turing") gameSay("⏳ ¡Queda 1 minuto! Hagan preguntas tramposas 🕵️"); }, (mins - 1) * 60000));
+    game.timers.push(setTimeout(turingVote, mins * 60000));
+  });
+}
+function turingPublish(alias, text, mineSid) {
+  const id = newId();
+  remember(id, { chat: "juegos", from: alias, text, ts: now() });
+  for (const [sid, rc] of clients) if (rc.nick) io.to(sid).emit("public-message", { id, room: "juegos", from: alias, alias: true, text, ts: now(), ...(sid === mineSid ? { mine: true } : {}) });
+  game.log.push(`${alias}: ${text}`); if (game.log.length > 25) game.log.shift();
+}
+async function turingAiTalk(opening) {
+  const g = game; if (!g || g.type !== "turing" || g.phase !== "jugando" || g.aiBusy) return;
+  if (!opening && now() - g.lastAi < 12000) return;
+  g.aiBusy = true;
+  const prompt = `Estás jugando un juego de chat argentino llamado "¿Quién es la IA?". Sos un participante más con el apodo "${g.aiAlias}". Los demás son humanos y tienen que adivinar quién es la IA. TU OBJETIVO: que crean que sos humano.
+Reglas de estilo: escribí como un/a argentino/a de 20-35 años chateando desde el celu: mensajes MUY cortos (3 a 15 palabras), casi todo en minúscula, a veces sin tildes, algún error de tipeo ocasional, voseo, expresiones como "jaja", "nada", "re", "posta", "ni idea". Nada de signos de apertura ¿ ¡. Nunca digas que sos una IA, ni hables de forma formal o perfecta. Podés hacer preguntas, opinar, bromear o sospechar de otro apodo. No uses comillas.
+Tema inicial: ${g.topic}
+Charla hasta ahora:
+${g.log.slice(-15).join("\n") || "(todavía nadie habló)"}
+Respondé SOLO con tu próximo mensaje (sin tu apodo adelante).`;
+  const msg = await aiCall(prompt, false, 1.1);
+  g.aiBusy = false;
+  if (!msg || game !== g || g.phase !== "jugando") return;
+  const clean = msg.replace(/^["'«]|["'»]$/g, "").replace(new RegExp("^" + g.aiAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":?\\s*"), "").split("\n")[0].slice(0, 160);
+  // demora "humana" según el largo
+  setTimeout(() => { if (game === g && g.phase === "jugando") { g.lastAi = now(); turingPublish(g.aiAlias, clean); } }, 1500 + clean.length * 90);
+}
+function turingIntercept(c, sid, text) {
+  if (!game || game.type !== "turing" || game.phase !== "jugando") return false;
+  if (!game.alias.has(c.nick)) { notice(sid, "🤖 Hay una ronda de ¿Quién es la IA? en curso: mirá y esperá la próxima 😉", "help"); return true; }
+  turingPublish(game.alias.get(c.nick), text, sid);
+  if (Math.random() < 0.55) setTimeout(() => turingAiTalk(false), 2500 + Math.random() * 6000);
+  return true;
+}
+function turingVote() {
+  if (!game || game.type !== "turing") return;
+  game.phase = "voto";
+  const opts = shuffle([...game.alias.values(), game.aiAlias]);
+  gameSay("🗳️ ¡Tiempo! ¿Quién es la IA? Voten (45 s).");
+  gamePoll("¿Quién es la IA? 🤖", opts, 45, (counts, votes) => {
+    const g = game, aiIdx = opts.indexOf(g.aiAlias), top = topVoted(counts);
+    const reveal = [...g.alias].map(([n, a]) => `${a} era ${n}`).concat([`${g.aiAlias} era 🤖 LA IA`]).join("\n");
+    let msg;
+    if (top.length === 1 && top[0] === aiIdx) {
+      for (const [n, idx] of votes) if (idx === aiIdx && g.alias.has(n)) addPoints(n, 3);
+      msg = `🎉 ¡LOS HUMANOS GANAN! Descubrieron a la IA: era ${g.aiAlias}.\n+3 pts para los que la votaron.`;
+    } else if (!top.length) msg = "🤷 Nadie votó… ¡la IA gana por abandono! 🤖";
+    else {
+      const sus = top.map((i) => opts[i]).join(" y ");
+      msg = `🤖 ¡GANA LA IA! Ustedes votaron a ${sus}… pero la IA era ${g.aiAlias} 😈`;
+    }
+    gameSay(`${msg}\n\n🎭 Revelación:\n${reveal}`);
+    endGame();
+  });
+}
+
+// ================== 🃏 El Mentiroso ==================
+const FIBS = [
+  ["Los pulpos tienen ___ corazones.", "tres"], ["Un día en Venus dura más que un ___ en Venus.", "año"], ["La miel bien guardada puede durar ___ sin echarse a perder.", "miles de años"],
+  ["Los flamencos son rosados por lo que ___.", "comen"], ["El animal nacional de Escocia es el ___.", "unicornio"], ["Los wombats hacen caca en forma de ___.", "cubo"],
+  ["Las nutrias marinas duermen tomadas de las ___ para no separarse.", "manos"], ["En Suiza es ilegal tener un solo ___ porque se siente solo.", "cobayo"],
+  ["Los koalas tienen huellas digitales muy parecidas a las de los ___.", "humanos"], ["Un rayo es más caliente que la superficie del ___.", "sol"],
+  ["La Torre Eiffel puede medir unos centímetros más en ___.", "verano"], ["El corazón de una ballena azul es del tamaño de un ___.", "auto chico"],
+  ["Las vacas pueden estresarse cuando las separan de su ___.", "mejor amiga"], ["Los caracoles pueden dormir hasta ___ seguidos.", "tres años"],
+  ["El sonido que hace un pato es parecido en todos los idiomas, pero en danés se escribe ___.", "rap"],
+];
+async function fibRound() {
+  const g = game; if (!g || g.type !== "mentiroso") return;
+  g.timers.forEach(clearTimeout); g.timers = [];
+  if (g.round >= g.total) {
+    const res = [...g.scores].sort((a, b) => b[1] - a[1]);
+    gameSay(res.length ? `🏁 Fin de El Mentiroso. Ganó ${res[0][0]} con ${res[0][1]} pts 🃏\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin de El Mentiroso. ¡Nadie sumó!");
+    return endGame();
+  }
+  g.round++; g.phase = "cargando"; g.lies = new Map();
+  let fact = null;
+  if (GEMINI_KEY) {
+    const r = await aiCall(`Dame UN dato curioso REAL, verificable y sorprendente (animales, historia, cuerpo humano, países, inventos) escrito en español rioplatense, con UNA palabra o expresión clave reemplazada por "___". La respuesta oculta tiene que ser corta (1 a 3 palabras) y difícil de adivinar pero no imposible. No repitas: ${g.used.join(" | ")}. Devolvé SOLO JSON: {"dato":"... ___ ...","respuesta":"..."}`);
+    if (r?.dato?.includes("___") && r.respuesta) fact = [String(r.dato).slice(0, 220), String(r.respuesta).slice(0, 40)];
+  }
+  if (game !== g) return;
+  if (!fact) { const pool = FIBS.filter(([d]) => !g.used.includes(d)); fact = pick(pool.length ? pool : FIBS); }
+  g.used.push(fact[0]); g.fact = fact; g.phase = "mentir";
+  gameSay(`🃏 Ronda ${g.round}/${g.total}:\n«${fact[0]}»\n🤥 Escribí en el chat una respuesta FALSA pero creíble para completar el hueco (45 s). Es secreta. ¡Si otros la votan, sumás!`);
+  io.emit("rotos-q", { q: "🃏 " + fact[0], round: g.round, total: g.total, endsAt: now() + 45000, hint: "🤥 Escribí tu mentira (secreta)" });
+  g.timers.push(setTimeout(fibVote, 45000));
+}
+function fibIntercept(c, sid, text) {
+  if (!game || game.type !== "mentiroso" || game.phase !== "mentir") return false;
+  const lie = text.trim().slice(0, 40);
+  const lt = plain(lie), truth = plain(game.fact[1]);
+  if (!lt) return false;
+  if (lt === truth || (truth.length >= 4 && lev(lt, truth) <= 1)) { notice(sid, "😮 ¡Esa es la VERDAD! Inventá otra cosa (y guardate el secreto 🤫).", "help"); return true; }
+  const had = game.lies.has(c.nick);
+  game.lies.set(c.nick, lie);
+  notice(sid, `🤥 ${had ? "Cambiaste tu mentira" : "Mentira guardada"}: «${lie}»`, "help");
+  io.emit("rotos-count", game.lies.size);
+  return true;
+}
+function fibVote() {
+  const g = game; if (!g || g.type !== "mentiroso" || g.phase !== "mentir") return;
+  io.emit("rotos-q", null);
+  g.phase = "votar";
+  if (!g.lies.size) { gameSay(`😴 Nadie mintió. La respuesta era: ${g.fact[1].toUpperCase()}`); return g.timers.push(setTimeout(fibRound, 4000)); }
+  // juntar mentiras iguales
+  const byText = new Map();
+  for (const [n, l] of g.lies) { const k = plain(l); if (!byText.has(k)) byText.set(k, { text: l, authors: [] }); byText.get(k).authors.push(n); }
+  const opts = shuffle([{ text: g.fact[1], truth: true, authors: [] }, ...byText.values()]);
+  g.opts = opts;
+  gamePoll(`¿Cuál es la VERDAD? «${g.fact[0]}»`, opts.map((o) => o.text), 35, (counts, votes) => {
+    const ti = opts.findIndex((o) => o.truth); const lines = [];
+    for (const [voter, idx] of votes) {
+      const o = opts[idx];
+      if (o.truth) { addPoints(voter, 2); g.scores.set(voter, (g.scores.get(voter) || 0) + 2); }
+      else for (const a of o.authors) if (a !== voter) { addPoints(a, 1); g.scores.set(a, (g.scores.get(a) || 0) + 1); }
+    }
+    opts.forEach((o, i) => { if (!o.truth) lines.push(`🤥 «${o.text}» — de ${o.authors.join(", ")}${counts[i] ? ` (engañó a ${counts[i]} 😈)` : ""}`); });
+    gameSay(`✅ La verdad era: «${g.fact[0].replace("___", g.fact[1].toUpperCase())}»\n${counts[ti] ? `${counts[ti]} la encontraron (+2)` : "¡Nadie la encontró!"}\n${lines.join("\n")}`);
+    g.phase = "pausa"; g.timers.push(setTimeout(fibRound, 6000));
+  });
+}
+function startMentiroso(starter, rounds = 3) {
+  game = { type: "mentiroso", phase: "", round: 0, total: rounds, scores: new Map(), used: [], timers: [], cleanup() { this.timers.forEach(clearTimeout); io.emit("rotos-q", null); } };
+  gameSay(`🃏 EL MENTIROSO — ${rounds} rondas. Sale un dato real con un hueco: inventá una respuesta falsa pero creíble. Después todos votan cuál es la verdad.\n+2 si encontrás la verdad · +1 por cada persona que caiga en tu mentira.`);
+  game.timers.push(setTimeout(fibRound, 4000));
+}
+
+// ================== 🫣 El Impostor ==================
+const IMP_PAIRS = [["playa", "pileta"], ["mate", "té"], ["perro", "gato"], ["pizza", "empanada"], ["fútbol", "básquet"], ["guitarra", "violín"], ["colectivo", "tren"],
+  ["invierno", "otoño"], ["helado", "yogur"], ["cine", "teatro"], ["avión", "helicóptero"], ["río", "lago"], ["café", "chocolatada"], ["cumpleaños", "casamiento"],
+  ["escuela", "universidad"], ["asado", "parrilla de verduras"], ["bicicleta", "moto"], ["luna", "sol"], ["zapatilla", "ojota"], ["supermercado", "kiosco"],
+  ["dentista", "médico"], ["Navidad", "Año Nuevo"], ["montaña", "volcán"], ["piano", "teclado"], ["lluvia", "nieve"]];
+function startImpostor(starter, customPair) {
+  inscription("impostor", starter, "🫣 EL IMPOSTOR", "Todos reciben la misma palabra secreta… menos uno, que recibe una parecida (¡y no sabe que es el impostor!). Den pistas y descubran quién es.", 40, 3, 10, async (players) => {
+    const g = game;
+    let pair = customPair;
+    if (!pair && GEMINI_KEY) {
+      const r = await aiCall(`Juego "El Impostor" para argentinos. Dame DOS palabras comunes y concretas que sean parecidas pero distintas (ej: "playa" y "pileta", "mate" y "té"), fáciles de describir con una pista. Variá los temas. Devolvé SOLO JSON: {"palabra":"...","parecida":"..."}`);
+      if (r?.palabra && r?.parecida) pair = [String(r.palabra).slice(0, 30), String(r.parecida).slice(0, 30)];
+    }
+    if (game !== g) return;
+    if (!pair) pair = pick(IMP_PAIRS);
+    if (Math.random() < 0.5) pair = [pair[1], pair[0]];
+    g.word = pair[0]; g.fake = pair[1]; g.impostor = pick(players); g.order = shuffle(players); g.turn = 0; g.clueRound = 1; g.clues = [];
+    for (const n of players) secretCard(n, "🤫 Tu palabra secreta", `${(n === g.impostor ? g.fake : g.word).toUpperCase()}\n\nDá pistas de UNA palabra sin decirla. Si sospechás que tu palabra es distinta a la de los demás… ¡quizás seas el impostor! 🫣`);
+    gameSay(`🫣 Ya todos tienen su palabra secreta (mirá tu tarjeta). Orden de pistas:\n${g.order.map((n, i) => `${i + 1}. ${n}`).join("\n")}\nSon 2 vueltas de pistas de UNA palabra.`);
+    g.timers.push(setTimeout(impTurn, 3000));
+  });
+}
+function impTurn() {
+  const g = game; if (!g || g.type !== "impostor") return;
+  g.timers.forEach(clearTimeout); g.timers = [];
+  while (g.turn < g.order.length && !byNick(g.order[g.turn])) g.turn++;
+  if (g.turn >= g.order.length) {
+    if (g.clueRound < 2) { g.clueRound++; g.turn = 0; gameSay("🔁 Segunda vuelta de pistas."); return g.timers.push(setTimeout(impTurn, 2000)); }
+    g.phase = "debate";
+    gameSay(`🗣️ Pistas:\n${g.clues.join("\n")}\n\n💬 ¡Debatan 45 s! ¿Quién parece tener otra palabra?`);
+    return g.timers.push(setTimeout(impVote, 45000));
+  }
+  g.phase = "pista"; g.current = g.order[g.turn];
+  gameSay(`👉 Turno de ${g.current}: escribí tu pista de UNA palabra (30 s).`);
+  g.timers.push(setTimeout(() => { if (game === g && g.phase === "pista") { g.clues.push(`${g.current}: (no dijo nada 🤐)`); g.turn++; impTurn(); } }, 30000));
+}
+function impIntercept(c, sid, text) {
+  if (!game || game.type !== "impostor" || game.phase !== "pista" || c.nick !== game.current) return false;
+  const clue = text.trim().split(/\s+/)[0].slice(0, 25), t = plain(clue);
+  const mine = plain(c.nick === game.impostor ? game.fake : game.word);
+  if (!t) return false;
+  if (t === mine || mine.split(" ").includes(t)) { notice(sid, "🤫 ¡No podés decir tu palabra! Elegí otra pista.", "warn"); return true; }
+  game.clues.push(`${c.nick}: ${clue}`);
+  gameSay(`💡 ${c.nick}: «${clue}»`);
+  game.turn++; game.phase = "espera";
+  game.timers.forEach(clearTimeout); game.timers = [setTimeout(impTurn, 1200)];
+  return true;
+}
+function impVote() {
+  const g = game; if (!g || g.type !== "impostor") return;
+  g.phase = "voto";
+  const opts = g.order.filter((n) => byNick(n));
+  gamePoll("¿Quién es el impostor? 🫣", opts, 40, (counts, votes) => {
+    const top = topVoted(counts), caught = top.length === 1 && opts[top[0]] === g.impostor;
+    if (caught) { for (const n of opts) if (n !== g.impostor) addPoints(n, 2); }
+    else addPoints(g.impostor, 4);
+    gameSay(`${caught ? `🎯 ¡LO ENCONTRARON! El impostor era ${g.impostor}. +2 para el resto.` : `😈 ¡GANA EL IMPOSTOR! Era ${g.impostor} y ${top.length ? `votaron a ${top.map((i) => opts[i]).join(" y ")}` : "nadie votó"}. +4 para ${g.impostor}.`}\n🔑 La palabra era ${g.word.toUpperCase()} y el impostor tenía ${g.fake.toUpperCase()}.`);
+    endGame();
+  });
+}
+
+// ================== 🔪 Asesinato en Gente Rota ==================
+function fallbackMystery(n, tema) {
+  const roles = shuffle(["el/la cocinero/a", "el/la jardinero/a", "el/la sobrino/a heredero/a", "el/la mayordomo/a", "el/la vecino/a chusma", "el/la socio/a del negocio", "el/la ex pareja", "el/la detective retirado/a"]).slice(0, n);
+  const culpable = Math.floor(Math.random() * n);
+  return {
+    titulo: "El último mate de Don Ernesto", escenario: `Una estancia en las afueras${tema ? ` (${tema})` : ""}. Tormenta, luz cortada, todos encerrados.`,
+    victima: "Don Ernesto, el dueño de la estancia, apareció dormido para siempre al lado de su termo.",
+    personajes: roles.map((r, i) => ({ rol: r, secreto: i === culpable ? "Cambiaste la yerba de Don Ernesto por una que te dio un curandero. No querías que muriera… solo que firmara el testamento." : pick(["Discutiste con Don Ernesto esa tarde por plata.", "Le escondías una carta de amor vieja.", "Le robabas facturas de la cocina hace meses.", "Querías comprarle la estancia barata.", "Viste a alguien entrar a la cocina a las 3 de la mañana, pero no sabés quién."]),
+      pista: pick(["Escuchaste un ruido de termo a la madrugada.", "Viste barro en las zapatillas de alguien.", "Encontraste un paquete de yerba sin marca en la basura.", "Alguien preguntó por el testamento antes de la cena.", "La puerta de la cocina estaba abierta a las 3 am."]) })),
+    culpable, arma: "una yerba adulterada", pista_publica: "En la cocina había un paquete de yerba sin marca y un testamento sin firmar.",
+    final: "La yerba adulterada fue la trampa. El testamento nunca se firmó y Don Ernesto se llevó su secreto al más allá… con el mate todavía tibio.",
+  };
+}
+function startAsesinato(starter, tema) {
+  inscription("asesinato", starter, "🔪 ASESINATO EN GENTE ROTA", "A cada uno le llega por privado un personaje, un secreto y una pista. Uno es el asesino (y lo sabe). Interróguense y descubran quién fue.", 50, 3, 8, async (players) => {
+    const g = game;
+    gameSay("🕯️ Preparando el misterio…");
+    let m = null;
+    if (GEMINI_KEY) {
+      m = await aiCall(`Creá un misterio de asesinato corto y divertido (tono de comedia, nada gore ni violento explícito) para jugar en un chat argentino con ${players.length} jugadores${tema ? `, ambientado en: ${tema}` : ""}. Cada jugador interpreta un personaje sospechoso. Uno es el culpable.
+Devolvé SOLO JSON: {"titulo":"...","escenario":"1-2 oraciones","victima":"quién murió y cómo lo encontraron, 1 oración, sin sangre","arma":"...","personajes":[{"rol":"nombre del personaje y oficio","secreto":"algo que oculta (si es el culpable: cómo lo hizo y por qué)","pista":"una pista útil sobre OTRO personaje o el crimen"}],"culpable":índice (0 a ${players.length - 1}) del personaje culpable,"pista_publica":"una pista que se revela a mitad del juego","final":"revelación final en 2-3 oraciones"}
+Tienen que ser exactamente ${players.length} personajes.`);
+      if (!m || !Array.isArray(m.personajes) || m.personajes.length < players.length || !(m.culpable >= 0 && m.culpable < players.length)) m = null;
+    }
+    if (game !== g) return;
+    if (!m) m = fallbackMystery(players.length, tema);
+    g.m = m; g.roles = new Map(); g.culprit = players[m.culpable];
+    players.forEach((n, i) => {
+      const p = m.personajes[i]; g.roles.set(n, p.rol);
+      secretCard(n, i === m.culpable ? "🔪 SOS EL ASESINO" : "🕵️ Tu personaje", `Sos ${p.rol}.\n🤐 Tu secreto: ${p.secreto}\n🔎 Tu pista: ${p.pista}\n\n${i === m.culpable ? "Mentí, desviá sospechas y que no te descubran 😈" : "Contá lo que te convenga, interrogá a los demás y descubrí al asesino."}`);
+    });
+    gameSay(`🔪 ${String(m.titulo).toUpperCase()}\n🏚️ ${m.escenario}\n💀 ${m.victima}\n\n🎭 Sospechosos:\n${players.map((n) => `• ${n} — ${g.roles.get(n)}`).join("\n")}\n\n💬 Tienen 4 minutos para interrogarse. Miren su tarjeta secreta 🤫`);
+    g.timers.push(setTimeout(() => { if (game === g) gameSay(`🔎 NUEVA PISTA: ${m.pista_publica}\n⏳ Quedan 2 minutos.`); }, 120000));
+    g.timers.push(setTimeout(() => { if (game === g) gameSay("⏳ ¡Último minuto! Prepárense para acusar."); }, 180000));
+    g.timers.push(setTimeout(asesinatoVote, 240000));
+  });
+}
+function asesinatoVote() {
+  const g = game; if (!g || g.type !== "asesinato") return;
+  g.phase = "voto";
+  const opts = [...g.roles.keys()].filter((n) => byNick(n));
+  gamePoll("🔪 ¿Quién es el asesino?", opts, 45, (counts, votes) => {
+    const top = topVoted(counts), caught = top.length === 1 && opts[top[0]] === g.culprit;
+    for (const [n, idx] of votes) if (opts[idx] === g.culprit && n !== g.culprit) addPoints(n, 2);
+    if (!caught) addPoints(g.culprit, 5);
+    gameSay(`${caught ? `🚔 ¡ATRAPADO! El asesino era ${g.culprit} (${g.roles.get(g.culprit)}). +2 para quienes lo votaron.` : `😈 ¡EL ASESINO ESCAPÓ! Era ${g.culprit} (${g.roles.get(g.culprit)}). +5 para el/la asesino/a.`}\n🗝️ Arma: ${g.m.arma}\n📜 ${g.m.final}`);
+    endGame();
+  });
 }
 
 // ================== Charla al azar ==================
@@ -1351,6 +1680,7 @@ io.on("connection", (socket) => {
     if (room === "juegos" && text && picIntercept(c, socket.id, text)) return;
     if (room === "juegos" && text && vorIntercept(c, socket.id, text)) return;
     if (room === "juegos" && text && rotosIntercept(c, socket.id, text)) return;
+    if (room === "juegos" && text && (turingIntercept(c, socket.id, text) || fibIntercept(c, socket.id, text) || impIntercept(c, socket.id, text))) return;
     if (room === "juegos") recentPlayers.set(c.nick, now());
     const id = newId();
     const reply = buildReply(p.replyTo, room);
@@ -1463,10 +1793,65 @@ io.on("connection", (socket) => {
 
   // ---- Juicio: el acusado acepta o rechaza ----
   socket.on("juicio-answer", (accept) => juicioAnswer(c, !!accept));
-  socket.on("juicio-start", ({ to, cargo } = {}) => {
+  socket.on("juicio-start", ({ to, cargo, condena } = {}) => {
     if (!c.nick) return;
     if (game) return notice(socket.id, "Ya hay un juego en curso en 🎮 Juegos. Esperá a que termine.");
-    startJuicio(c, socket.id, to, cargo);
+    startJuicio(c, socket.id, to, cargo, condena);
+  });
+
+  // ---- Juegos personalizados ----
+  socket.on("game-custom", (o = {}, cb) => {
+    const fail = (error) => cb && cb({ ok: false, error });
+    if (!c.nick) return;
+    if (c.mutedUntil > now() && !c.admin) return fail("Estás silenciado/a.");
+    if (game) return fail("Ya hay un juego en curso. Esperá a que termine (o /rendirse).");
+    const txt = (x, max) => censor(String(x || "").trim().replace(/\s+/g, " ").slice(0, max)).text;
+    const secs = (v, min, max, def) => Math.min(max, Math.max(min, parseInt(v) || def));
+    switch (o.type) {
+      case "rotos": {
+        const qs = (Array.isArray(o.questions) ? o.questions : []).map((q) => txt(q, 120)).filter((q) => q.length >= 3).slice(0, 10);
+        if (!qs.length) return fail("Escribí al menos una pregunta.");
+        startRotos(c.nick, qs.length, qs, secs(o.secs, 15, 120, 40)); break;
+      }
+      case "trivia": {
+        const qs = (Array.isArray(o.questions) ? o.questions : []).map((x) => ({ q: txt(x?.q, 200), a: String(x?.a || "").split(/\s*[\/|]\s*/).map((y) => txt(y, 60)).filter(Boolean) }))
+          .filter((x) => x.q.length >= 3 && x.a.length).slice(0, 15);
+        if (!qs.length) return fail("Cargá al menos una pregunta con su respuesta.");
+        triviaRound = { left: qs.length, total: qs.length, temas: [], scores: new Map(), custom: qs, creator: c.nick, secs: secs(o.secs, 15, 120, 40) };
+        gameSay(`❓ TRIVIA PERSONALIZADA de ${c.nick}: ${qs.length} pregunta${qs.length === 1 ? "" : "s"}. ¡Atentos!`);
+        startTrivia(""); break;
+      }
+      case "dibujo": {
+        const words = [...new Set((Array.isArray(o.words) ? o.words : []).map((w) => txt(w, 30).toLowerCase()).filter((w) => w.length >= 2))].slice(0, 50);
+        const rounds = Math.min(10, Math.max(1, parseInt(o.rounds) || Math.min(5, words.length || 5)));
+        startPictionary(c, rounds, words, secs(o.secs, 30, 180, 90)); break;
+      }
+      case "ahorcado": {
+        const w = plain(o.word).replace(/[^a-zñ ]/g, "").replace(/\s+/g, " ").trim().slice(0, 30);
+        if (w.replace(/ /g, "").length < 3) return fail("La palabra tiene que tener al menos 3 letras (sin números ni símbolos).");
+        if (censor(w).harm) return fail("Elegí otra palabra.");
+        const lives = Math.min(12, Math.max(3, parseInt(o.lives) || 6));
+        game = { type: "ahorcado", word: w, found: new Set(), wrong: [], lives, excl: c.nick, timer: setTimeout(() => { const g = game; endGame(); gameSay(`⏰ Se terminó el tiempo. La palabra era ${g.word.toUpperCase()}`); }, 5 * 60000) };
+        gameSay(`🪢 AHORCADO PERSONALIZADO de ${c.nick}\n${hangView()}\nEscribí una letra o arriesgá la palabra entera. Tienen ${lives} vidas. (${c.nick} no juega 😉)`); break;
+      }
+      case "numero": {
+        const max = Math.min(9999, Math.max(5, parseInt(o.max) || 100)), sec = secs(o.secs, 30, 600, 180);
+        game = { type: "numero", n: 1 + Math.floor(Math.random() * max), tries: 0, timer: setTimeout(() => { const g = game; endGame(); gameSay(`⏰ Se terminó el tiempo. El número era ${g.n}`); }, sec * 1000) };
+        gameSay(`🔢 Pensé un número del 1 al ${max}. ¡Adivinen! Tienen ${sec >= 60 ? Math.round(sec / 60) + " min" : sec + " s"}.`); break;
+      }
+      case "eliminatorio": startBracket(c.nick, { secs: o.secs, bestOf: o.bestOf }); break;
+      case "vor": startVor(c.nick); break;
+      case "turing": if (!GEMINI_KEY) return fail("Este juego necesita la IA activada."); startTuring(c.nick, Math.min(6, Math.max(2, parseInt(o.mins) || 3))); break;
+      case "mentiroso": startMentiroso(c.nick, Math.min(8, Math.max(1, parseInt(o.rounds) || 3))); break;
+      case "impostor": {
+        const a = txt(o.word, 30), b = txt(o.fake, 30);
+        if ((a || b) && (!a || !b || plain(a) === plain(b))) return fail("Poné las dos palabras (distintas) o dejalas vacías.");
+        startImpostor(c.nick, a && b ? [a, b] : null); break;
+      }
+      case "asesinato": startAsesinato(c.nick, txt(o.tema, 60)); break;
+      default: return fail("Juego desconocido.");
+    }
+    cb && cb({ ok: true });
   });
 
   // ---- Perfil (foto + frase) ----
@@ -1549,8 +1934,8 @@ io.on("connection", (socket) => {
     if (pa === pb) res = "¡Empate! 🤝";
     else { const w = beats[pa] === pb ? d.a : d.b; d.wins[w] = (d.wins[w] || 0) + 1; res = `gana ${w}`; }
     gameSay(`⚔️ ${d.a} ${PPT_EMO[pa]} vs ${PPT_EMO[pb]} ${d.b} → ${res} (${d.wins[d.a] || 0}-${d.wins[d.b] || 0})`);
-    if ((d.wins[d.a] || 0) >= 2) return finishDuel(d, d.a, d.b);
-    if ((d.wins[d.b] || 0) >= 2) return finishDuel(d, d.b, d.a);
+    if ((d.wins[d.a] || 0) >= (d.need || 2)) return finishDuel(d, d.a, d.b);
+    if ((d.wins[d.b] || 0) >= (d.need || 2)) return finishDuel(d, d.b, d.a);
     pptAsk(d);
   });
 
@@ -1740,6 +2125,8 @@ io.on("connection", (socket) => {
       if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
       gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
     }
+    if (game?.type === "impostor" && game.impostor === c.nick) { gameSay(`🫣 ${c.nick} se fue… ¡y era el impostor! Fin del juego.`); endGame(); }
+    if (game?.type === "asesinato" && game.culprit === c.nick) { gameSay(`🔪 ${c.nick} huyó de la escena… ¡era el asesino! Fin del juego.`); endGame(); }
     if (game?.type === "juicio" && game.acusado === c.nick) { gameSay(`⚖️ ${c.nick} se fugó del tribunal 🏃 Juicio suspendido.`); endGame(); }
     if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`🖍️ ${c.nick} se desconectó mientras dibujaba.`); endPicRound(null); }
     users.delete(c.nick.toLowerCase());
