@@ -22,8 +22,9 @@ const lockedRooms = new Set();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim(); // clave del dueño (👑), se configura en Render
 // Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
 const modKeys = new Map(); // clave -> nombre del moderador
+const envModKeys = new Set(); // las que vienen de MOD_KEYS en Render
 String(process.env.MOD_KEYS || "").split(",").map((x) => x.trim()).filter(Boolean).forEach((pair) => {
-  const i = pair.lastIndexOf(":"); if (i > 0) modKeys.set(pair.slice(i + 1).trim(), pair.slice(0, i).trim());
+  const i = pair.lastIndexOf(":"); if (i > 0) { modKeys.set(pair.slice(i + 1).trim(), pair.slice(0, i).trim()); envModKeys.add(pair.slice(i + 1).trim()); }
 });
 const genKey = () => Array.from({ length: 8 }, () => "abcdefghjkmnpqrstuvwxyz23456789"[Math.floor(Math.random() * 31)]).join("");
 const MAX_MSG = 500;
@@ -132,7 +133,7 @@ function mute(c, id, minutes, reason, by = BOT) {
 function kick(id, reason, ban = false, by = BOT) {
   const c = clients.get(id);
   if (!c) return;
-  if (ban) bans.set(c.ip, now() + 24 * 3600000);
+  if (ban) { bans.set(c.ip, now() + 24 * 3600000); dirty(); }
   io.to(id).emit("kicked", { reason, ban });
   botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? "baneado/a por 24 h" : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
   setTimeout(() => io.sockets.sockets.get(id)?.disconnect(true), 300);
@@ -215,7 +216,7 @@ function runCommand(c, id, text, room = "general") {
 
   if (cmd === "ayuda") {
     let help = "Comandos: /ayuda · /reglas · /admin <clave> · /juegos (en la sala Juegos)";
-    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves)";
+    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo" +
       "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
@@ -242,7 +243,7 @@ function runCommand(c, id, text, room = "general") {
     io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  const MOD_ONLY = ["mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  const MOD_ONLY = ["db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
   if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
     ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
     : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
@@ -252,6 +253,12 @@ function runCommand(c, id, text, room = "general") {
   const target = byNick(targetNick);
 
   // Gestión de moderadores (solo el dueño)
+  if (cmd === "db") {
+    if (!c.owner) return notice(id, "Solo el dueño puede ver el estado de la base de datos.");
+    if (!db.on) return notice(id, "💾 Base de datos: ❌ desactivada. Faltan UPSTASH_REDIS_REST_URL y UPSTASH_REDIS_REST_TOKEN en Render.", "mod");
+    return redis(["PING"]).then(() => notice(id, `💾 Base de datos: ✅ conectada.\nÚltimo guardado: ${db.lastSave ? new Date(db.lastSave).toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) : "todavía nada"}${db.pending ? " (hay cambios por guardar)" : ""}\nGuardando: ${modKeys.size} claves de mods · ${bans.size} baneos · ${points.size} en el ranking`, "mod"))
+      .catch((e) => notice(id, `💾 Base de datos: ❌ error: ${e.message}. Revisá la URL y el token en Render.`, "warn"));
+  }
   if (["mod", "desmod", "mods", "crearclave", "quitarclave"].includes(cmd)) {
     if (!c.owner) return notice(id, "Solo el dueño puede nombrar o quitar moderadores.");
     if (cmd === "crearclave") {
@@ -259,15 +266,15 @@ function runCommand(c, id, text, room = "general") {
       if (!name) return notice(id, "Uso: /crearclave <nombre>");
       const prev = [...modKeys].find(([, n]) => n.toLowerCase() === name.toLowerCase());
       if (prev) return notice(id, `${prev[1]} ya tiene clave: ${prev[0]}\nSi querés una nueva, primero /quitarclave ${prev[1]}`, "mod");
-      const key = genKey(); modKeys.set(key, name);
-      return notice(id, `🔑 Clave creada para ${name}: ${key}\nPasásela por WhatsApp. Cuando entre al chat (con cualquier apodo) escribe: /admin ${key}\nPara que no se pierda si Render se reinicia, agregá en MOD_KEYS: ${name}:${key}`, "mod");
+      const key = genKey(); modKeys.set(key, name); dirty();
+      return notice(id, `🔑 Clave creada para ${name}: ${key}\nPasásela por WhatsApp. Cuando entre al chat (con cualquier apodo) escribe: /admin ${key}` + (db.on ? "\n💾 Queda guardada en la base de datos." : `\nPara que no se pierda si Render se reinicia, agregá en MOD_KEYS: ${name}:${key}`), "mod");
     }
     if (cmd === "quitarclave") {
       const name = arg.trim().toLowerCase();
       if (!name) return notice(id, "Uso: /quitarclave <nombre>");
       const keys = [...modKeys].filter(([, n]) => n.toLowerCase() === name).map(([k]) => k);
       if (!keys.length) return notice(id, `No hay ninguna clave a nombre de "${arg.trim()}". Mirá la lista con /mods`, "mod");
-      keys.forEach((k) => modKeys.delete(k));
+      keys.forEach((k) => modKeys.delete(k)); dirty();
       let echados = 0;
       for (const [sid, x] of clients) if (x.modKey && keys.includes(x.modKey)) {
         x.admin = false; x.modKey = ""; echados++;
@@ -285,15 +292,16 @@ function runCommand(c, id, text, room = "general") {
     if (target.c.owner) return notice(id, "Ya sos el dueño 😄");
     if (cmd === "mod") {
       let key = [...modKeys].find(([, n]) => n.toLowerCase() === target.c.nick.toLowerCase())?.[0];
-      if (!key) { key = genKey(); modKeys.set(key, target.c.nick); }
+      if (!key) { key = genKey(); modKeys.set(key, target.c.nick); dirty(); }
       target.c.admin = true; target.c.modKey = key;
       pushUsers(); io.to(target.id).emit("admin", { mod: true, owner: false });
       notice(target.id, `🛡️ ${c.nick} te nombró moderador/a. Tu clave es: ${key}\nGuardala: si te desconectás, escribí /admin ${key} para recuperar el rol.`, "mod");
       botSay(`🛡️ ${target.c.nick} ahora es moderador/a.`);
-      return notice(id, `Listo. Clave de ${target.c.nick}: ${key}\nPara que sea permanente (aunque se reinicie el servidor), agregá en Render la variable MOD_KEYS con: ${target.c.nick}:${key}`, "mod");
+      return notice(id, `Listo. Clave de ${target.c.nick}: ${key}` + (db.on ? "\n💾 Queda guardada en la base de datos." : `\nPara que sea permanente (aunque se reinicie el servidor), agregá en Render la variable MOD_KEYS con: ${target.c.nick}:${key}`), "mod");
     }
     // desmod
     for (const [k, n] of modKeys) if (n.toLowerCase() === target.c.nick.toLowerCase()) modKeys.delete(k);
+    dirty();
     target.c.admin = false;
     pushUsers(); io.to(target.id).emit("admin", { mod: false, owner: false });
     notice(target.id, "Ya no sos moderador/a.");
@@ -324,16 +332,16 @@ function runCommand(c, id, text, room = "general") {
       if (!target) return notice(id, "No encuentro a ese usuario.");
       return kick(target.id, reason, true, c.nick);
     case "desbanear-todo":
-      bans.clear(); return notice(id, "Se levantaron todos los baneos.", "mod");
+      bans.clear(); dirty(); return notice(id, "Se levantaron todos los baneos.", "mod");
     case "fijar":
-      pinned = arg.slice(0, 300); io.emit("pinned", pinned); return;
+      pinned = arg.slice(0, 300); io.emit("pinned", pinned); dirty(); return;
     case "desfijar":
-      pinned = ""; io.emit("pinned", ""); return;
+      pinned = ""; io.emit("pinned", ""); dirty(); return;
     case "anuncio":
       if (!arg) return;
       return io.emit("announce", { text: arg.slice(0, 400), ts: now() });
     case "lento":
-      slowMode = Math.min(120, Math.max(0, parseInt(arg) || 0));
+      slowMode = Math.min(120, Math.max(0, parseInt(arg) || 0)); dirty();
       return botSay(slowMode ? `🐢 Modo lento activado: un mensaje cada ${slowMode} s.` : "🐇 Modo lento desactivado.");
     case "limpiar":
       io.emit("clear", { room }); return botSay("🧹 Un moderador limpió la sala.", room);
@@ -343,6 +351,7 @@ function runCommand(c, id, text, room = "general") {
       if (!w) return;
       if (arg[0] === "+" && !BAD_WORDS.includes(w)) BAD_WORDS.push(w);
       if (arg[0] === "-") BAD_WORDS = BAD_WORDS.filter((x) => x !== w);
+      dirty();
       return notice(id, `Filtro actualizado (${BAD_WORDS.length} palabras).`, "mod");
     }
     case "info": {
@@ -393,7 +402,7 @@ function runCommand(c, id, text, room = "general") {
     }
     case "cerrar": case "abrir": {
       if (room === "mods") return notice(id, "La sala de moderación no se puede cerrar.");
-      cmd === "cerrar" ? lockedRooms.add(room) : lockedRooms.delete(room);
+      cmd === "cerrar" ? lockedRooms.add(room) : lockedRooms.delete(room); dirty();
       io.emit("room-lock", { room, locked: cmd === "cerrar" });
       return botSay(cmd === "cerrar" ? "🔒 Sala cerrada por moderación. Por ahora solo escriben los moderadores." : "🔓 Sala abierta de nuevo. ¡Pueden escribir!", room);
     }
@@ -413,26 +422,30 @@ function runCommand(c, id, text, room = "general") {
 
 // ---------- Fotos y GIFs ----------
 const IMG_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const AUDIO_RE = /^data:audio\/(webm|ogg|mp4|mpeg|aac|x-m4a|wav)(;codecs=[\w.,"-]+)?;base64,[A-Za-z0-9+/=]+$/i;
 const GIF_RE = /^https:\/\/(media\d*|i)\.giphy\.com\/[\w\-./?=&%]+$/;
 function checkMedia(c, id, p) {
   const media = {};
-  if ((p.image || p.gif) && c.noMedia && !c.admin) { notice(id, "📷 Un moderador te sacó el permiso de mandar fotos y GIFs.", "warn"); return null; }
+  if ((p.image || p.gif || p.audio) && c.noMedia && !c.admin) { notice(id, "📷 Un moderador te sacó el permiso de mandar fotos, GIFs y audios.", "warn"); return null; }
   if (p.image) {
     if (typeof p.image !== "string" || p.image.length > 3.6e6 || !IMG_RE.test(p.image)) { notice(id, "📷 La imagen no es válida o es muy pesada (máx. ~2,5 MB).", "warn"); return null; }
     media.image = p.image;
+  } else if (p.audio) {
+    if (typeof p.audio !== "string" || p.audio.length > 1.8e6 || !AUDIO_RE.test(p.audio)) { notice(id, "🎤 El audio no es válido o es muy largo (máx. 1 minuto).", "warn"); return null; }
+    media.audio = p.audio;
   } else if (p.gif) {
     if (typeof p.gif !== "string" || p.gif.length > 500 || !GIF_RE.test(p.gif)) { notice(id, "GIF no válido.", "warn"); return null; }
     media.gif = p.gif;
   } else return {};
   const t = now();
   if (!c.admin) {
-    if (t - c.joinedAt < 60000) { notice(id, "📷 Podés mandar fotos y GIFs después de tu primer minuto en el chat.", "warn"); return null; }
-    if (t - c.lastMediaAt < 8000) { notice(id, "📷 Esperá unos segundos antes de mandar otra foto o GIF.", "warn"); return null; }
+    if (t - c.joinedAt < 60000) { notice(id, "📷 Podés mandar fotos, GIFs y audios después de tu primer minuto en el chat.", "warn"); return null; }
+    if (t - c.lastMediaAt < 8000) { notice(id, "📷 Esperá unos segundos antes de mandar otra foto, GIF o audio.", "warn"); return null; }
   }
   c.lastMediaAt = t;
   return media;
 }
-const mediaLabel = (m) => m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : "";
+const mediaLabel = (m) => m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : m.audio ? "🎤 Audio" : "";
 
 // ---------- Responder mensajes ----------
 function buildReply(replyTo, room, me, other) {
@@ -446,7 +459,7 @@ function buildReply(replyTo, room, me, other) {
 // ================== Juegos ==================
 const GAME_CMDS = ["ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
 const points = new Map(); // apodo -> puntos
-const addPoints = (nick, n) => points.set(nick, (points.get(nick) || 0) + n);
+const addPoints = (nick, n) => { points.set(nick, (points.get(nick) || 0) + n); dirty(); };
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const plain = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9ñ ]/g, "").replace(/\s+/g, " ").trim();
 let game = null; // juego activo en la sala
@@ -768,8 +781,8 @@ io.on("connection", (socket) => {
     const room = ROOMS.includes(p.room) ? p.room : "general";
     if (room === "mods" && !c.admin) return;
     const raw = String(p.text || "").trim();
-    if (raw.startsWith("/") && !p.image && !p.gif) return runCommand(c, socket.id, raw, room);
-    const hasMedia = !!(p.image || p.gif);
+    if (raw.startsWith("/") && !p.image && !p.gif && !p.audio) return runCommand(c, socket.id, raw, room);
+    const hasMedia = !!(p.image || p.gif || p.audio);
     const text = checkMessage(c, socket.id, raw, room, hasMedia);
     if (text === null) return;
     const media = checkMedia(c, socket.id, p);
@@ -782,15 +795,15 @@ io.on("connection", (socket) => {
     if (room === "juegos" && text) gameGuess(c.nick, text);
   });
 
-  socket.on("private-message", ({ to, text: raw, replyTo, image, gif } = {}, cb) => {
+  socket.on("private-message", ({ to, text: raw, replyTo, image, gif, audio } = {}, cb) => {
     if (!c.nick || typeof cb !== "function") return;
-    if (String(raw || "").trim().startsWith("/") && !image && !gif) { runCommand(c, socket.id, String(raw).trim()); return cb({ ok: false, silent: true }); }
+    if (String(raw || "").trim().startsWith("/") && !image && !gif && !audio) { runCommand(c, socket.id, String(raw).trim()); return cb({ ok: false, silent: true }); }
     const target = byNick(to);
     if (!target) return cb({ ok: false, error: "Ese usuario se desconectó." });
     if (blockedPair(c, target.c)) return cb({ ok: false, error: c.blocked.has(target.c.nick.toLowerCase()) ? `Tenés bloqueado/a a ${target.c.nick}. Desbloqueá para escribirle.` : "No podés enviarle mensajes a esta persona." });
-    const text = checkMessage(c, socket.id, raw, "private", !!(image || gif));
+    const text = checkMessage(c, socket.id, raw, "private", !!(image || gif || audio));
     if (text === null) return cb({ ok: false, silent: true });
-    const media = checkMedia(c, socket.id, { image, gif });
+    const media = checkMedia(c, socket.id, { image, gif, audio });
     if (!media) return cb({ ok: false, silent: true });
     const id = newId();
     remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media) });
@@ -889,5 +902,67 @@ if (SELF_URL && typeof fetch === "function") {
   setInterval(() => fetch(SELF_URL + "/ping").catch(() => {}), 10 * 60 * 1000);
 }
 
+// ================== Base de datos (Upstash Redis, gratis) ==================
+// En Render: UPSTASH_REDIS_REST_URL y UPSTASH_REDIS_REST_TOKEN
+const DB_URL = (process.env.UPSTASH_REDIS_REST_URL || "").trim().replace(/\/$/, "");
+const DB_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+const DB_KEY = "genterota:estado";
+const db = { on: !!(DB_URL && DB_TOKEN), loaded: false, lastSave: 0, lastError: "", saving: false, pending: false };
+async function redis(cmd) {
+  const r = await fetch(DB_URL, { method: "POST", headers: { Authorization: `Bearer ${DB_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(cmd) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+  return j.result;
+}
+function snapshot() {
+  const t = now();
+  return {
+    v: 1,
+    modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
+    bans: [...bans].filter(([, until]) => until > t),
+    points: [...points],
+    pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms],
+  };
+}
+let saveTimer = null;
+function dirty() {
+  if (!db.on || !db.loaded) return;
+  db.pending = true;
+  if (saveTimer) return;
+  // Guarda como mucho una vez cada 20 s (cuida el cupo gratis de 500.000 comandos/mes)
+  const wait = Math.max(2000, 20000 - (now() - db.lastSave));
+  saveTimer = setTimeout(saveNow, wait);
+}
+async function saveNow() {
+  saveTimer = null;
+  if (!db.on || !db.pending || db.saving) return;
+  db.saving = true; db.pending = false;
+  try { await redis(["SET", DB_KEY, JSON.stringify(snapshot())]); db.lastSave = now(); db.lastError = ""; }
+  catch (e) { db.lastError = e.message; db.pending = true; console.error("DB guardar:", e.message); }
+  finally { db.saving = false; if (db.pending) dirty(); }
+}
+async function loadState() {
+  if (!db.on) { console.log("Base de datos: desactivada (faltan variables UPSTASH_REDIS_REST_*)"); return; }
+  try {
+    const raw = await redis(["GET", DB_KEY]);
+    if (raw) {
+      const st = JSON.parse(raw);
+      (st.modKeys || []).forEach(([k, n]) => { if (!modKeys.has(k)) modKeys.set(k, n); });
+      (st.bans || []).forEach(([ip, until]) => { if (until > now()) bans.set(ip, until); });
+      (st.points || []).forEach(([n, p]) => points.set(n, p));
+      pinned = st.pinned || ""; slowMode = st.slowMode || 0;
+      if (Array.isArray(st.badWords)) BAD_WORDS = st.badWords;
+      (st.locked || []).forEach((r) => lockedRooms.add(r));
+      console.log(`Base de datos: cargado (${modKeys.size} claves de mods, ${bans.size} baneos, ${points.size} en el ranking)`);
+    } else console.log("Base de datos: conectada (vacía, primera vez)");
+    db.loaded = true;
+  } catch (e) { db.lastError = e.message; console.error("DB cargar:", e.message); db.loaded = true; }
+}
+// Un toque por día para que Upstash no archive la base por inactividad
+setInterval(() => { if (db.on) redis(["GET", DB_KEY]).catch(() => {}); }, 24 * 3600000);
+// Render avisa antes de apagar: guardamos lo pendiente
+process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await saveNow().catch(() => {}); process.exit(0); });
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Gente Rota en http://localhost:${PORT}`));
+Promise.race([loadState(), new Promise((ok) => setTimeout(ok, 6000))]).finally(() =>
+  server.listen(PORT, () => console.log(`Gente Rota en http://localhost:${PORT}`)));
