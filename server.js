@@ -18,7 +18,13 @@ app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY 
 const BOT = "Guardián";
 const CRUPIER = "Crupier";
 const ROOMS = ["general", "juegos"];
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ""; // se configura en Render
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ""; // clave del dueño (👑), se configura en Render
+// Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
+const modKeys = new Map(); // clave -> nombre del moderador
+String(process.env.MOD_KEYS || "").split(",").map((x) => x.trim()).filter(Boolean).forEach((pair) => {
+  const i = pair.lastIndexOf(":"); if (i > 0) modKeys.set(pair.slice(i + 1).trim(), pair.slice(0, i).trim());
+});
+const genKey = () => Array.from({ length: 8 }, () => "abcdefghjkmnpqrstuvwxyz23456789"[Math.floor(Math.random() * 31)]).join("");
 const MAX_MSG = 500;
 const STATUSES = ["disponible", "hablar", "escucho", "ausente", "nomolestar"];
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
@@ -56,11 +62,22 @@ const norm = (s) =>
     .replace(/@/g, "a").replace(/\$/g, "s").replace(/(.)\1{2,}/g, "$1$1");
 const newId = () => (++msgCounter).toString(36) + Math.random().toString(36).slice(2, 6);
 const byNick = (n) => { const id = users.get(String(n || "").toLowerCase()); return id ? { id, c: clients.get(id) } : null; };
-const userList = () =>
-  [...clients.values()].filter((c) => c.nick)
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin }))
+// Bloqueo mutuo: si uno bloquea al otro, no se leen. No aplica a moderadores (no se los puede esquivar).
+const blockedPair = (a, b) => a !== b && a.nick && b.nick && !a.admin && !b.admin &&
+  (a.blocked.has(b.nick.toLowerCase()) || b.blocked.has(a.nick.toLowerCase()));
+const role = (c) => c.owner ? "owner" : c.admin ? "mod" : null;
+const userList = (viewer) =>
+  [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
-const pushUsers = () => io.emit("users", userList());
+const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
+// Emite a todos menos a quienes tienen bloqueo con el remitente
+function emitFrom(sender, event, payload, skipSelf = false) {
+  for (const [sid, rc] of clients) {
+    if (!rc.nick || (skipSelf && rc === sender) || blockedPair(rc, sender)) continue;
+    io.to(sid).emit(event, payload);
+  }
+}
 
 function remember(id, data) {
   messages.set(id, { ...data, text: String(data.text || "").slice(0, 160), reactions: {} });
@@ -184,24 +201,63 @@ function runCommand(c, id, text, room = "general") {
 
   if (cmd === "ayuda") {
     let help = "Comandos: /ayuda · /reglas · /admin <clave> · /juegos (en la sala Juegos)";
+    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador) · /desmod <apodo> · /mods (ver moderadores)";
     if (c.admin) help += "\nModeración: /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo · /fijar <texto> · /desfijar · /anuncio <texto> · /lento <seg> · /limpiar · /filtro +palabra | -palabra | lista · /reportes";
     return notice(id, help);
   }
   if (cmd === "admin") {
-    if (!ADMIN_PASSWORD) return notice(id, "El modo admin no está configurado en el servidor.");
     if (c.adminTries >= 5) return notice(id, "Demasiados intentos.");
     c.adminTries++;
-    if (arg !== ADMIN_PASSWORD) return notice(id, "Clave incorrecta.", "warn");
-    c.admin = true;
-    pushUsers();
-    io.to(id).emit("admin", true);
-    return notice(id, "🛡️ Sos moderador/a. Escribí /ayuda para ver los comandos.", "mod");
+    if (ADMIN_PASSWORD && arg === ADMIN_PASSWORD) {
+      c.admin = true; c.owner = true;
+      pushUsers(); io.to(id).emit("admin", { mod: true, owner: true });
+      return notice(id, "👑 Entraste como dueño/a. Podés nombrar moderadores con /mod <apodo>. Escribí /ayuda para ver todo.", "mod");
+    }
+    if (arg && modKeys.has(arg)) {
+      c.admin = true;
+      pushUsers(); io.to(id).emit("admin", { mod: true, owner: false });
+      return notice(id, "🛡️ Sos moderador/a. Escribí /ayuda para ver los comandos.", "mod");
+    }
+    return notice(id, "Clave incorrecta.", "warn");
   }
   if (!c.admin) return notice(id, "Comando desconocido o sin permiso. Probá /ayuda.");
 
   const [targetNick, ...why] = arg.split(" ");
   const reason = why.join(" ") || "Decisión de moderación";
   const target = byNick(targetNick);
+
+  // Gestión de moderadores (solo el dueño)
+  if (["mod", "desmod", "mods"].includes(cmd)) {
+    if (!c.owner) return notice(id, "Solo el dueño puede nombrar o quitar moderadores.");
+    if (cmd === "mods") {
+      const online = [...clients.values()].filter((x) => x.admin && !x.owner).map((x) => x.nick);
+      const keys = [...modKeys].map(([k, n]) => `${n} (clave: ${k})`);
+      return notice(id, `🛡️ Conectados ahora: ${online.join(", ") || "ninguno"}\n🔑 Claves activas: ${keys.join(" · ") || "ninguna"}`, "mod");
+    }
+    if (!target) return notice(id, "No encuentro a ese usuario. Tiene que estar conectado.");
+    if (target.c.owner) return notice(id, "Ya sos el dueño 😄");
+    if (cmd === "mod") {
+      let key = [...modKeys].find(([, n]) => n.toLowerCase() === target.c.nick.toLowerCase())?.[0];
+      if (!key) { key = genKey(); modKeys.set(key, target.c.nick); }
+      target.c.admin = true;
+      pushUsers(); io.to(target.id).emit("admin", { mod: true, owner: false });
+      notice(target.id, `🛡️ ${c.nick} te nombró moderador/a. Tu clave es: ${key}\nGuardala: si te desconectás, escribí /admin ${key} para recuperar el rol.`, "mod");
+      botSay(`🛡️ ${target.c.nick} ahora es moderador/a.`);
+      return notice(id, `Listo. Clave de ${target.c.nick}: ${key}\nPara que sea permanente (aunque se reinicie el servidor), agregá en Render la variable MOD_KEYS con: ${target.c.nick}:${key}`, "mod");
+    }
+    // desmod
+    for (const [k, n] of modKeys) if (n.toLowerCase() === target.c.nick.toLowerCase()) modKeys.delete(k);
+    target.c.admin = false;
+    pushUsers(); io.to(target.id).emit("admin", { mod: false, owner: false });
+    notice(target.id, "Ya no sos moderador/a.");
+    return notice(id, `${target.c.nick} ya no es moderador/a. (Si estaba en MOD_KEYS de Render, sacalo de ahí también.)`, "mod");
+  }
+
+  // Los moderadores no pueden sancionar a otros moderadores ni al dueño
+  if (target && target.c.admin && !c.owner && ["silenciar", "mute", "expulsar", "kick", "banear", "ban"].includes(cmd))
+    return notice(id, "No podés sancionar a otro moderador. Hablalo con el dueño.");
+  if (target && target.c.owner && ["silenciar", "mute", "expulsar", "kick", "banear", "ban"].includes(cmd))
+    return notice(id, "No se puede sancionar al dueño.");
 
   switch (cmd) {
     case "silenciar": case "mute": {
@@ -283,7 +339,7 @@ function buildReply(replyTo, room, me, other) {
 }
 
 // ================== Juegos ==================
-const GAME_CMDS = ["juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
+const GAME_CMDS = ["ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
 const points = new Map(); // apodo -> puntos
 const addPoints = (nick, n) => points.set(nick, (points.get(nick) || 0) + n);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -356,30 +412,63 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 const TOPICS = ["historia argentina", "geografía del mundo", "ciencia", "fútbol", "música argentina", "cine", "series", "videojuegos", "animales",
   "comida", "literatura", "historia universal", "deportes", "tecnología", "cuerpo humano", "espacio y astronomía", "rock nacional", "mitología", "arte", "idiomas"];
 const recentQs = [];
-let triviaRound = null; // { left, total, tema, scores: Map }
+let triviaRound = null; // { left, total, temas: [], scores: Map }
+const roundTema = () => triviaRound?.temas.length ? triviaRound.temas[(triviaRound.total - triviaRound.left) % triviaRound.temas.length] : "";
 
-async function aiQuestion(tema) {
-  if (!GEMINI_KEY || typeof fetch !== "function") return null;
-  const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre: ${tema}. Dificultad media, apta para un chat de amigos adultos.
-La respuesta tiene que ser corta (1 a 3 palabras o un número), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
-No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
-Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula"],"dato":"un dato curioso breve sobre la respuesta"}`;
+let aiLastError = "";
+let aiWorkingModel = "";
+// Prueba el modelo configurado y, si no existe, otros parecidos
+const MODELS = [...new Set([GEMINI_MODEL, "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"])];
+function explainGemini(status, body) {
+  const b = String(body || "");
+  if (status === 400 && /API key not valid|API_KEY_INVALID/i.test(b)) return "la clave de Gemini no es válida (revisá que esté bien copiada en Render, sin espacios)";
+  if (status === 403 && /referer|referrer|BLOCKED|restricted|android|ios/i.test(b)) return "la clave de Gemini tiene restricciones (solo funciona desde otra web/app). Creá una clave nueva sin restricciones";
+  if (status === 403 && /SERVICE_DISABLED|has not been used|disabled/i.test(b)) return "la API de Gemini no está habilitada en ese proyecto de Google. Creá la clave desde aistudio.google.com";
+  if (status === 403) return "Google rechazó la clave (403). Probá con una clave nueva de aistudio.google.com";
+  if (status === 429) return "se alcanzó el límite gratis de Gemini por ahora. Probá en un rato";
+  if (status === 404) return "el modelo de IA no está disponible";
+  if (status >= 500) return "Gemini tuvo un error de su lado. Probá de nuevo";
+  return `Gemini respondió un error ${status}`;
+}
+async function callGemini(model, prompt) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 10000);
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST", signal: ctrl.signal,
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 1 } }),
     });
-    clearTimeout(to);
-    if (!r.ok) { console.error("Gemini", r.status, (await r.text()).slice(0, 200)); return null; }
-    const data = await r.json();
-    const q = JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
-    if (!q.pregunta || !q.respuesta) return null;
-    const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map(plain).filter(Boolean))];
-    return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), ai: true };
-  } catch (e) { console.error("Gemini error:", e.message); return null; }
+    if (!r.ok) { const body = await r.text(); console.error("Gemini", model, r.status, body.slice(0, 300)); return { status: r.status, body }; }
+    return { data: await r.json() };
+  } finally { clearTimeout(to); }
+}
+async function aiQuestion(tema) {
+  if (!GEMINI_KEY) { aiLastError = "la IA no está activada: falta GEMINI_API_KEY en Render (Environment)"; return null; }
+  if (typeof fetch !== "function") { aiLastError = "la versión de Node del servidor es muy vieja"; return null; }
+  const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
+La respuesta tiene que ser corta (1 a 3 palabras o un número), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
+No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
+Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula"],"dato":"un dato curioso breve sobre la respuesta"}`;
+  const models = aiWorkingModel ? [aiWorkingModel, ...MODELS.filter((m) => m !== aiWorkingModel)] : MODELS;
+  for (const model of models) {
+    try {
+      const res = await callGemini(model, prompt);
+      if (res.status === 404) { aiLastError = explainGemini(404); continue; } // probar el siguiente modelo
+      if (res.status) { aiLastError = explainGemini(res.status, res.body); return null; }
+      const raw = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const q = JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim() || "{}");
+      if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
+      aiWorkingModel = model; aiLastError = "";
+      const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map(plain).filter(Boolean))];
+      return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), ai: true };
+    } catch (e) {
+      console.error("Gemini error:", model, e.message);
+      aiLastError = e.name === "AbortError" ? "Gemini tardó demasiado en responder" : "no se pudo conectar con Gemini (" + e.message + ")";
+      return null;
+    }
+  }
+  return null;
 }
 function bankQuestion() {
   const pool = TRIVIA.filter(([q]) => !recentQs.includes(q));
@@ -405,7 +494,11 @@ function isCorrect(guess, answers) {
 async function startTrivia(tema) {
   game = { type: "cargando" };
   const t = tema || pick(TOPICS);
-  const q = (await aiQuestion(t)) || bankQuestion();
+  let q = await aiQuestion(t);
+  if (!q) {
+    q = bankQuestion();
+    if (tema) gameSay(`⚠️ No pude hacer una pregunta de "${tema}": ${aiLastError}. Va una general.`);
+  }
   recentQs.push(q.q); if (recentQs.length > 40) recentQs.shift();
   const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
   game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato,
@@ -422,7 +515,10 @@ function finishTrivia(winner) {
   } else gameSay(`⏰ ¡Tiempo! Nadie acertó. Era: ${g.shown}${extra}`);
   if (triviaRound) {
     triviaRound.left--;
-    if (triviaRound.left > 0) { const tema = triviaRound.tema; setTimeout(() => { if (!game && triviaRound) startTrivia(tema); }, 4000); }
+    if (triviaRound.left > 0) {
+      if (triviaRound.left % 5 === 0) gameSay(`📊 Van ${triviaRound.total - triviaRound.left}/${triviaRound.total}. ` + ([...triviaRound.scores].sort((a, b) => b[1] - a[1]).map(([n, p]) => `${n}: ${p}`).join(" · ") || "Nadie sumó todavía"));
+      setTimeout(() => { if (!game && triviaRound) startTrivia(roundTema()); }, 4000);
+    }
     else {
       const res = [...triviaRound.scores].sort((a, b) => b[1] - a[1]);
       triviaRound = null;
@@ -440,8 +536,15 @@ const GALLOWS = ["😀", "😐", "😕", "😟", "😨", "😱", "💀"];
 
 function gameCommand(c, id, cmd, arg) {
   switch (cmd) {
+    case "ia": {
+      if (!GEMINI_KEY) return gameSay("🤖 IA: ❌ desactivada. Falta cargar GEMINI_API_KEY en Render → Environment.");
+      gameSay("🤖 Probando la IA…");
+      return aiQuestion("cultura general").then((q) => gameSay(q
+        ? `🤖 IA: ✅ funciona (modelo ${aiWorkingModel}). Probá /trivia química`
+        : `🤖 IA: ❌ falla: ${aiLastError}.`));
+    }
     case "juegos":
-      return notice(id, "🎮 Juegos: /trivia [tema] · /trivia ronda [tema] (5 preguntas) · /numero · /ahorcado · /ppt piedra|papel|tijera · /dado [caras] · /moneda · /bola <pregunta> · /ranking · /rendirse (corta el juego en curso)\nEn trivia, número y ahorcado respondés escribiendo normal en la sala. ¡El primero que acierta suma puntos!");
+      return notice(id, "🎮 Juegos: /trivia [tema] · /trivia ronda [cantidad] [temas] (ej: /trivia ronda 10 cine, fútbol) · /numero · /ahorcado · /ppt piedra|papel|tijera · /dado [caras] · /moneda · /bola <pregunta> · /ranking · /rendirse (corta el juego en curso) · /ia (estado de la IA)\nEn trivia, número y ahorcado respondés escribiendo normal en la sala. ¡El primero que acierta suma puntos!");
     case "dado": {
       const caras = Math.min(1000, Math.max(2, parseInt(arg) || 6));
       return gameSay(`🎲 ${c.nick} tiró un dado de ${caras} caras y salió… ${1 + Math.floor(Math.random() * caras)}`);
@@ -472,11 +575,15 @@ function gameCommand(c, id, cmd, arg) {
         let tema = arg.trim();
         if (/^ronda\b/i.test(tema)) {
           tema = tema.replace(/^ronda\s*/i, "");
-          triviaRound = { left: 5, total: 5, tema, scores: new Map() };
-          gameSay(`🏁 ${c.nick} arrancó una RONDA de 5 preguntas${tema ? " sobre " + tema : ""}. ¡Atentos!`);
+          const m = tema.match(/^(\d+)\s*/);
+          const total = Math.min(30, Math.max(3, m ? parseInt(m[1]) : 5));
+          if (m) tema = tema.slice(m[0].length);
+          const temas = tema.split(/\s*[,;]\s*|\s+y\s+/).map((t) => t.trim().slice(0, 40)).filter(Boolean).slice(0, 6);
+          triviaRound = { left: total, total, temas, scores: new Map() };
+          gameSay(`🏁 ${c.nick} arrancó una RONDA de ${total} preguntas${temas.length ? " sobre " + temas.join(", ") : ""}. ¡Atentos!`);
+          return startTrivia(roundTema());
         }
-        if (tema && !GEMINI_KEY) notice(id, "ℹ️ Los temas personalizados necesitan la IA activada. Va una pregunta al azar.");
-        return startTrivia(GEMINI_KEY ? tema.slice(0, 60) : "");
+        return startTrivia(tema.slice(0, 60));
       }
       if (cmd === "ahorcado") {
         game = { type: "ahorcado", word: pick(WORDS), found: new Set(), wrong: [], timer: setTimeout(() => { const g = game; endGame(); gameSay(`⏰ Se terminó el tiempo. La palabra era ${g.word.toUpperCase()}`); }, 5 * 60000) };
@@ -528,14 +635,14 @@ io.on("connection", (socket) => {
   }
 
   const c = {
-    nick: "", status: "disponible", admin: false, ip, joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
+    nick: "", status: "disponible", admin: false, owner: false, ip, joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
   };
   clients.set(socket.id, c);
 
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
-    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(), pinned, slowMode });
+    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
@@ -545,8 +652,8 @@ io.on("connection", (socket) => {
 
     c.nick = nick; c.joinedAt = now();
     users.set(nick.toLowerCase(), socket.id);
-    cb({ ok: true, nick, users: userList(), pinned, slowMode });
-    socket.broadcast.emit("user-joined", nick);
+    cb({ ok: true, nick, users: userList(c), pinned, slowMode });
+    emitFrom(c, "user-joined", nick, true);
     pushUsers();
   });
 
@@ -564,7 +671,7 @@ io.on("connection", (socket) => {
     const id = newId();
     const reply = buildReply(p.replyTo, room);
     remember(id, { chat: room, from: c.nick, text: text || mediaLabel(media) });
-    io.emit("public-message", { id, room, from: c.nick, admin: c.admin, text, ...media, reply, ts: now() });
+    emitFrom(c, "public-message", { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() });
     if (room === "juegos" && text) gameGuess(c.nick, text);
   });
 
@@ -573,7 +680,7 @@ io.on("connection", (socket) => {
     if (String(raw || "").trim().startsWith("/") && !image && !gif) { runCommand(c, socket.id, String(raw).trim()); return cb({ ok: false, silent: true }); }
     const target = byNick(to);
     if (!target) return cb({ ok: false, error: "Ese usuario se desconectó." });
-    if (target.c.blocked.has(c.nick.toLowerCase())) return cb({ ok: false, error: "No podés enviarle mensajes a esta persona." });
+    if (blockedPair(c, target.c)) return cb({ ok: false, error: c.blocked.has(target.c.nick.toLowerCase()) ? `Tenés bloqueado/a a ${target.c.nick}. Desbloqueá para escribirle.` : "No podés enviarle mensajes a esta persona." });
     const text = checkMessage(c, socket.id, raw, "private", !!(image || gif));
     if (text === null) return cb({ ok: false, silent: true });
     const media = checkMedia(c, socket.id, { image, gif });
@@ -581,16 +688,16 @@ io.on("connection", (socket) => {
     const id = newId();
     remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media) });
     const reply = buildReply(replyTo, null, c.nick, target.c.nick);
-    const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, text, ...media, reply, ts: now() };
+    const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
     io.to(target.id).emit("private-message", msg);
     cb({ ok: true, msg });
   });
 
   socket.on("typing", ({ to, room, on } = {}) => {
     if (!c.nick || c.mutedUntil > now()) return;
-    if (!to) return socket.broadcast.emit("typing", { from: c.nick, chat: "#" + (ROOMS.includes(room) ? room : "general"), on: !!on });
+    if (!to) return emitFrom(c, "typing", { from: c.nick, chat: "#" + (ROOMS.includes(room) ? room : "general"), on: !!on }, true);
     const target = byNick(to);
-    if (target && !target.c.blocked.has(c.nick.toLowerCase())) io.to(target.id).emit("typing", { from: c.nick, chat: c.nick, on: !!on });
+    if (target && !blockedPair(c, target.c)) io.to(target.id).emit("typing", { from: c.nick, chat: c.nick, on: !!on });
   });
 
   socket.on("status", (s) => {
@@ -624,6 +731,7 @@ io.on("connection", (socket) => {
     const n = String(target || "").toLowerCase();
     if (!n) return;
     on ? c.blocked.add(n) : c.blocked.delete(n);
+    if (c.nick) pushUsers();
   });
 
   socket.on("report", ({ target, reason } = {}, cb) => {
@@ -646,7 +754,7 @@ io.on("connection", (socket) => {
     clients.delete(socket.id);
     if (!c.nick) return;
     users.delete(c.nick.toLowerCase());
-    io.emit("user-left", c.nick);
+    emitFrom(c, "user-left", c.nick);
     pushUsers();
   });
 });
