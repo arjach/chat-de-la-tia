@@ -209,7 +209,7 @@ function runCommand(c, id, text, room = "general") {
 
   if (cmd === "ayuda") {
     let help = "Comandos: /ayuda · /reglas · /admin <clave> · /juegos (en la sala Juegos)";
-    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador) · /desmod <apodo> · /mods (ver moderadores)";
+    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo" +
       "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
@@ -227,7 +227,7 @@ function runCommand(c, id, text, room = "general") {
       return notice(id, "👑 Entraste como dueño/a. Podés nombrar moderadores con /mod <apodo>. Escribí /ayuda para ver todo.", "mod");
     }
     if (arg && modKeys.has(arg)) {
-      c.admin = true;
+      c.admin = true; c.modKey = arg;
       pushUsers(); io.to(id).emit("admin", { mod: true, owner: false });
       return notice(id, "🛡️ Sos moderador/a. Escribí /ayuda para ver los comandos.", "mod");
     }
@@ -240,8 +240,30 @@ function runCommand(c, id, text, room = "general") {
   const target = byNick(targetNick);
 
   // Gestión de moderadores (solo el dueño)
-  if (["mod", "desmod", "mods"].includes(cmd)) {
+  if (["mod", "desmod", "mods", "crearclave", "quitarclave"].includes(cmd)) {
     if (!c.owner) return notice(id, "Solo el dueño puede nombrar o quitar moderadores.");
+    if (cmd === "crearclave") {
+      const name = arg.trim().slice(0, 20);
+      if (!name) return notice(id, "Uso: /crearclave <nombre>");
+      const prev = [...modKeys].find(([, n]) => n.toLowerCase() === name.toLowerCase());
+      if (prev) return notice(id, `${prev[1]} ya tiene clave: ${prev[0]}\nSi querés una nueva, primero /quitarclave ${prev[1]}`, "mod");
+      const key = genKey(); modKeys.set(key, name);
+      return notice(id, `🔑 Clave creada para ${name}: ${key}\nPasásela por WhatsApp. Cuando entre al chat (con cualquier apodo) escribe: /admin ${key}\nPara que no se pierda si Render se reinicia, agregá en MOD_KEYS: ${name}:${key}`, "mod");
+    }
+    if (cmd === "quitarclave") {
+      const name = arg.trim().toLowerCase();
+      if (!name) return notice(id, "Uso: /quitarclave <nombre>");
+      const keys = [...modKeys].filter(([, n]) => n.toLowerCase() === name).map(([k]) => k);
+      if (!keys.length) return notice(id, `No hay ninguna clave a nombre de "${arg.trim()}". Mirá la lista con /mods`, "mod");
+      keys.forEach((k) => modKeys.delete(k));
+      let echados = 0;
+      for (const [sid, x] of clients) if (x.modKey && keys.includes(x.modKey)) {
+        x.admin = false; x.modKey = ""; echados++;
+        io.to(sid).emit("admin", { mod: false, owner: false }); notice(sid, "Tu clave de moderador fue anulada. Ya no sos moderador/a.");
+      }
+      if (echados) pushUsers();
+      return notice(id, `🗑️ Clave de ${arg.trim()} anulada${echados ? " (estaba conectado/a y ya perdió el rol)" : ""}.\nSi estaba en MOD_KEYS de Render, borrala de ahí también.`, "mod");
+    }
     if (cmd === "mods") {
       const online = [...clients.values()].filter((x) => x.admin && !x.owner).map((x) => x.nick);
       const keys = [...modKeys].map(([k, n]) => `${n} (clave: ${k})`);
@@ -252,7 +274,7 @@ function runCommand(c, id, text, room = "general") {
     if (cmd === "mod") {
       let key = [...modKeys].find(([, n]) => n.toLowerCase() === target.c.nick.toLowerCase())?.[0];
       if (!key) { key = genKey(); modKeys.set(key, target.c.nick); }
-      target.c.admin = true;
+      target.c.admin = true; target.c.modKey = key;
       pushUsers(); io.to(target.id).emit("admin", { mod: true, owner: false });
       notice(target.id, `🛡️ ${c.nick} te nombró moderador/a. Tu clave es: ${key}\nGuardala: si te desconectás, escribí /admin ${key} para recuperar el rol.`, "mod");
       botSay(`🛡️ ${target.c.nick} ahora es moderador/a.`);
