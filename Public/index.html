@@ -124,9 +124,49 @@
   #emojiPanel button, #msgMenu button { background: none; border: 0; font-size: 22px; padding: 4px; border-radius: 6px; }
   #emojiPanel button:hover, #msgMenu button:hover { background: var(--panel2); }
 
+  /* Fotos y GIFs */
+  .media { display: block; max-width: 100%; max-height: 280px; border-radius: 8px; margin: 4px 0 2px; cursor: zoom-in; background: #0003; }
+  .msg.has-media .bubble { padding: 6px; }
+  .msg.has-media .who { display: inline-block; margin: 0 4px 2px; }
+  .caption { padding: 2px 4px 0; }
+  .fbtn { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; width: 42px; font-size: 19px; flex-shrink: 0; }
+  #attachMenu { position: absolute; bottom: 62px; left: 56px; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 6px; z-index: 10; box-shadow: 0 6px 24px #0008; display: flex; flex-direction: column; gap: 4px; }
+  #attachMenu button { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; text-align: left; white-space: nowrap; }
+  #mediaBar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--panel2); border-top: 1px solid var(--border); border-left: 3px solid var(--accent); font-size: 13px; color: var(--muted); }
+  #mediaBar img { height: 48px; max-width: 80px; object-fit: cover; border-radius: 6px; }
+  #mediaBar span { flex: 1; }
+  #mediaCancel { background: none; border: 0; font-size: 16px; color: var(--muted); }
+  #sendBtn .i { display: none; }
+  #gifBg { position: fixed; inset: 0; background: #000a; z-index: 46; display: flex; align-items: flex-end; justify-content: center; }
+  #gifSheet { background: var(--panel); border-top: 3px solid var(--accent); width: 100%; max-width: 560px; height: 75dvh; border-radius: 16px 16px 0 0; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .gif-top { display: flex; gap: 8px; }
+  #gifGrid { flex: 1; overflow-y: auto; columns: 2 140px; column-gap: 6px; }
+  #gifGrid img { width: 100%; display: block; margin-bottom: 6px; border-radius: 6px; cursor: pointer; background: var(--panel2); min-height: 60px; }
+  #gifGrid .empty { color: var(--muted); font-size: 14px; padding: 10px; }
+  .gif-attr { font-size: 11px; color: var(--muted); text-align: right; letter-spacing: .05em; }
+  #viewer { position: fixed; inset: 0; background: #000e; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 12px; cursor: zoom-out; }
+  #viewer img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+
+  /* Responder */
+  #replyBar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel2); border-top: 1px solid var(--border); border-left: 3px solid var(--accent); font-size: 13px; }
+  #replyBar .rb-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #replyBar .rb-text b { color: var(--ink); }
+  #replyCancel { background: none; border: 0; font-size: 16px; color: var(--muted); }
+  .quote { display: block; border-left: 3px solid var(--accent); background: #0000001f; border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; font-size: 12.5px; opacity: .9; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .msg.me .quote { border-left-color: var(--accent-text); background: #00000014; }
+  .quote b { font-weight: 800; }
+  .msg.flash .bubble { animation: flash 1.2s ease; }
+  @keyframes flash { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: none; } }
+  .msg.crupier .bubble { border-color: #3ddc84; }
+  /* Barra de juegos */
+  #gameBar { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--border); scrollbar-width: none; }
+  #gameBar::-webkit-scrollbar { display: none; }
+  #gameBar button { flex-shrink: 0; background: var(--panel2); border: 1px solid var(--border); border-radius: 16px; padding: 5px 11px; font-size: 13px; white-space: nowrap; }
+  #gameBar button:hover { border-color: var(--accent); }
+
   /* Menú de reacciones */
   #msgMenu { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--accent); border-radius: 24px; padding: 4px 6px; display: flex; gap: 2px; box-shadow: 0 6px 24px #0009; }
-  #msgMenu .del { font-size: 18px; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; margin-left: 2px; }
+  #msgMenu .del, #msgMenu .rep { font-size: 18px; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; margin-left: 2px; }
 
   /* Hoja de acciones de usuario */
   #sheetBg { position: fixed; inset: 0; background: #0009; z-index: 45; display: flex; align-items: flex-end; justify-content: center; }
@@ -156,6 +196,11 @@
     #messages { padding: 10px; }
     #titleSub { display: none; }
     #emojiPanel { grid-template-columns: repeat(7, 1fr); left: 6px; right: 6px; }
+    #msgForm { gap: 5px; padding: 8px; }
+    .fbtn { width: 36px; font-size: 17px; }
+    #sendBtn { padding: 10px 12px; }
+    #sendBtn .t { display: none; } #sendBtn .i { display: inline; }
+    #attachMenu { left: 8px; }
   }
 </style>
 </head>
@@ -209,8 +254,8 @@
         <option value="nomolestar">🔕 No molestar</option>
       </select>
     </div>
-    <h3>Sala</h3>
-    <div id="genItem"></div>
+    <h3>Salas</h3>
+    <div id="roomList"></div>
     <h3>Conectados (<span id="count">0</span>)</h3>
     <div id="userList"></div>
     <div id="offList"></div>
@@ -221,24 +266,55 @@
     <div id="pinned" hidden></div>
     <div id="messages"></div>
     <div id="typing"></div>
+    <div id="gameBar" hidden>
+      <button type="button" data-cmd="/trivia">❓ Trivia</button>
+      <button type="button" data-cmd="ronda">🏁 Ronda</button>
+      <button type="button" data-cmd="/numero">🔢 Número</button>
+      <button type="button" data-cmd="/ahorcado">🪢 Ahorcado</button>
+      <button type="button" data-cmd="ppt">✊ PPT</button>
+      <button type="button" data-cmd="/dado">🎲 Dado</button>
+      <button type="button" data-cmd="/moneda">🪙 Moneda</button>
+      <button type="button" data-cmd="bola">🎱 Bola 8</button>
+      <button type="button" data-cmd="/ranking">🏆 Ranking</button>
+      <button type="button" data-cmd="/rendirse">🏳️ Rendirse</button>
+      <button type="button" data-cmd="/juegos">❔ Ayuda</button>
+    </div>
+    <div id="mediaBar" hidden><img alt=""><span>Podés agregar un texto y tocá Enviar</span><button type="button" id="mediaCancel" title="Quitar">✕</button></div>
+    <div id="replyBar" hidden><div class="rb-text"></div><button type="button" id="replyCancel" title="Cancelar">✕</button></div>
     <form id="msgForm" autocomplete="off">
-      <button type="button" id="emojiBtn">😊</button>
+      <button type="button" id="emojiBtn" class="fbtn">😊</button>
+      <button type="button" id="attachBtn" class="fbtn" title="Foto o GIF">📎</button>
       <div id="emojiPanel"></div>
+      <div id="attachMenu" hidden>
+        <button type="button" id="pickPhoto">📷 Foto o GIF del celu</button>
+        <button type="button" id="pickGif" hidden>🔍 Buscar GIF</button>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" hidden>
       <input class="field" id="text" maxlength="500" placeholder="Escribí un mensaje…">
-      <button class="primary">Enviar</button>
+      <button class="primary" id="sendBtn"><span class="t">Enviar</span><span class="i">➤</span></button>
     </form>
   </section>
 </div>
 
 <div id="msgMenu" hidden></div>
+<div id="gifBg" hidden>
+  <div id="gifSheet">
+    <div class="gif-top"><input class="field" id="gifQuery" placeholder="Buscar GIFs…" autocomplete="off"><button type="button" class="ghost" id="gifClose">✕</button></div>
+    <div id="gifGrid"></div>
+    <div class="gif-attr">Powered by GIPHY</div>
+  </div>
+</div>
+<div id="viewer" hidden><img alt=""></div>
 <div id="sheetBg" hidden><div id="sheet"></div></div>
 <div id="modal" hidden><div class="card rules" id="modalCard"></div></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-const GENERAL = "__general__";
-const BOT = "Guardián";
+const GENERAL = "#general", JUEGOS = "#juegos";
+const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"] };
+const isRoom = (c) => c.startsWith("#");
+const BOT = "Guardián", CRUPIER = "Crupier";
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
 const STATUS = { disponible: ["🟢", "Disponible"], hablar: ["🫂", "Necesita hablar"], escucho: ["👂", "Solo escucha"], ausente: ["🌙", "Ausente"], nomolestar: ["🔕", "No molestar"] };
 const $ = (id) => document.getElementById(id);
@@ -246,7 +322,8 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 let me = "", isAdmin = false, current = GENERAL;
 let online = [];                // [{nick, status, admin}]
-const history = { [GENERAL]: [] };
+const history = { [GENERAL]: [], [JUEGOS]: [] };
+let replyTo = null;
 const unread = {};
 const typingNow = {};
 const byId = new Map();         // id de mensaje -> objeto mensaje
@@ -268,6 +345,7 @@ function applyPrefs() {
 }
 applyPrefs();
 $("themeBtn").onclick = () => { theme = theme === "dark" ? "light" : "dark"; store.set("gr-theme", theme); applyPrefs(); if (me) { renderUsers(); renderMessages(); } };
+const mentionsOrReplies = (m) => m.from !== me && !m.bot && (mentionsMe(m.text) || m.reply?.from === me);
 $("soundBtn").onclick = () => { sound = !sound; store.set("gr-sound", sound ? "on" : "off"); applyPrefs(); if (sound) beep(); };
 
 // ---------- Reglas ----------
@@ -389,11 +467,12 @@ $("statusSel").onchange = (e) => { store.set("gr-status", e.target.value); socke
 
 // ---------- Columna izquierda ----------
 function sideItem(chat, label, opts = {}) {
-  const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (isBlocked(chat) && chat !== GENERAL ? " blocked" : ""));
+  const room = isRoom(chat);
+  const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (!room && isBlocked(chat) ? " blocked" : ""));
   div.dataset.chat = chat;
-  if (chat !== GENERAL) div.append(el("span", "st", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢")));
+  if (!room) div.append(el("span", "st", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢")));
   const name = el("span", "name", label);
-  if (chat !== GENERAL) name.style.color = nickColor(chat);
+  if (!room) name.style.color = nickColor(chat);
   div.append(name);
   if (opts.admin) div.append(el("span", "st", "🛡️"));
   if (typingNow[chat]?.size) div.append(el("span", "typing-ico", "✎"));
@@ -401,11 +480,11 @@ function sideItem(chat, label, opts = {}) {
   return div;
 }
 function renderUsers() {
-  $("genItem").replaceChildren(sideItem(GENERAL, "# General"));
+  $("roomList").replaceChildren(...Object.entries(ROOMS).map(([id, [ico, name]]) => sideItem(id, `${ico} ${name}`)));
   const others = online.filter((u) => u.nick !== me);
   $("count").textContent = online.length;
   $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
-  const gone = Object.keys(history).filter((c) => c !== GENERAL && !online.some((u) => u.nick === c));
+  const gone = Object.keys(history).filter((c) => !isRoom(c) && !online.some((u) => u.nick === c));
   $("offList").replaceChildren(...gone.map((u) => sideItem(u, u, { off: true })));
   updateTitle();
 }
@@ -418,7 +497,9 @@ function openChat(chat) {
   current = chat; unread[current] = 0;
   history[chat] ||= [];
   renderUsers(); renderMessages();
-  $("text").placeholder = current === GENERAL ? "Escribí un mensaje…" : `Mensaje privado a ${current}…`;
+  $("text").placeholder = isRoom(current) ? (current === JUEGOS ? "Jugá o escribí…" : "Escribí un mensaje…") : `Mensaje privado a ${current}…`;
+  cancelReply();
+  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a a la sala de juegos! Tocá un botón de abajo o escribí /juegos para ver todo. En trivia, número y ahorcado se responde escribiendo normal en el chat.\n❓ Trivia con tema: /trivia fútbol · Ronda de 5: /trivia ronda cine" });
   $("text").focus();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me) { unread[current] = 0; renderUsers(); } });
@@ -435,18 +516,31 @@ function renderMessage(m) {
   if (m.type === "announce") { const d = el("div", "announce", "📢 " + m.text); d.append(el("small", null, "Anuncio de moderación · " + hhmm(m.ts))); return d; }
   if (isBlocked(m.from)) return null;
   const mine = m.from === me;
-  const d = el("div", "msg" + (mine ? " me" : "") + (m.bot ? " bot" : "") + (m.deleted ? " deleted" : "")
-    + (!mine && !m.bot && mentionsMe(m.text) ? " mention" : "") + (!m.deleted && onlyEmoji(m.text) ? " big" : ""));
+  const d = el("div", "msg" + (mine ? " me" : "") + (m.bot ? " bot" : "") + (m.from === CRUPIER ? " crupier" : "") + (m.deleted ? " deleted" : "")
+    + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && onlyEmoji(m.text) ? " big" : ""));
   d.dataset.id = m.id || "";
   const meta = el("div", "meta");
   if (m.admin) meta.append(el("span", "mod", "🛡️ mod"));
   meta.append(el("span", null, hhmm(m.ts || Date.now())));
   const b = el("div", "bubble");
-  const w = el("span", "who", (m.bot ? "🤖 " + BOT : m.from) + ": ");
+  if (m.reply && !m.deleted) {
+    const q = el("span", "quote");
+    q.append(el("b", null, (m.reply.from === me ? "Vos" : m.reply.from) + ": "), m.reply.text);
+    q.onclick = (e) => { e.stopPropagation(); jumpTo(m.reply.id); };
+    b.append(q);
+  }
+  const w = el("span", "who", (m.bot ? (m.from === CRUPIER ? "🎲 " : "🤖 ") + m.from : m.from) + ": ");
   if (!mine) w.style.color = m.bot ? "var(--ink)" : nickColor(m.from);
   if (!mine && !m.bot) w.onclick = (e) => { e.stopPropagation(); openSheet(m.from); };
   b.append(w);
   if (m.deleted) b.append(m.deletedByMod ? "🚫 Mensaje eliminado por moderación" : "🚫 Mensaje eliminado");
+  else if (m.image || m.gif) {
+    d.classList.add("has-media");
+    const img = el("img", "media"); img.src = m.image || m.gif; img.loading = "lazy"; img.alt = m.gif ? "GIF" : "Foto";
+    img.onload = () => { const box = $("messages"); if (box.scrollHeight - box.scrollTop - box.clientHeight < 400) box.scrollTop = box.scrollHeight; };
+    b.append(img);
+    if (m.text) { const cap = el("div", "caption"); linkify(cap, m.text); b.append(cap); }
+  }
   else linkify(b, m.text);
   d.append(meta, b);
   const rx = Object.entries(m.reactions || {}).filter(([, ns]) => ns.length);
@@ -468,12 +562,13 @@ function renderMessages() {
   box.replaceChildren(...(history[current] || []).map(renderMessage).filter(Boolean));
   if (atBottom || box.dataset.chat !== current) box.scrollTop = box.scrollHeight;
   box.dataset.chat = current;
-  const priv = current !== GENERAL;
+  const priv = !isRoom(current);
   const info = userInfo(current);
-  $("titleText").textContent = priv ? `🔒 ${current}` : "# General";
-  $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : "Todos ven estos mensajes";
+  $("titleText").textContent = priv ? `🔒 ${current}` : ROOMS[current].slice(0, 2).join(" ");
+  $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : ROOMS[current][2];
   $("titleMore").hidden = !priv;
-  $("pinned").hidden = priv || !$("pinned").dataset.text;
+  $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
+  $("gameBar").hidden = current !== JUEGOS;
   renderTyping();
 }
 function renderTyping() {
@@ -493,6 +588,7 @@ function push(chat, m) {
 
 // ---------- Menú de reacciones (tocar un mensaje) ----------
 $("messages").addEventListener("click", (e) => {
+  if (e.target.classList.contains("media")) { e.stopPropagation(); return openViewer(e.target.src); }
   const msgEl = e.target.closest(".msg"); if (!msgEl || e.target.closest("a, .chip, .who")) return;
   const m = byId.get(msgEl.dataset.id); if (!m || m.deleted) return;
   e.stopPropagation();
@@ -500,7 +596,10 @@ $("messages").addEventListener("click", (e) => {
   menu.replaceChildren(...REACTIONS.map((emo) => {
     const b = el("button", null, emo); b.onclick = () => { socket.emit("react", { id: m.id, emoji: emo }); menu.hidden = true; }; return b;
   }));
-  if (m.from === me || (isAdmin && current === GENERAL && !m.bot)) {
+  const rep = el("button", "rep", "↩️"); rep.title = "Responder";
+  rep.onclick = () => { startReply(m); menu.hidden = true; };
+  menu.append(rep);
+  if (m.from === me || (isAdmin && isRoom(current) && !m.bot)) {
     const del = el("button", "del", "🗑️"); del.title = "Eliminar";
     del.onclick = () => { socket.emit("delete-message", m.id); menu.hidden = true; };
     menu.append(del);
@@ -514,6 +613,7 @@ $("messages").addEventListener("click", (e) => {
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#msgMenu")) $("msgMenu").hidden = true;
   if (!e.target.closest("#emojiPanel") && e.target.id !== "emojiBtn") $("emojiPanel").classList.remove("open");
+  if (!e.target.closest("#attachMenu") && e.target.id !== "attachBtn") $("attachMenu").hidden = true;
 });
 $("messages").addEventListener("scroll", () => $("msgMenu").hidden = true);
 
@@ -571,13 +671,13 @@ $("emojiBtn").onclick = () => $("emojiPanel").classList.toggle("open");
 // ---------- Escribiendo… ----------
 let typingTimer = null, typingSentTo;
 function stopTyping() {
-  if (typingSentTo !== undefined) socket.emit("typing", { to: typingSentTo, on: false });
+  if (typingSentTo !== undefined) socket.emit("typing", { to: typingSentTo, room: typingSentTo ? null : current.slice(1), on: false });
   typingSentTo = undefined; clearTimeout(typingTimer);
 }
 $("text").addEventListener("input", () => {
   if ($("text").value.startsWith("/")) return;
-  const to = current === GENERAL ? null : current;
-  if (typingSentTo === undefined) { socket.emit("typing", { to, on: true }); typingSentTo = to; }
+  const to = isRoom(current) ? null : current;
+  if (typingSentTo === undefined) { socket.emit("typing", { to, room: isRoom(current) ? current.slice(1) : null, on: true }); typingSentTo = to; }
   clearTimeout(typingTimer); typingTimer = setTimeout(stopTyping, 2500);
 });
 socket.on("typing", ({ from, chat, on }) => {
@@ -587,36 +687,143 @@ socket.on("typing", ({ from, chat, on }) => {
 });
 const clearTyping = (from) => Object.values(typingNow).forEach((s) => s.delete(from));
 
+// ---------- Responder ----------
+function startReply(m) {
+  const label = m.text || (m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : "");
+  replyTo = { id: m.id, from: m.from, text: label };
+  const t = $("replyBar").querySelector(".rb-text");
+  t.replaceChildren("↩️ Respondiendo a ", el("b", null, m.from === me ? "vos" : m.from), ": " + label.slice(0, 80));
+  $("replyBar").hidden = false;
+  $("text").focus();
+}
+function cancelReply() { replyTo = null; $("replyBar").hidden = true; }
+$("replyCancel").onclick = cancelReply;
+function jumpTo(id) {
+  const node = $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+  if (!node) return;
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.classList.remove("flash"); void node.offsetWidth; node.classList.add("flash");
+}
+
+// ---------- Fotos y GIFs ----------
+let pendingMedia = null, giphyKey = "";
+fetch("/config").then((r) => r.json()).then((c) => { giphyKey = c.giphyKey || ""; $("pickGif").hidden = !giphyKey; }).catch(() => {});
+function setMedia(media) {
+  pendingMedia = media;
+  $("mediaBar").querySelector("img").src = media.image || media.gif;
+  $("mediaBar").hidden = false;
+  $("text").focus();
+}
+function clearMedia() { pendingMedia = null; $("mediaBar").hidden = true; $("fileInput").value = ""; }
+$("mediaCancel").onclick = clearMedia;
+$("attachBtn").onclick = (e) => { e.stopPropagation(); $("emojiPanel").classList.remove("open"); $("attachMenu").hidden = !$("attachMenu").hidden; };
+$("pickPhoto").onclick = () => { $("attachMenu").hidden = true; $("fileInput").click(); };
+const MAX_BYTES = 2.4 * 1024 * 1024;
+const readAsDataURL = (f) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(f); });
+const dataBytes = (d) => Math.ceil((d.length - d.indexOf(",") - 1) * 3 / 4);
+async function shrink(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+    let max = 1280, q = 0.82, out;
+    for (let tries = 0; tries < 6; tries++) {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      out = cv.toDataURL("image/jpeg", q);
+      if (dataBytes(out) <= MAX_BYTES) return out;
+      max *= 0.8; q -= 0.08;
+    }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+$("fileInput").onchange = async () => {
+  const f = $("fileInput").files[0]; if (!f) return;
+  if (!f.type.startsWith("image/")) return push(current, { type: "notice", kind: "warn", text: "Solo se pueden mandar imágenes." });
+  try {
+    if (f.type === "image/gif") {
+      if (f.size > MAX_BYTES) return push(current, { type: "notice", kind: "warn", text: "Ese GIF pesa más de 2,4 MB. Probá con uno más liviano o buscalo con 🔍." });
+      setMedia({ image: await readAsDataURL(f) });
+    } else setMedia({ image: await shrink(f) });
+  } catch { push(current, { type: "notice", kind: "warn", text: "No pude abrir esa imagen." }); }
+};
+// Buscador de GIFs (GIPHY)
+let gifTimer;
+async function loadGifs(q) {
+  const grid = $("gifGrid");
+  const base = "https://api.giphy.com/v1/gifs/";
+  const url = q ? `${base}search?api_key=${giphyKey}&q=${encodeURIComponent(q)}&limit=30&rating=pg-13&lang=es`
+                : `${base}trending?api_key=${giphyKey}&limit=30&rating=pg-13`;
+  try {
+    const data = (await (await fetch(url)).json()).data || [];
+    if (!data.length) return grid.replaceChildren(el("div", "empty", "No encontré GIFs. Probá otra palabra."));
+    grid.replaceChildren(...data.map((g) => {
+      const im = g.images || {};
+      const img = el("img"); img.loading = "lazy";
+      img.src = (im.fixed_width_small || im.fixed_width || im.fixed_height).url;
+      img.onclick = () => { closeGifs(); sendText($("text").value.trim(), { gif: (im.fixed_height || im.downsized || im.original).url }); $("text").value = ""; };
+      return img;
+    }));
+  } catch { grid.replaceChildren(el("div", "empty", "No se pudieron cargar los GIFs.")); }
+}
+function openGifs() { $("attachMenu").hidden = true; $("gifBg").hidden = false; $("gifQuery").value = ""; $("gifGrid").replaceChildren(el("div", "empty", "Cargando…")); loadGifs(""); $("gifQuery").focus(); }
+const closeGifs = () => $("gifBg").hidden = true;
+$("pickGif").onclick = openGifs;
+$("gifClose").onclick = closeGifs;
+$("gifBg").onclick = (e) => { if (e.target.id === "gifBg") closeGifs(); };
+$("gifQuery").oninput = () => { clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs($("gifQuery").value.trim()), 400); };
+// Visor de fotos
+function openViewer(src) { $("viewer").querySelector("img").src = src; $("viewer").hidden = false; }
+$("viewer").onclick = () => $("viewer").hidden = true;
+
+// ---------- Barra de juegos ----------
+$("gameBar").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const c = b.dataset.cmd;
+  if (c === "ppt") { $("text").value = "/ppt "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "✊ Completá con piedra, papel o tijera y mandá." }); }
+  if (c === "bola") { $("text").value = "/bola "; $("text").focus(); return; }
+  if (c === "ronda") { $("text").value = "/trivia ronda "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "🏁 Escribí un tema (ej: música, fútbol, historia) o dejalo vacío y mandá. Son 5 preguntas seguidas." }); }
+  sendText(c);
+});
+
 // ---------- Enviar ----------
-$("msgForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const text = $("text").value.trim();
-  if (!text) return;
-  $("text").value = "";
-  $("emojiPanel").classList.remove("open");
-  stopTyping();
-  if (text === "/reglas") { $("rulesBtn").click(); return; }
-  if (current === GENERAL || text.startsWith("/")) return socket.emit(current === GENERAL ? "public-message" : "private-message", current === GENERAL ? text : { to: current, text }, () => {});
+function sendText(text, media = pendingMedia) {
+  if (text === "/reglas" && !media) return $("rulesBtn").click();
+  const rid = replyTo?.id; cancelReply(); clearMedia();
+  const extra = media ? { image: media.image, gif: media.gif } : {};
+  if (isRoom(current)) return socket.emit("public-message", { room: current.slice(1), text, replyTo: rid, ...extra });
   const to = current;
-  socket.emit("private-message", { to, text }, (res) => {
+  socket.emit("private-message", { to, text, replyTo: rid, ...extra }, (res) => {
     if (res.ok) push(to, { ...res.msg, from: me });
     else if (!res.silent) push(to, { type: "sys", text: res.error });
   });
+}
+$("msgForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text && !pendingMedia) return;
+  $("text").value = "";
+  $("emojiPanel").classList.remove("open");
+  stopTyping();
+  sendText(text);
 });
 
 // ---------- Eventos del servidor ----------
 socket.on("public-message", (m) => {
+  const chat = "#" + (m.room || "general");
   clearTyping(m.from);
-  push(GENERAL, m);
+  push(chat, m);
   if (m.from === me || isBlocked(m.from) || m.bot) return;
-  if (mentionsMe(m.text)) { beep(1200); notify(`${m.from} te mencionó`, m.text); }
-  else if (current !== GENERAL || document.hidden) beep(660);
+  if (mentionsOrReplies(m)) { beep(1200); notify(m.reply?.from === me ? `${m.from} te respondió` : `${m.from} te mencionó`, m.text || "📷 Foto"); }
+  else if (current !== chat || document.hidden) beep(660);
 });
 socket.on("private-message", (m) => {
   clearTyping(m.from);
   if (isBlocked(m.from)) return;
   push(m.from, m);
-  beep(990); notify(`Mensaje privado de ${m.from}`, m.text);
+  beep(990); notify(`Mensaje privado de ${m.from}`, m.text || (m.gif ? "🎞️ GIF" : "📷 Foto"));
 });
 socket.on("notice", (n) => {
   push(current, { type: "notice", kind: n.kind, text: n.text, ts: n.ts });
@@ -625,7 +832,7 @@ socket.on("notice", (n) => {
 });
 socket.on("announce", (a) => { push(GENERAL, { type: "announce", ...a }); beep(770); notify("📢 Anuncio", a.text); });
 socket.on("pinned", (t) => { setPinned(t); if (t) push(GENERAL, { type: "sys", text: "📌 Hay un mensaje fijado nuevo" }); });
-socket.on("clear", () => { history[GENERAL] = []; if (current === GENERAL) renderMessages(); });
+socket.on("clear", (p) => { const chat = "#" + (p?.room || "general"); history[chat] = []; if (current === chat) renderMessages(); });
 socket.on("reactions", ({ id, reactions }) => {
   const m = byId.get(id); if (!m) return;
   m.reactions = reactions;
@@ -636,7 +843,7 @@ socket.on("deleted", ({ id, byMod }) => {
   m.deleted = true; m.deletedByMod = byMod; m.text = ""; m.reactions = {};
   if ((history[current] || []).includes(m)) renderMessages();
 });
-socket.on("users", (list) => { online = list; renderUsers(); if (current !== GENERAL) renderMessages(); });
+socket.on("users", (list) => { online = list; renderUsers(); if (!isRoom(current)) renderMessages(); });
 socket.on("user-joined", (n) => push(GENERAL, { type: "sys", text: `${n} entró` }));
 socket.on("user-left", (n) => {
   clearTyping(n);
