@@ -274,36 +274,28 @@ $("soundBtn").onclick = () => { sound = !sound; store.set("gr-sound", sound ? "o
 function rulesHTML(card, mode) {
   card.innerHTML = `
     <h2>📜 Reglas de Gente Rota</h2>
-    <p class="sub">Este es un espacio para hablar de lo que duele. Cuidémoslo entre todos.</p>
+    <p class="sub">Un chat para hablar de cualquier cosa. Cuidémoslo entre todos.</p>
     <ol>
-      <li><b>Respeto ante todo.</b> Nada de insultos, burlas, discriminación ni ataques.</li>
-      <li><b>No juzgues.</b> Cada historia es distinta. Escuchá antes de opinar.</li>
+      <li><b>Solo mayores de 18 años.</b> Si sos menor, este chat no es para vos.</li>
+      <li><b>Hablá de lo que quieras.</b> Se puede putear, pero no acosar, discriminar ni hostigar a nadie.</li>
       <li><b>Nunca incites a nadie a hacerse daño.</b> Es expulsión inmediata.</li>
       <li><b>Cuidá tu privacidad.</b> No compartas tu dirección, teléfono, documentos ni datos de otras personas.</li>
       <li><b>Sin spam ni publicidad.</b> Ni mensajes repetidos, ni links sospechosos.</li>
       <li><b>Nada de contenido sexual ni violento explícito.</b></li>
       <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Podés bloquear o reportar desde el nombre de cada persona.</li>
-      <li><b>Esto no reemplaza ayuda profesional.</b> Acá hay gente que escucha, no terapeutas.</li>
     </ol>
-    <p class="sub" style="margin:0">🤖 El bot <b>Guardián</b> modera automáticamente: censura insultos, frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
-    <div class="helpbox">
-      💛 <b>Si estás en crisis, llamá:</b><br>
-      • <a href="tel:08009990091">0800-999-0091</a> — Línea Nacional de Salud Mental (gratis, 24 h)<br>
-      • <a href="tel:135">135</a> (CABA y GBA) o <a href="tel:01152751135">(011) 5275-1135</a> — Asistencia al Suicida<br>
-      • <a href="tel:08002225462">0800-222-5462</a> — Salud Mental Prov. de Buenos Aires (24 h)<br>
-      • <a href="tel:911">911</a> en una emergencia
-    </div>
+    <p class="sub" style="margin:0">🤖 El bot <b>Guardián</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
     ${mode === "accept"
-      ? `<label class="check"><input type="checkbox" id="acceptChk"> Leí y acepto las reglas</label>
+      ? `<label class="check"><input type="checkbox" id="acceptChk"> Tengo 18 años o más y acepto las reglas</label>
          <button class="primary" id="acceptBtn" style="width:100%" disabled>Continuar</button>`
       : `<button class="primary" id="closeRules" style="width:100%">Cerrar</button>`}`;
   if (mode === "accept") {
     card.querySelector("#acceptChk").onchange = (e) => card.querySelector("#acceptBtn").disabled = !e.target.checked;
-    card.querySelector("#acceptBtn").onclick = () => { store.set("gr-rules", "v1"); showLogin(); };
+    card.querySelector("#acceptBtn").onclick = () => { store.set("gr-rules", "v2"); showLogin(); };
   } else card.querySelector("#closeRules").onclick = () => $("modal").hidden = true;
 }
 function showLogin() { $("rulesScreen").hidden = true; $("login").hidden = false; $("nick").focus(); }
-if (store.get("gr-rules", "") === "v1") showLogin();
+if (store.get("gr-rules", "") === "v2") showLogin();
 else { rulesHTML($("rulesCard"), "accept"); $("rulesScreen").hidden = false; }
 $("rulesBtn").onclick = () => {
   if (!$("rulesScreen").hidden) return;
