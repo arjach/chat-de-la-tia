@@ -483,6 +483,8 @@ function join(nick, onFail) {
     const st = store.get("gr-status", "disponible");
     $("statusSel").value = st; socket.emit("status", st);
     blocked.forEach((b) => socket.emit("block", { target: b, on: true }));
+    const savedKey = store.get("gr-key", "");
+    if (savedKey) socket.emit("reauth", savedKey);
     renderUsers(); renderMessages();
   });
 }
@@ -499,7 +501,7 @@ socket.on("connect", () => {
   join(me, () => push(GENERAL, { type: "sys", text: "No se pudo recuperar tu apodo. Recargá la página." }));
   push(GENERAL, { type: "sys", text: "Reconectado ✔" });
 });
-socket.on("disconnect", () => { if (me && !wasKicked) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
+socket.on("disconnect", () => { isAdmin = false; isOwner = false; $("modPanelBtn").hidden = true; $("meAdmin").hidden = true; if (me && !wasKicked) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
 socket.on("kicked", ({ reason, ban }) => {
   wasKicked = true;
   socket.io.opts.reconnection = false;
@@ -509,14 +511,18 @@ socket.on("kicked", ({ reason, ban }) => {
   $("kickReason").textContent = "Motivo: " + reason;
   $("kickBtn").hidden = !!ban;
 });
+let pendingKey = "";
 socket.on("admin", (v) => {
   isAdmin = !!(v === true || v?.mod); isOwner = !!v?.owner;
+  if (isAdmin && pendingKey) { store.set("gr-key", pendingKey); pendingKey = ""; }
+  if (!isAdmin) store.set("gr-key", "");
   $("meAdmin").textContent = isOwner ? " 👑" : " 🛡️";
   $("meAdmin").hidden = !isAdmin;
   $("modPanelBtn").hidden = !isAdmin;
   if (!isAdmin && current === MODS) openChat(GENERAL);
   renderUsers();
 });
+socket.on("admin-fail", () => { pendingKey = ""; store.set("gr-key", ""); });
 socket.on("renamed", (n) => { me = n; $("meName").textContent = n; renderMessages(); });
 socket.on("room-lock", ({ room, locked }) => { locked ? lockedRooms.add("#" + room) : lockedRooms.delete("#" + room); renderUsers(); renderMessages(); });
 
@@ -915,6 +921,7 @@ function openRoundSheet() {
 // ---------- Enviar ----------
 function sendText(text, media = pendingMedia) {
   if (text === "/reglas" && !media) return $("rulesBtn").click();
+  const adm = text.match(/^\/\s*admin\s+(.+)$/i); if (adm) pendingKey = adm[1].trim();
   const rid = replyTo?.id; cancelReply(); clearMedia();
   const extra = media ? { image: media.image, gif: media.gif } : {};
   if (isRoom(current)) return socket.emit("public-message", { room: current.slice(1), text, replyTo: rid, ...extra });
