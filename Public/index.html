@@ -103,13 +103,13 @@
   .msg.big .who { font-size: 15px; vertical-align: middle; }
   .msg .mod { color: var(--ink); }
   .msg a { color: inherit; text-decoration: underline; }
-  .msg.big .bubble { font-size: 34px; background: transparent; border: 0; padding: 0 4px; }
+  .msg.big .bubble { font-size: calc(var(--fs) * 2.1); background: transparent; border: 0; padding: 0 4px; }
   .reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
   .msg.me .reacts { justify-content: flex-end; }
   .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 1px 7px; font-size: 13px; }
   .chip.mine { border-color: var(--accent); background: var(--mention); }
-  .sys { align-self: center; font-size: 12px; color: var(--muted); padding: 2px 10px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
-  .notice { align-self: stretch; font-size: 13.5px; padding: 10px 12px; border-radius: 10px; background: var(--panel2); border-left: 3px solid var(--accent); white-space: pre-wrap; }
+  .sys { align-self: center; font-size: calc(var(--fs) * .75); color: var(--muted); padding: 2px 10px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
+  .notice { align-self: stretch; font-size: calc(var(--fs) * .85); padding: 10px 12px; border-radius: 10px; background: var(--panel2); border-left: 3px solid var(--accent); white-space: pre-wrap; }
   .notice.warn { border-left-color: var(--danger); }
   .notice.help { border-left-color: #3ddc84; }
   .announce { align-self: stretch; text-align: center; background: var(--accent); color: var(--accent-text); padding: 10px 14px; border-radius: 10px; font-weight: 700; }
@@ -123,6 +123,17 @@
   #emojiPanel.open { display: grid; }
   #emojiPanel button, #msgMenu button { background: none; border: 0; font-size: 22px; padding: 4px; border-radius: 6px; }
   #emojiPanel button:hover, #msgMenu button:hover { background: var(--panel2); }
+
+  /* Tamaño de letra */
+  :root { --fs: 16px; }
+  #messages { font-size: var(--fs); }
+  #text { font-size: max(16px, var(--fs)); }
+  #fontMenu { position: fixed; top: 70px; left: 12px; z-index: 48; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 10px; box-shadow: 0 6px 24px #0009; }
+  #fontMenu .ft { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .08em; }
+  #fontMenu .row { display: flex; gap: 6px; }
+  #fontMenu button { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; width: 48px; height: 48px; font-weight: 700; }
+  #fontMenu button.on { border-color: var(--accent); background: var(--mention); }
+  .blk { font-size: 12px; }
 
   /* Fotos y GIFs */
   .media { display: block; max-width: 100%; max-height: 280px; border-radius: 8px; margin: 4px 0 2px; cursor: zoom-in; background: #0003; }
@@ -152,7 +163,7 @@
   #replyBar .rb-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #replyBar .rb-text b { color: var(--ink); }
   #replyCancel { background: none; border: 0; font-size: 16px; color: var(--muted); }
-  .quote { display: block; border-left: 3px solid var(--accent); background: #0000001f; border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; font-size: 12.5px; opacity: .9; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .quote { display: block; border-left: 3px solid var(--accent); background: #0000001f; border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; font-size: .8em; opacity: .9; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .msg.me .quote { border-left-color: var(--accent-text); background: #00000014; }
   .quote b { font-weight: 800; }
   .msg.flash .bubble { animation: flash 1.2s ease; }
@@ -175,6 +186,12 @@
   #sheet .stline { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
   #sheet button { display: block; width: 100%; text-align: left; padding: 12px; margin-bottom: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; }
   #sheet button.danger { color: var(--danger); }
+  #sheet .count-row { display: flex; gap: 6px; margin-bottom: 4px; }
+  #sheet .count-row button { flex: 1; text-align: center; margin: 0; font-weight: 700; }
+  #sheet .count-row button.on { border-color: var(--accent); background: var(--mention); }
+  #sheet .field { margin-bottom: 6px; }
+  #sheet .hint { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  #sheet button.primary { background: var(--accent); color: var(--accent-text); border: 0; }
   #sheet .modsep { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 12px 0 6px; }
 
   @media (max-width: 640px) {
@@ -185,7 +202,6 @@
     .hgroup { flex-direction: column; gap: 4px; }
     .hgroup.left { left: 8px; } .hgroup.right { right: 8px; }
     .hbtn { width: 34px; height: 30px; font-size: 14px; }
-    .hgroup.left .hbtn { height: 64px; }
     #app { grid-template-columns: 1fr 118px; }
     #sidebar h3 { margin: 10px 8px 4px; font-size: 10px; }
     .item { padding: 8px; font-size: 13px; gap: 4px; }
@@ -207,7 +223,10 @@
 <body>
 
 <header>
-  <div class="hgroup left"><button class="hbtn" id="rulesBtn" title="Reglas">📜</button></div>
+  <div class="hgroup left">
+    <button class="hbtn" id="rulesBtn" title="Reglas">📜</button>
+    <button class="hbtn" id="fontBtn" title="Tamaño de letra" style="font-weight:800;font-size:15px">Aa</button>
+  </div>
   <h1>Gente Rota</h1>
   <p>Lo que quedó después del trauma</p>
   <small>GENTEROTA.COM.AR</small>
@@ -259,7 +278,8 @@
     <h3>Conectados (<span id="count">0</span>)</h3>
     <div id="userList"></div>
     <div id="offList"></div>
-    <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 🛡️ moderador</div>
+    <div id="blockedBox" hidden><h3>Bloqueados</h3><div id="blockedList"></div></div>
+    <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 👑 dueño · 🛡️ moderador</div>
   </aside>
   <section id="main">
     <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="titleMore" hidden>⋯</button></div>
@@ -305,6 +325,15 @@
   </div>
 </div>
 <div id="viewer" hidden><img alt=""></div>
+<div id="fontMenu" hidden>
+  <div class="ft">Tamaño de letra</div>
+  <div class="row">
+    <button data-fs="14" style="font-size:13px">A</button>
+    <button data-fs="16" style="font-size:16px">A</button>
+    <button data-fs="18" style="font-size:19px">A</button>
+    <button data-fs="21" style="font-size:23px">A</button>
+  </div>
+</div>
 <div id="sheetBg" hidden><div id="sheet"></div></div>
 <div id="modal" hidden><div class="card rules" id="modalCard"></div></div>
 
@@ -320,7 +349,7 @@ const STATUS = { disponible: ["🟢", "Disponible"], hablar: ["🫂", "Necesita 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
-let me = "", isAdmin = false, current = GENERAL;
+let me = "", isAdmin = false, isOwner = false, current = GENERAL;
 let online = [];                // [{nick, status, admin}]
 const history = { [GENERAL]: [], [JUEGOS]: [] };
 let replyTo = null;
@@ -348,6 +377,22 @@ $("themeBtn").onclick = () => { theme = theme === "dark" ? "light" : "dark"; sto
 const mentionsOrReplies = (m) => m.from !== me && !m.bot && (mentionsMe(m.text) || m.reply?.from === me);
 $("soundBtn").onclick = () => { sound = !sound; store.set("gr-sound", sound ? "on" : "off"); applyPrefs(); if (sound) beep(); };
 
+// ---------- Tamaño de letra ----------
+let fs = store.get("gr-fs", "16");
+function applyFs() {
+  document.documentElement.style.setProperty("--fs", fs + "px");
+  document.querySelectorAll("#fontMenu button").forEach((b) => b.classList.toggle("on", b.dataset.fs === fs));
+}
+applyFs();
+$("fontBtn").onclick = (e) => { e.stopPropagation(); $("fontMenu").hidden = !$("fontMenu").hidden; };
+$("fontMenu").onclick = (e) => {
+  e.stopPropagation();
+  const b = e.target.closest("button[data-fs]"); if (!b) return;
+  fs = b.dataset.fs; store.set("gr-fs", fs); applyFs();
+  const box = $("messages"); box.scrollTop = box.scrollHeight;
+};
+document.addEventListener("click", () => $("fontMenu").hidden = true);
+
 // ---------- Reglas ----------
 function rulesHTML(card, mode) {
   card.innerHTML = `
@@ -360,7 +405,7 @@ function rulesHTML(card, mode) {
       <li><b>Cuidá tu privacidad.</b> No compartas tu dirección, teléfono, documentos ni datos de otras personas.</li>
       <li><b>Sin spam ni publicidad.</b> Ni mensajes repetidos, ni links sospechosos.</li>
       <li><b>Nada de contenido sexual ni violento explícito.</b></li>
-      <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Podés bloquear o reportar desde el nombre de cada persona.</li>
+      <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Tocá el nombre de cualquier persona para bloquearla (no se van a leer entre ustedes) o reportarla.</li>
     </ol>
     <p class="sub" style="margin:0">🤖 El bot <b>Guardián</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
     ${mode === "accept"
@@ -460,7 +505,11 @@ socket.on("kicked", ({ reason, ban }) => {
   $("kickReason").textContent = "Motivo: " + reason;
   $("kickBtn").hidden = !!ban;
 });
-socket.on("admin", (v) => { isAdmin = v; $("meAdmin").hidden = !v; });
+socket.on("admin", (v) => {
+  isAdmin = !!(v === true || v?.mod); isOwner = !!v?.owner;
+  $("meAdmin").textContent = isOwner ? " 👑" : " 🛡️";
+  $("meAdmin").hidden = !isAdmin;
+});
 
 // ---------- Estado ----------
 $("statusSel").onchange = (e) => { store.set("gr-status", e.target.value); socket.emit("status", e.target.value); };
@@ -474,7 +523,7 @@ function sideItem(chat, label, opts = {}) {
   const name = el("span", "name", label);
   if (!room) name.style.color = nickColor(chat);
   div.append(name);
-  if (opts.admin) div.append(el("span", "st", "🛡️"));
+  if (opts.admin) div.append(el("span", "st", opts.role === "owner" ? "👑" : "🛡️"));
   if (typingNow[chat]?.size) div.append(el("span", "typing-ico", "✎"));
   if (unread[chat]) div.append(el("span", "badge", unread[chat]));
   return div;
@@ -485,7 +534,13 @@ function renderUsers() {
   $("count").textContent = online.length;
   $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
   const gone = Object.keys(history).filter((c) => !isRoom(c) && !online.some((u) => u.nick === c));
-  $("offList").replaceChildren(...gone.map((u) => sideItem(u, u, { off: true })));
+  $("offList").replaceChildren(...gone.filter((u) => !isBlocked(u)).map((u) => sideItem(u, u, { off: true })));
+  $("blockedBox").hidden = !blocked.size;
+  $("blockedList").replaceChildren(...[...blocked].map((b) => {
+    const it = el("div", "item blocked"); it.append(el("span", "st", "🚫"), el("span", "name", b));
+    it.onclick = (e) => { e.stopPropagation(); openSheet(b); };
+    return it;
+  }));
   updateTitle();
 }
 $("sidebar").addEventListener("click", (e) => {
@@ -499,7 +554,7 @@ function openChat(chat) {
   renderUsers(); renderMessages();
   $("text").placeholder = isRoom(current) ? (current === JUEGOS ? "Jugá o escribí…" : "Escribí un mensaje…") : `Mensaje privado a ${current}…`;
   cancelReply();
-  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a a la sala de juegos! Tocá un botón de abajo o escribí /juegos para ver todo. En trivia, número y ahorcado se responde escribiendo normal en el chat.\n❓ Trivia con tema: /trivia fútbol · Ronda de 5: /trivia ronda cine" });
+  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a a la sala de juegos! Tocá un botón de abajo o escribí /juegos para ver todo. En trivia, número y ahorcado se responde escribiendo normal en el chat.\n❓ Trivia con tema: /trivia fútbol · Ronda: botón 🏁 o /trivia ronda 10 cine, música" });
   $("text").focus();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me) { unread[current] = 0; renderUsers(); } });
@@ -520,7 +575,7 @@ function renderMessage(m) {
     + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && onlyEmoji(m.text) ? " big" : ""));
   d.dataset.id = m.id || "";
   const meta = el("div", "meta");
-  if (m.admin) meta.append(el("span", "mod", "🛡️ mod"));
+  if (m.admin) meta.append(el("span", "mod", m.role === "owner" ? "👑 dueño" : "🛡️ mod"));
   meta.append(el("span", null, hhmm(m.ts || Date.now())));
   const b = el("div", "bubble");
   if (m.reply && !m.deleted) {
@@ -623,13 +678,18 @@ function openSheet(nick) {
   const info = userInfo(nick);
   const sheet = $("sheet");
   sheet.replaceChildren();
-  const h = el("h4", null, nick + (info?.admin ? " 🛡️" : "")); h.style.color = nickColor(nick);
+  const h = el("h4", null, nick + (info?.role === "owner" ? " 👑" : info?.admin ? " 🛡️" : "")); h.style.color = nickColor(nick);
   sheet.append(h, el("div", "stline", info ? STATUS[info.status]?.join(" ") : "Desconectado/a"));
   const btn = (txt, fn, cls) => { const b = el("button", cls, txt); b.onclick = () => { closeSheet(); fn(); }; sheet.append(b); };
   if (info && current !== nick) btn("💬 Mensaje privado", () => openChat(nick));
-  btn(isBlocked(nick) ? "✅ Desbloquear" : "🚫 Bloquear (no ver sus mensajes)", () => toggleBlock(nick));
+  btn(isBlocked(nick) ? "✅ Desbloquear" : "🚫 Bloquear (no se leen entre ustedes)", () => toggleBlock(nick));
   if (info) btn("🚩 Reportar", () => reportUser(nick), "danger");
-  if (isAdmin && info && !info.admin) {
+  if (isOwner && info && info.role !== "owner") {
+    sheet.append(el("div", "modsep", "Dueño"));
+    if (info.role === "mod") btn("➖ Quitar moderador", () => cmd(`/desmod ${nick}`), "danger");
+    else btn("🛡️ Hacer moderador", () => cmd(`/mod ${nick}`));
+  }
+  if (isAdmin && info && (!info.admin || (isOwner && info.role !== "owner"))) {
     sheet.append(el("div", "modsep", "Moderación"));
     btn("🔇 Silenciar 10 min", () => cmd(`/silenciar ${nick} 10`));
     btn("🔇 Silenciar 1 hora", () => cmd(`/silenciar ${nick} 60`));
@@ -648,7 +708,7 @@ function toggleBlock(nick) {
   const k = nick.toLowerCase(), on = !blocked.has(k);
   on ? blocked.add(k) : blocked.delete(k);
   saveBlocked(); socket.emit("block", { target: nick, on });
-  push(current, { type: "sys", text: on ? `Bloqueaste a ${nick}. No vas a ver sus mensajes.` : `Desbloqueaste a ${nick}.` });
+  push(current, { type: "sys", text: on ? `Bloqueaste a ${nick}. No se van a leer entre ustedes.` : `Desbloqueaste a ${nick}.` });
   renderMessages();
 }
 function reportUser(nick) {
@@ -784,9 +844,28 @@ $("gameBar").addEventListener("click", (e) => {
   const c = b.dataset.cmd;
   if (c === "ppt") { $("text").value = "/ppt "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "✊ Completá con piedra, papel o tijera y mandá." }); }
   if (c === "bola") { $("text").value = "/bola "; $("text").focus(); return; }
-  if (c === "ronda") { $("text").value = "/trivia ronda "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "🏁 Escribí un tema (ej: música, fútbol, historia) o dejalo vacío y mandá. Son 5 preguntas seguidas." }); }
+  if (c === "ronda") return openRoundSheet();
   sendText(c);
 });
+
+// ---------- Armar una ronda de trivia ----------
+function openRoundSheet() {
+  const sheet = $("sheet");
+  let count = 10;
+  sheet.replaceChildren(el("h4", null, "🏁 Ronda de trivia"), el("div", "stline", "Elegí cuántas preguntas y, si querés, los temas."));
+  const row = el("div", "count-row");
+  [5, 10, 15, 20, 30].forEach((n) => {
+    const b = el("button", "count" + (n === count ? " on" : ""), String(n)); b.type = "button";
+    b.onclick = () => { count = n; row.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); };
+    row.append(b);
+  });
+  const temas = el("input", "field"); temas.placeholder = "Temas (opcional): cine, fútbol, historia…"; temas.maxLength = 200;
+  const go = el("button", "primary", "Arrancar ronda"); go.type = "button"; go.style.width = "100%"; go.style.textAlign = "center";
+  go.onclick = () => { closeSheet(); sendText(`/trivia ronda ${count} ${temas.value.trim()}`.trim()); };
+  const cancel = el("button", null, "Cancelar"); cancel.onclick = closeSheet;
+  sheet.append(el("div", "modsep", "Preguntas"), row, el("div", "modsep", "Temas"), temas, el("div", "hint", "Separalos con comas: se van turnando. Sin temas = de todo un poco."), go, cancel);
+  $("sheetBg").hidden = false;
+}
 
 // ---------- Enviar ----------
 function sendText(text, media = pendingMedia) {
