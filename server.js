@@ -12,12 +12,15 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "Public")));
 app.get("/ping", (req, res) => res.send("ok"));
 // Config pública para el navegador (la clave de GIPHY es pública por diseño)
-app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!process.env.GEMINI_API_KEY }));
+// Servidores para las llamadas de voz. STUN gratis de Google; TURN opcional (mejora la conexión en datos móviles)
+const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
+if (process.env.TURN_URL) ICE_SERVERS.push({ urls: process.env.TURN_URL.split(",").map((x) => x.trim()), username: process.env.TURN_USER || "", credential: process.env.TURN_PASS || "" });
+app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!process.env.GEMINI_API_KEY, iceServers: ICE_SERVERS }));
 
 // ================== Configuración ==================
 const BOT = "Fastidio";
 const CRUPIER = "Crupier";
-const ROOMS = ["general", "juegos", "mods"]; // "mods" = sala privada de moderadores
+const ROOMS = ["general", "juegos", "confesiones", "mods"]; // "mods" = sala privada de moderadores · "confesiones" = anónima
 const lockedRooms = new Set();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim(); // clave del dueño (👑), se configura en Render
 // Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
@@ -70,7 +73,7 @@ const blockedPair = (a, b) => a !== b && a.nick && b.nick && !a.admin && !b.admi
 const role = (c) => c.owner ? "owner" : c.admin ? "mod" : null;
 const userList = (viewer) =>
   [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c) }))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
@@ -126,6 +129,7 @@ function censor(text) {
 // ---------- Sanciones ----------
 function mute(c, id, minutes, reason, by = BOT) {
   c.mutedUntil = now() + minutes * 60000;
+  voiceLeave(id);
   c.mutes++;
   notice(id, `🔇 Fuiste silenciado/a por ${minutes} min. Motivo: ${reason}`, "warn");
   botSay(`🔇 ${c.nick} fue silenciado/a ${minutes} min${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
@@ -453,13 +457,13 @@ function buildReply(replyTo, room, me, other) {
   if (!m) return undefined;
   if (room) { if (m.chat !== room) return undefined; }
   else if (m.chat !== "private" || ![m.from, m.to].includes(me) || ![m.from, m.to].includes(other)) return undefined;
-  return { id: replyTo, from: m.from, text: m.text.slice(0, 120) };
+  return { id: replyTo, from: m.chat === "confesiones" ? "Anónimo" : m.from, text: m.text.slice(0, 120) };
 }
 
 // ================== Juegos ==================
-const GAME_CMDS = ["ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
+const GAME_CMDS = ["dibujo", "torneo", "ia", "juegos", "dado", "moneda", "ppt", "bola", "trivia", "numero", "número", "ahorcado", "ranking", "rendirse"];
 const points = new Map(); // apodo -> puntos
-const addPoints = (nick, n) => { points.set(nick, (points.get(nick) || 0) + n); dirty(); };
+const addPoints = (nick, n) => { points.set(nick, (points.get(nick) || 0) + n); weekly.points.set(nick, (weekly.points.get(nick) || 0) + n); dirty(); };
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const plain = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9ñ ]/g, "").replace(/\s+/g, " ").trim();
 let game = null; // juego activo en la sala
@@ -522,7 +526,7 @@ const WORDS = ["murcielago", "computadora", "mate", "asado", "empanada", "bandon
   "volcan", "galaxia", "paraguas", "caramelo", "pizza", "milanesa", "zapatilla", "teclado", "auriculares", "camiseta",
   "cancha", "arquero", "gambeta", "hinchada", "trueno", "invierno", "primavera", "dragon", "castillo", "fantasma"];
 
-function endGame() { if (game?.timer) clearTimeout(game.timer); game = null; }
+function endGame() { if (game?.timer) clearTimeout(game.timer); const g = game; game = null; if (g?.cleanup) g.cleanup(); }
 
 // ---------- Trivia (con IA si hay GEMINI_API_KEY) ----------
 const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
@@ -619,9 +623,9 @@ async function startTrivia(tema) {
   }
   recentQs.push(q.q); if (recentQs.length > 40) recentQs.shift();
   const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
-  game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato,
+  game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null,
     timer: setTimeout(() => finishTrivia(null), 40000) };
-  gameSay(`❓ TRIVIA ${n}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}40 s)\n${q.q}\nEscribí la respuesta en el chat.`);
+  gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}40 s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : "Escribí la respuesta en el chat."}`);
 }
 function finishTrivia(winner) {
   const g = game; endGame();
@@ -629,6 +633,7 @@ function finishTrivia(winner) {
   if (winner) {
     addPoints(winner, 3);
     if (triviaRound) triviaRound.scores.set(winner, (triviaRound.scores.get(winner) || 0) + 1);
+    if (triviaRound?.duel) triviaRound.duel.scores[winner] = (triviaRound.duel.scores[winner] || 0) + 1;
     gameSay(`✅ ¡${winner} acertó! Era: ${g.shown}. +3 pts (total: ${points.get(winner)})${extra}`);
   } else gameSay(`⏰ ¡Tiempo! Nadie acertó. Era: ${g.shown}${extra}`);
   if (triviaRound) {
@@ -636,6 +641,10 @@ function finishTrivia(winner) {
     if (triviaRound.left > 0) {
       if (triviaRound.left % 5 === 0) gameSay(`📊 Van ${triviaRound.total - triviaRound.left}/${triviaRound.total}. ` + ([...triviaRound.scores].sort((a, b) => b[1] - a[1]).map(([n, p]) => `${n}: ${p}`).join(" · ") || "Nadie sumó todavía"));
       setTimeout(() => { if (!game && triviaRound) startTrivia(roundTema()); }, 4000);
+    }
+    else if (triviaRound.duel) {
+      const { a, b, id } = triviaRound.duel; triviaRound = null;
+      endDuelTrivia(id, a, b);
     }
     else {
       const res = [...triviaRound.scores].sort((a, b) => b[1] - a[1]);
@@ -662,7 +671,7 @@ function gameCommand(c, id, cmd, arg) {
         : `🤖 IA: ❌ falla: ${aiLastError}.`));
     }
     case "juegos":
-      return notice(id, "🎮 Juegos: /trivia [tema] · /trivia ronda [cantidad] [temas] (ej: /trivia ronda 10 cine, fútbol) · /numero · /ahorcado · /ppt piedra|papel|tijera · /dado [caras] · /moneda · /bola <pregunta> · /ranking · /rendirse (corta el juego en curso) · /ia (estado de la IA)\nEn trivia, número y ahorcado respondés escribiendo normal en la sala. ¡El primero que acierta suma puntos!");
+      return notice(id, "🎮 Juegos: /dibujo [rondas] (dibujá y adiviná) · ⚔️ duelos: tocá el nombre de alguien · /torneo (tabla semanal) · /trivia [tema] · /trivia ronda [cantidad] [temas] (ej: /trivia ronda 10 cine, fútbol) · /numero · /ahorcado · /ppt piedra|papel|tijera · /dado [caras] · /moneda · /bola <pregunta> · /ranking · /rendirse (corta el juego en curso) · /ia (estado de la IA)\nEn trivia, número y ahorcado respondés escribiendo normal en la sala. ¡El primero que acierta suma puntos!");
     case "dado": {
       const caras = Math.min(1000, Math.max(2, parseInt(arg) || 6));
       return gameSay(`🎲 ${c.nick} tiró un dado de ${caras} caras y salió… ${1 + Math.floor(Math.random() * caras)}`);
@@ -683,9 +692,21 @@ function gameCommand(c, id, cmd, arg) {
     }
     case "ranking":
       return gameSay(rankingText());
+    case "torneo":
+      return gameSay(weeklyText());
+    case "dibujo": {
+      if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+      const rondas = Math.min(10, Math.max(1, parseInt(arg) || 5));
+      return startPictionary(c, rondas);
+    }
     case "rendirse":
       if (!game || game.type === "cargando") return notice(id, "No hay ningún juego en curso.");
+      if (triviaRound?.duel) {
+        if (![triviaRound.duel.a, triviaRound.duel.b].includes(c.nick) && !c.admin) return notice(id, "Es un duelo: solo lo pueden cortar ellos dos.");
+        const d = duels.get(triviaRound.duel.id); if (d) duelExpire(d);
+      }
       { const g = game; endGame(); triviaRound = null;
+        if (g.type === "dibujo") return gameSay(`🏳️ ${c.nick} cortó el juego. La palabra era: ${g.word.toUpperCase()}`);
         return gameSay(`🏳️ ${c.nick} cortó el juego. ${g.type === "trivia" ? `La respuesta era: ${g.shown}` : g.type === "numero" ? `El número era ${g.n}` : `La palabra era: ${g.word.toUpperCase()}`}`); }
     case "trivia": case "numero": case "número": case "ahorcado":
       if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
@@ -718,6 +739,7 @@ function gameGuess(nick, text) {
   const t = plain(text);
   if (!t) return;
   if (game.type === "trivia") {
+    if (game.only && !game.only.includes(nick)) return;
     if (isCorrect(t, game.answers)) finishTrivia(nick);
     return;
   }
@@ -743,6 +765,206 @@ function gameGuess(nick, text) {
   }
 }
 
+// ================== Torneo semanal ==================
+const WEEK = 7 * 24 * 3600000, ART = 3 * 3600000; // Argentina = UTC-3
+function weekStartOf(ts) {
+  const d = new Date(ts - ART); const back = (d.getUTCDay() + 6) % 7; // lunes = 0
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back) + ART;
+}
+const weekly = { start: weekStartOf(Date.now()), points: new Map() };
+let champions = []; // [{ nick, pts, week }]
+const isChamp = (nick) => !!champions.length && champions[champions.length - 1].nick.toLowerCase() === String(nick).toLowerCase();
+function weeklyText() {
+  const top = [...weekly.points].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const left = weekly.start + WEEK - Date.now(), dias = Math.floor(left / 86400000), hs = Math.floor((left % 86400000) / 3600000);
+  const last = champions[champions.length - 1];
+  return `🏆 TORNEO SEMANAL (termina en ${dias} d ${hs} h · el lunes 0 h)\n` +
+    (top.length ? top.map(([n, p], i) => `${["🥇", "🥈", "🥉"][i] || (i + 1) + "."} ${n} — ${p} pts`).join("\n") : "Nadie sumó puntos esta semana todavía. ¡Jugá trivia, dibujo o duelos!") +
+    (last ? `\n👑 Campeón/a de la semana pasada: ${last.nick} (${last.pts} pts)` : "");
+}
+setInterval(() => {
+  if (Date.now() < weekly.start + WEEK) return;
+  const top = [...weekly.points].sort((a, b) => b[1] - a[1]);
+  if (top.length) {
+    champions.push({ nick: top[0][0], pts: top[0][1], week: weekly.start }); champions = champions.slice(-20);
+    io.emit("announce", { text: `🏆 ¡${top[0][0]} ganó el torneo de la semana con ${top[0][1]} puntos! Se lleva la copa 🏆 hasta el próximo lunes.`, ts: Date.now() });
+    gameSay("🏁 Terminó el torneo semanal.\n" + top.slice(0, 5).map(([n, p], i) => `${["🥇", "🥈", "🥉"][i] || (i + 1) + "."} ${n} — ${p} pts`).join("\n") + "\n¡Arranca uno nuevo!");
+  }
+  weekly.start = weekStartOf(Date.now()); weekly.points = new Map();
+  dirty(); pushUsers();
+}, 60000);
+
+// ================== Dibujá y adiviná ==================
+const PIC_WORDS = ["perro", "gato", "casa", "sol", "luna", "arbol", "auto", "bicicleta", "pelota", "mate", "empanada", "pizza", "guitarra", "barco", "avion",
+  "pez", "flor", "nube", "lluvia", "paraguas", "anteojos", "zapato", "sombrero", "reloj", "telefono", "computadora", "libro", "lapiz", "silla", "mesa",
+  "cama", "puerta", "ventana", "llave", "corazon", "estrella", "montaña", "playa", "isla", "volcan", "cohete", "robot", "fantasma", "dragon", "castillo",
+  "corona", "espada", "tesoro", "pirata", "conejo", "elefante", "jirafa", "serpiente", "araña", "mariposa", "abeja", "caracol", "tortuga", "pinguino", "leon",
+  "banana", "manzana", "helado", "torta", "hamburguesa", "pan", "huevo", "taza", "botella", "cuchara", "tijera", "martillo", "escalera", "puente", "tren",
+  "colectivo", "semaforo", "faro", "carpa", "fogata", "globo", "regalo", "camara", "auriculares", "television", "microfono", "dinosaurio", "unicornio", "sirena", "bruja"];
+const recentPlayers = new Map(); // apodo -> última vez que habló en Juegos
+let pic = null; // ronda actual de dibujo (además de game)
+function picMask(word, revealed) { return word.split("").map((ch, i) => ch === " " ? " " : revealed.has(i) ? ch.toUpperCase() : "_").join(" "); }
+function picState() {
+  if (!game || game.type !== "dibujo") return { active: false };
+  return { active: true, drawer: game.drawer, mask: picMask(game.word, game.revealed), endsAt: game.endsAt, round: game.round, total: game.total };
+}
+function startPictionary(starter, total) {
+  game = { type: "dibujo", total, round: 0, scores: new Map(), drawer: starter.nick, word: "", revealed: new Set(), pieces: [], timers: [],
+    cleanup() { this.timers.forEach(clearTimeout); io.emit("pic-state", { active: false }); } };
+  gameSay(`🖍️ DIBUJÁ Y ADIVINÁ — ${total} ronda${total === 1 ? "" : "s"}. El que dibuja recibe una palabra secreta; los demás adivinan escribiendo en el chat.\nAdivinar: +2 · El que dibuja: +1 si alguien adivina.`);
+  nextPicRound(starter.nick);
+}
+function nextPicRound(drawer) {
+  if (!game || game.type !== "dibujo") return;
+  game.timers.forEach(clearTimeout); game.timers = [];
+  game.round++;
+  const used = game.used || (game.used = new Set());
+  const pool = PIC_WORDS.filter((w) => !used.has(w));
+  game.word = pick(pool.length ? pool : PIC_WORDS); used.add(game.word);
+  game.drawer = drawer; game.revealed = new Set(); game.pieces = []; game.endsAt = now() + 90000;
+  const d = byNick(drawer);
+  if (d) io.to(d.id).emit("pic-word", game.word);
+  io.emit("pic-board", []);
+  io.emit("pic-state", picState());
+  gameSay(`🖍️ Ronda ${game.round}/${game.total}: dibuja ${drawer}. Palabra de ${game.word.replace(/ /g, "").length} letras: ${picMask(game.word, game.revealed)}\n¡Escriban sus respuestas! (90 s)`);
+  const reveal = () => {
+    if (!game || game.type !== "dibujo") return;
+    const hidden = [...game.word].map((ch, i) => i).filter((i) => game.word[i] !== " " && !game.revealed.has(i));
+    if (hidden.length > 2) { game.revealed.add(pick(hidden)); io.emit("pic-state", picState()); gameSay(`💡 Pista: ${picMask(game.word, game.revealed)}`); }
+  };
+  game.timers.push(setTimeout(reveal, 40000), setTimeout(reveal, 65000), setTimeout(() => endPicRound(null), 90000));
+}
+function endPicRound(winner) {
+  if (!game || game.type !== "dibujo") return;
+  game.timers.forEach(clearTimeout); game.timers = [];
+  const word = game.word.toUpperCase(), drawer = game.drawer;
+  if (winner) {
+    addPoints(winner, 2); addPoints(drawer, 1);
+    game.scores.set(winner, (game.scores.get(winner) || 0) + 2); game.scores.set(drawer, (game.scores.get(drawer) || 0) + 1);
+    gameSay(`✅ ¡${winner} adivinó! Era ${word}. +2 para ${winner} y +1 para ${drawer} 🎨`);
+  } else gameSay(`⏰ ¡Tiempo! Nadie adivinó. Era ${word}.`);
+  if (game.round >= game.total) {
+    const res = [...game.scores].sort((a, b) => b[1] - a[1]);
+    gameSay(res.length ? `🏁 Fin del dibujo. Ganó ${res[0][0]} con ${res[0][1]} pts.\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin del dibujo. ¡Nadie sumó! 😅");
+    return endGame();
+  }
+  // Próximo dibujante: el que adivinó, o alguien activo en Juegos, o el mismo
+  const t = now();
+  const active = [...recentPlayers].filter(([n, ts]) => t - ts < 10 * 60000 && n !== drawer && byNick(n)).map(([n]) => n);
+  const next = (winner && byNick(winner) ? winner : null) || (active.length ? pick(active) : null) || (byNick(drawer) ? drawer : null);
+  if (!next) { gameSay("No queda nadie para dibujar. Fin del juego."); return endGame(); }
+  io.emit("pic-state", { active: true, drawer: next, mask: "…", endsAt: t + 4000, round: game.round + 1, total: game.total, waiting: true });
+  game.timers.push(setTimeout(() => nextPicRound(next), 4000));
+}
+// Devuelve true si el mensaje no se tiene que publicar (respuesta correcta o el dibujante diciendo la palabra)
+function picIntercept(c, sid, text) {
+  if (!game || game.type !== "dibujo" || !game.word) return false;
+  const t = plain(text), w = plain(game.word);
+  if (c.nick === game.drawer) {
+    if (t.includes(w)) { notice(sid, "🤫 ¡No vale decir la palabra! Dibujala.", "warn"); return true; }
+    return false;
+  }
+  if (t === w || (" " + t + " ").includes(" " + w + " ")) { endPicRound(c.nick); return true; }
+  if (w.length >= 5 && lev(t, w) === 1) { notice(sid, "🔥 ¡Casi! Estás muy cerca.", "help"); return true; }
+  return false;
+}
+
+// ================== Duelos 1 contra 1 ==================
+const duels = new Map(); // id -> { id, a, b, kind, state, wins: {}, picks: {}, round, timer }
+const inDuel = (nick) => [...duels.values()].some((d) => d.state === "on" && (d.a === nick || d.b === nick));
+const PPT_EMO = { piedra: "🪨", papel: "📄", tijera: "✂️" };
+function duelExpire(d, msg) {
+  clearTimeout(d.timer); duels.delete(d.id);
+  [d.a, d.b].forEach((n) => { const t = byNick(n); if (t) { io.to(t.id).emit("duel-close", d.id); if (msg) notice(t.id, msg); } });
+}
+function pptAsk(d) {
+  d.picks = {}; d.round++;
+  clearTimeout(d.timer);
+  d.timer = setTimeout(() => {
+    const faltan = [d.a, d.b].filter((n) => !d.picks[n]);
+    gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${faltan.join(" y ")} no eligió a tiempo.`);
+    duelExpire(d);
+  }, 45000);
+  [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-ppt", { id: d.id, opp, round: d.round, me: d.wins[me] || 0, them: d.wins[opp] || 0 }); });
+}
+function finishDuel(d, winner, loser) {
+  clearTimeout(d.timer); duels.delete(d.id);
+  addPoints(winner, 3);
+  gameSay(`🏆 ¡${winner} ganó el duelo de ${d.kind === "ppt" ? "piedra, papel o tijera" : "trivia"} contra ${loser}! +3 pts`);
+  [[d.a, d.b], [d.b, d.a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-end", { id: d.id, opp, kind: d.kind, won: me === winner }); });
+}
+function endDuelTrivia(id, a, b) {
+  const d = duels.get(id); if (!d) return;
+  const sa = d.scores?.[a] || 0, sb = d.scores?.[b] || 0;
+  if (sa === sb) {
+    gameSay(`⚔️ Duelo de trivia ${a} vs ${b}: ¡empate ${sa} a ${sb}! 🤝`);
+    duels.delete(id);
+    [[a, b], [b, a]].forEach(([me, opp]) => { const t = byNick(me); if (t) io.to(t.id).emit("duel-end", { id, opp, kind: "trivia", won: null }); });
+  } else finishDuel(d, sa > sb ? a : b, sa > sb ? b : a);
+}
+
+// ================== Canales de voz (llamada grupal) ==================
+const VOICE_ROOMS = ["general", "juegos", "mods"];
+const VOICE_MAX = 8;
+const voice = new Map(VOICE_ROOMS.map((r) => [r, new Set()])); // sala -> socket ids
+const voiceOf = (sid) => { for (const [r, set] of voice) if (set.has(sid)) return r; return null; };
+function voiceList(room) { return [...voice.get(room)].map((sid) => clients.get(sid)).filter(Boolean).map((x) => ({ nick: x.nick, muted: !!x.voiceMuted })); }
+function pushVoice(room) {
+  const list = voiceList(room);
+  if (room === "mods") emitToMods("voice-count", { room, list }); else io.emit("voice-count", { room, list });
+}
+function voiceLeave(sid) {
+  const room = voiceOf(sid); if (!room) return;
+  voice.get(room).delete(sid);
+  for (const other of voice.get(room)) io.to(other).emit("voice-peer-leave", { sid });
+  io.to(sid).emit("voice-left", { room });
+  pushVoice(room);
+}
+
+// ================== Charla al azar ==================
+let randomQueue = []; // socket ids esperando
+const lastPartner = new Map(); // apodo -> último compañero
+
+// ================== Pizarra compartida ==================
+const BOARD_W = 900, BOARD_H = 1200, MAX_PIECES = 15000;
+let board = []; // { s: id del trazo, by, c: color, w: grosor, p: [x,y,x,y,...] }
+const COLOR_RE = /^#[0-9a-f]{6}$/i;
+function boardRemove(pred) {
+  const removed = new Set();
+  board = board.filter((pc) => (pred(pc) ? (removed.add(pc.s), false) : true));
+  return [...removed];
+}
+
+// ================== Eventos programados ==================
+let events = []; // { id, title, ts, weekly, action: null | { type: "trivia", count, temas } , warned }
+const publicEvents = () => events.filter((e) => e.ts > now() - 3600000).sort((a, b) => a.ts - b.ts)
+  .map(({ id, title, ts, weekly, action, by }) => ({ id, title, ts, weekly, action, by }));
+const pushEvents = () => io.emit("events", publicEvents());
+const fmtWhen = (ts) => new Date(ts).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", weekday: "long", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+setInterval(() => {
+  const t = now(); let changed = false;
+  for (const e of [...events]) {
+    if (!e.warned && t >= e.ts - 15 * 60000 && t < e.ts) {
+      e.warned = true; changed = true;
+      io.emit("announce", { text: `⏰ En 15 minutos: ${e.title}`, ts: t });
+    }
+    if (t >= e.ts) {
+      changed = true;
+      if (t - e.ts < 10 * 60000) { // si el servidor estuvo dormido mucho tiempo, no anuncia tarde
+        io.emit("announce", { text: `📅 ¡Empieza! ${e.title}${e.action?.type === "trivia" ? " — vengan a 🎮 Juegos" : ""}`, ts: t });
+        if (e.action?.type === "trivia" && !game) {
+          triviaRound = { left: e.action.count, total: e.action.count, temas: e.action.temas || [], scores: new Map() };
+          gameSay(`🏁 Evento: ${e.title}. RONDA de ${e.action.count} preguntas${e.action.temas?.length ? " sobre " + e.action.temas.join(", ") : ""}. ¡Atentos!`);
+          setTimeout(() => startTrivia(roundTema()), 3000);
+        }
+      }
+      if (e.weekly) { while (e.ts <= t) e.ts += 7 * 24 * 3600000; e.warned = false; }
+      else events = events.filter((x) => x !== e);
+    }
+  }
+  if (changed) { dirty(); pushEvents(); }
+}, 30000);
+
 // ================== Conexiones ==================
 io.on("connection", (socket) => {
   const ip = (socket.handshake.headers["x-forwarded-for"] || socket.handshake.address || "").split(",")[0].trim();
@@ -760,7 +982,7 @@ io.on("connection", (socket) => {
 
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
-    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms] });
+    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
@@ -770,7 +992,7 @@ io.on("connection", (socket) => {
 
     c.nick = nick; c.joinedAt = now();
     users.set(nick.toLowerCase(), socket.id);
-    cb({ ok: true, nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms] });
+    cb({ ok: true, nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
     emitFrom(c, "user-joined", nick, true);
     pushUsers();
   });
@@ -787,11 +1009,21 @@ io.on("connection", (socket) => {
     if (text === null) return;
     const media = checkMedia(c, socket.id, p);
     if (!media) return;
+    if (room === "juegos" && text && picIntercept(c, socket.id, text)) return;
+    if (room === "juegos") recentPlayers.set(c.nick, now());
     const id = newId();
     const reply = buildReply(p.replyTo, room);
-    remember(id, { chat: room, from: c.nick, text: text || mediaLabel(media) });
+    remember(id, { chat: room, from: c.nick, text: text || mediaLabel(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
     const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
-    if (room === "mods") emitToMods("public-message", out); else emitFrom(c, "public-message", out);
+    if (room === "mods") emitToMods("public-message", out);
+    else if (room === "confesiones") {
+      // Nadie ve el nombre; los moderadores sí (para poder moderar); el autor lo ve como propio
+      const anon = { id, room, from: "Anónimo", anon: true, text, ...media, reply, ts: out.ts };
+      for (const [sid, rc] of clients) {
+        if (!rc.nick || blockedPair(rc, c)) continue;
+        io.to(sid).emit("public-message", rc === c ? { ...anon, mine: true } : rc.admin ? { ...anon, realFrom: c.nick } : anon);
+      }
+    } else emitFrom(c, "public-message", out);
     if (room === "juegos" && text) gameGuess(c.nick, text);
   });
 
@@ -806,7 +1038,7 @@ io.on("connection", (socket) => {
     const media = checkMedia(c, socket.id, { image, gif, audio });
     if (!media) return cb({ ok: false, silent: true });
     const id = newId();
-    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media) });
+    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
     const reply = buildReply(replyTo, null, c.nick, target.c.nick);
     const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
     io.to(target.id).emit("private-message", msg);
@@ -817,6 +1049,7 @@ io.on("connection", (socket) => {
     if (!c.nick || c.mutedUntil > now()) return;
     if (!to) {
       const r = ROOMS.includes(room) ? room : "general";
+      if (r === "confesiones") return;
       if (r === "mods") { if (c.admin) for (const [sid, rc] of clients) if (rc.admin && rc !== c) io.to(sid).emit("typing", { from: c.nick, chat: "#mods", on: !!on }); return; }
       return emitFrom(c, "typing", { from: c.nick, chat: "#" + r, on: !!on }, true);
     }
@@ -854,6 +1087,211 @@ io.on("connection", (socket) => {
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("reactions", payload); });
   });
 
+  // ---- Dibujá y adiviná ----
+  socket.on("pic-get", () => { socket.emit("pic-state", picState()); if (game?.type === "dibujo") { socket.emit("pic-board", game.pieces); if (game.drawer === c.nick && game.word) socket.emit("pic-word", game.word); } });
+  let picTimes = [];
+  socket.on("pic-draw", (pc = {}) => {
+    if (!game || game.type !== "dibujo" || game.drawer !== c.nick) return;
+    const t = now(); picTimes = picTimes.filter((x) => t - x < 1000); if (picTimes.length > 40) return; picTimes.push(t);
+    const p = Array.isArray(pc.p) ? pc.p.slice(0, 400).map((v, i) => Math.max(0, Math.min(i % 2 ? 600 : 800, Math.round(+v || 0)))) : [];
+    if (p.length < 2 || !COLOR_RE.test(pc.c || "")) return;
+    const piece = { c: pc.c, w: Math.min(50, Math.max(1, +pc.w || 5)), p };
+    game.pieces.push(piece); if (game.pieces.length > 4000) game.pieces.shift();
+    socket.broadcast.emit("pic-draw", piece);
+  });
+  socket.on("pic-clear", () => { if (game?.type === "dibujo" && game.drawer === c.nick) { game.pieces = []; io.emit("pic-board", []); } });
+  socket.on("pic-skip", () => { if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`⏭️ ${c.nick} pasó la palabra.`); endPicRound(null); } });
+
+  // ---- Duelos ----
+  socket.on("duel-invite", ({ to, kind } = {}) => {
+    if (!c.nick) return;
+    kind = kind === "trivia" ? "trivia" : "ppt";
+    const t = byNick(to);
+    if (!t || t.id === socket.id) return notice(socket.id, "No encuentro a esa persona.");
+    if (blockedPair(c, t.c)) return notice(socket.id, "No podés desafiar a esa persona.");
+    if (inDuel(c.nick) || inDuel(t.c.nick)) return notice(socket.id, "Alguno de los dos ya está en un duelo.");
+    if ([...duels.values()].filter((d) => d.a === c.nick && d.state === "invite").length >= 2) return notice(socket.id, "Ya tenés desafíos esperando respuesta.");
+    const d = { id: newId(), a: c.nick, b: t.c.nick, kind, state: "invite", wins: {}, picks: {}, round: 0, scores: {} };
+    d.timer = setTimeout(() => duelExpire(d, `⌛ El desafío entre ${d.a} y ${d.b} venció.`), 60000);
+    duels.set(d.id, d);
+    io.to(t.id).emit("duel-invite", { id: d.id, from: c.nick, kind });
+    notice(socket.id, `⚔️ Desafiaste a ${t.c.nick} a ${kind === "ppt" ? "piedra, papel o tijera (al mejor de 3)" : "un duelo de trivia (5 preguntas)"}. Esperando respuesta…`);
+  });
+  socket.on("duel-answer", ({ id, accept } = {}) => {
+    const d = duels.get(id); if (!d || d.b !== c.nick || d.state !== "invite") return;
+    if (!accept) return duelExpire(d, `🙅 ${d.b} rechazó el duelo.`);
+    clearTimeout(d.timer);
+    if (inDuel(d.a) || inDuel(d.b)) return duelExpire(d, "Alguno de los dos ya está en otro duelo.");
+    if (d.kind === "trivia") {
+      if (game) return duelExpire(d, "Hay otro juego en curso en 🎮 Juegos. Prueben cuando termine.");
+      d.state = "on";
+      gameSay(`⚔️ ¡DUELO DE TRIVIA! ${d.a} vs ${d.b} — 5 preguntas, solo responden ellos dos. ¡Vengan a mirar!`);
+      triviaRound = { left: 5, total: 5, temas: [], scores: new Map(), duel: { id: d.id, a: d.a, b: d.b, scores: d.scores } };
+      [d.a, d.b].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("duel-go", { id: d.id, room: "juegos" }); });
+      return startTrivia("");
+    }
+    d.state = "on";
+    gameSay(`⚔️ ¡DUELO! ${d.a} vs ${d.b} a piedra, papel o tijera (al mejor de 3).`);
+    pptAsk(d);
+  });
+  socket.on("duel-pick", ({ id, pick: choice } = {}) => {
+    const d = duels.get(id); if (!d || d.state !== "on" || d.kind !== "ppt" || ![d.a, d.b].includes(c.nick)) return;
+    if (!PPT_EMO[choice] || d.picks[c.nick]) return;
+    d.picks[c.nick] = choice;
+    if (!d.picks[d.a] || !d.picks[d.b]) return notice(socket.id, "Elegiste. Esperando al otro… 🤐");
+    const pa = d.picks[d.a], pb = d.picks[d.b];
+    const beats = { piedra: "tijera", papel: "piedra", tijera: "papel" };
+    let res;
+    if (pa === pb) res = "¡Empate! 🤝";
+    else { const w = beats[pa] === pb ? d.a : d.b; d.wins[w] = (d.wins[w] || 0) + 1; res = `gana ${w}`; }
+    gameSay(`⚔️ ${d.a} ${PPT_EMO[pa]} vs ${PPT_EMO[pb]} ${d.b} → ${res} (${d.wins[d.a] || 0}-${d.wins[d.b] || 0})`);
+    if ((d.wins[d.a] || 0) >= 2) return finishDuel(d, d.a, d.b);
+    if ((d.wins[d.b] || 0) >= 2) return finishDuel(d, d.b, d.a);
+    pptAsk(d);
+  });
+
+  // ---- Charla al azar ----
+  let randomTimer = null;
+  socket.on("random-join", () => {
+    if (!c.nick || randomQueue.includes(socket.id)) return;
+    const candidates = randomQueue.filter((sid) => { const o = clients.get(sid); return o && o.nick && !blockedPair(c, o); });
+    const fresh = candidates.filter((sid) => lastPartner.get(c.nick) !== clients.get(sid).nick);
+    const partner = (fresh.length ? fresh : candidates)[0];
+    if (partner) {
+      randomQueue = randomQueue.filter((x) => x !== partner);
+      const o = clients.get(partner);
+      lastPartner.set(c.nick, o.nick); lastPartner.set(o.nick, c.nick);
+      io.to(partner).emit("random-match", { nick: c.nick });
+      socket.emit("random-match", { nick: o.nick });
+      return;
+    }
+    randomQueue.push(socket.id);
+    socket.emit("random-wait");
+    clearTimeout(randomTimer);
+    randomTimer = setTimeout(() => { if (randomQueue.includes(socket.id)) { randomQueue = randomQueue.filter((x) => x !== socket.id); socket.emit("random-timeout"); } }, 120000);
+  });
+  socket.on("random-cancel", () => { randomQueue = randomQueue.filter((x) => x !== socket.id); clearTimeout(randomTimer); });
+
+  // ---- Canales de voz ----
+  socket.on("voice-join", (room) => {
+    if (!c.nick || !VOICE_ROOMS.includes(room)) return;
+    if (room === "mods" && !c.admin) return;
+    if (c.mutedUntil > now() && !c.admin) return notice(socket.id, "🔇 Estás silenciado/a: no podés entrar a la voz.", "warn");
+    if (c.inCall || c.callWith) return notice(socket.id, "Cortá la llamada 1 a 1 antes de entrar a la voz.");
+    if (voiceOf(socket.id) === room) return;
+    if (voice.get(room).size >= VOICE_MAX) return notice(socket.id, `🎙️ La voz de esta sala está llena (máx. ${VOICE_MAX}).`, "warn");
+    voiceLeave(socket.id);
+    c.voiceMuted = false;
+    const peers = [...voice.get(room)].map((sid) => ({ sid, nick: clients.get(sid)?.nick })).filter((x) => x.nick);
+    voice.get(room).add(socket.id);
+    socket.emit("voice-joined", { room, peers, me: socket.id });
+    for (const p of peers) io.to(p.sid).emit("voice-peer-join", { sid: socket.id, nick: c.nick });
+    pushVoice(room);
+  });
+  socket.on("voice-leave", () => voiceLeave(socket.id));
+  socket.on("voice-signal", ({ to, data } = {}) => {
+    const room = voiceOf(socket.id);
+    if (!room || !voice.get(room).has(to) || !data || JSON.stringify(data).length > 20000) return;
+    io.to(to).emit("voice-signal", { from: socket.id, nick: c.nick, data });
+  });
+  socket.on("voice-mute", (m) => { const room = voiceOf(socket.id); if (!room) return; c.voiceMuted = !!m; pushVoice(room); });
+  socket.on("voice-invite", ({ to } = {}) => {
+    const room = voiceOf(socket.id); const t = byNick(to);
+    if (!room || !t || blockedPair(c, t.c) || voiceOf(t.id) === room) return;
+    if (room === "mods" && !t.c.admin) return;
+    io.to(t.id).emit("voice-invite", { from: c.nick, room });
+    notice(socket.id, `🎙️ Invitaste a ${t.c.nick} a la voz.`);
+  });
+  socket.on("voice-kick", ({ nick } = {}) => {
+    if (!c.admin) return; const t = byNick(nick); if (!t || (t.c.admin && !c.owner)) return;
+    const room = voiceOf(t.id); if (!room) return;
+    voiceLeave(t.id); notice(t.id, "🎙️ Un moderador te sacó de la voz.", "warn");
+  });
+  socket.on("voice-get", () => { for (const r of VOICE_ROOMS) if (r !== "mods" || c.admin) socket.emit("voice-count", { room: r, list: voiceList(r) }); });
+
+  // ---- Llamadas de voz (solo se pasan mensajes entre los dos navegadores) ----
+  const callOk = (to) => { const t = byNick(to); return t && t.id !== socket.id && !blockedPair(c, t.c) ? t : null; };
+  socket.on("call-offer", ({ to, sdp } = {}) => {
+    const t = callOk(to); if (!c.nick || !t || typeof sdp !== "string" || sdp.length > 20000) return socket.emit("call-failed", "No se pudo llamar a esa persona.");
+    if (t.c.inCall || voiceOf(t.id)) return socket.emit("call-busy", t.c.nick);
+    if (voiceOf(socket.id)) return socket.emit("call-failed", "Salí de la voz grupal antes de hacer una llamada 1 a 1.");
+    c.callWith = t.c.nick;
+    io.to(t.id).emit("call-incoming", { from: c.nick, sdp });
+  });
+  socket.on("call-answer", ({ to, sdp } = {}) => {
+    const t = callOk(to); if (!t || typeof sdp !== "string" || sdp.length > 20000 || t.c.callWith !== c.nick) return;
+    c.inCall = t.c.nick; t.c.inCall = c.nick; c.callWith = t.c.nick;
+    io.to(t.id).emit("call-answered", { from: c.nick, sdp });
+  });
+  socket.on("call-ice", ({ to, cand } = {}) => {
+    const t = callOk(to); if (!t || !cand || JSON.stringify(cand).length > 3000) return;
+    if (c.callWith !== t.c.nick && t.c.callWith !== c.nick) return;
+    io.to(t.id).emit("call-ice", { from: c.nick, cand });
+  });
+  const hangup = (to, ev = "call-ended", reason) => {
+    const t = byNick(to);
+    if (t && (t.c.callWith === c.nick || t.c.inCall === c.nick)) { t.c.inCall = null; t.c.callWith = null; io.to(t.id).emit(ev, { from: c.nick, reason }); }
+    c.inCall = null; c.callWith = null;
+  };
+  socket.on("call-end", ({ to } = {}) => hangup(to));
+  socket.on("call-reject", ({ to, reason } = {}) => hangup(to, "call-rejected", reason === "busy" ? "busy" : "no"));
+
+  // ---- Pizarra ----
+  let drawTimes = [];
+  socket.on("board-get", () => socket.emit("board", board));
+  socket.on("draw", (pc = {}) => {
+    if (!c.nick || (c.mutedUntil > now() && !c.admin)) return;
+    const t = now(); drawTimes = drawTimes.filter((x) => t - x < 1000);
+    if (drawTimes.length > 40) return; drawTimes.push(t);
+    const p = Array.isArray(pc.p) ? pc.p.slice(0, 400).map((v, i) => Math.max(0, Math.min(i % 2 ? BOARD_H : BOARD_W, Math.round(+v || 0)))) : [];
+    if (p.length < 2 || !COLOR_RE.test(pc.c || "")) return;
+    const piece = { s: String(pc.s || "").slice(0, 24), by: c.nick, c: pc.c, w: Math.min(60, Math.max(1, +pc.w || 4)), p };
+    board.push(piece); if (board.length > MAX_PIECES) board.splice(0, board.length - MAX_PIECES);
+    emitFrom(c, "draw", piece, true);
+  });
+  socket.on("board-undo", (sid) => { if (!c.nick) return; const r = boardRemove((pc) => pc.s === sid && pc.by === c.nick); if (r.length) io.emit("board-remove", r); });
+  socket.on("board-clear-mine", () => { if (!c.nick) return; const r = boardRemove((pc) => pc.by === c.nick); if (r.length) io.emit("board-remove", r); });
+  socket.on("board-clear-all", () => { if (!c.admin) return; board = []; io.emit("board", []); notifyAdmins(`${c.nick} limpió la pizarra.`); });
+
+  // ---- Eventos ----
+  socket.on("event-add", (e = {}, cb) => {
+    if (!c.admin) return cb && cb({ ok: false, error: "Solo moderadores." });
+    const title = String(e.title || "").trim().slice(0, 100);
+    const ts = +e.ts;
+    if (!title || !ts || ts < now() - 60000 || ts > now() + 365 * 24 * 3600000) return cb && cb({ ok: false, error: "Revisá el título y la fecha." });
+    if (events.length >= 30) return cb && cb({ ok: false, error: "Máximo 30 eventos." });
+    let action = null;
+    if (e.action?.type === "trivia") action = { type: "trivia", count: Math.min(30, Math.max(3, +e.action.count || 10)), temas: (Array.isArray(e.action.temas) ? e.action.temas : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean).slice(0, 6) };
+    events.push({ id: newId(), title, ts, weekly: !!e.weekly, action, by: c.nick, warned: false });
+    dirty(); pushEvents();
+    botSay(`📅 Nuevo evento: ${title} — ${fmtWhen(ts)}${e.weekly ? " (todas las semanas)" : ""}`);
+    cb && cb({ ok: true });
+  });
+  socket.on("event-del", (id) => {
+    if (!c.admin) return;
+    const ev = events.find((x) => x.id === id); if (!ev) return;
+    events = events.filter((x) => x.id !== id); dirty(); pushEvents();
+    notifyAdmins(`${c.nick} borró el evento "${ev.title}".`);
+  });
+
+  socket.on("edit-message", ({ id, text: raw } = {}) => {
+    const m = messages.get(String(id || ""));
+    if (!m || !c.nick || m.from !== c.nick || m.media) return;
+    if (now() - (m.ts || 0) > 30 * 60000) return notice(socket.id, "✏️ Solo podés editar mensajes de los últimos 30 minutos.", "warn");
+    if (lockedRooms.has(m.chat) && !c.admin) return;
+    if (c.mutedUntil > now()) return notice(socket.id, "🔇 Estás silenciado/a.", "warn");
+    let text = String(raw || "").trim().slice(0, MAX_MSG);
+    if (!text) return;
+    const r = censor(text);
+    if (r.harm && !c.admin) { strike(c, socket.id, 2, "Incitar a hacerse daño"); }
+    text = r.text;
+    m.text = text.slice(0, 160);
+    const payload = { id, text, edited: true };
+    if (m.chat === "private") [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("edited", payload); });
+    else if (m.chat === "mods") emitToMods("edited", payload);
+    else io.emit("edited", payload);
+  });
+
   socket.on("delete-message", (id) => {
     const m = messages.get(id);
     if (!m || !c.nick) return;
@@ -889,7 +1327,15 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     clients.delete(socket.id);
+    randomQueue = randomQueue.filter((x) => x !== socket.id);
+    voiceLeave(socket.id);
     if (!c.nick) return;
+    if (c.inCall || c.callWith) hangup(c.inCall || c.callWith);
+    for (const d of [...duels.values()]) if (d.a === c.nick || d.b === c.nick) {
+      if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
+      gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
+    }
+    if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`🖍️ ${c.nick} se desconectó mientras dibujaba.`); endPicRound(null); }
     users.delete(c.nick.toLowerCase());
     emitFrom(c, "user-left", c.nick);
     pushUsers();
@@ -921,7 +1367,8 @@ function snapshot() {
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
     bans: [...bans].filter(([, until]) => until > t),
     points: [...points],
-    pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms],
+    pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events,
+    weekly: { start: weekly.start, points: [...weekly.points] }, champions,
   };
 }
 let saveTimer = null;
@@ -953,6 +1400,13 @@ async function loadState() {
       pinned = st.pinned || ""; slowMode = st.slowMode || 0;
       if (Array.isArray(st.badWords)) BAD_WORDS = st.badWords;
       (st.locked || []).forEach((r) => lockedRooms.add(r));
+      if (Array.isArray(st.events)) events = st.events;
+      if (st.weekly?.start === weekly.start) (st.weekly.points || []).forEach(([n, p]) => weekly.points.set(n, p));
+      else if (st.weekly?.points?.length) { // la semana terminó mientras el servidor estaba apagado
+        const top = [...st.weekly.points].sort((a, b) => b[1] - a[1])[0];
+        if (top) (st.champions = st.champions || []).push({ nick: top[0], pts: top[1], week: st.weekly.start });
+      }
+      if (Array.isArray(st.champions)) champions = st.champions.slice(-20);
       console.log(`Base de datos: cargado (${modKeys.size} claves de mods, ${bans.size} baneos, ${points.size} en el ranking)`);
     } else console.log("Base de datos: conectada (vacía, primera vez)");
     db.loaded = true;
