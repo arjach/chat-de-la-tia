@@ -881,7 +881,12 @@ function openModPanel() {
   sheet.append(el("div", "modsep", "Listas"));
   btn("🔇 Ver silenciados", () => cmd("/silenciados"));
   btn("🚩 Ver reportes", () => cmd("/reportes"));
-  if (isOwner) btn("👑 Ver moderadores y claves", () => cmd("/mods"));
+  if (isOwner) {
+    sheet.append(el("div", "modsep", "👑 Moderadores"));
+    btn("👑 Ver moderadores y claves", () => cmd("/mods"));
+    btn("🔑 Crear clave de moderador", () => { const n = prompt("Nombre de la persona (para identificar la clave):"); if (n && n.trim()) cmd(`/crearclave ${n.trim()}`); });
+    btn("🗑️ Anular una clave", () => { const n = prompt("Nombre de la persona cuya clave querés anular:"); if (n && n.trim()) cmd(`/quitarclave ${n.trim()}`); }, "danger");
+  }
   btn("❔ Todos los comandos", () => cmd("/ayuda"));
   btn("Cerrar", () => {});
   $("sheetBg").hidden = false;
