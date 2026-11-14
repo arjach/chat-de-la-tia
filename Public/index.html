@@ -1,9 +1,186 @@
-💬 Entrar al chat
-Entrar
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #f2f4f7; color: #1d2430; height: 100dvh; }
+  #login { display: flex; height: 100%; align-items: center; justify-content: center; padding: 16px; }
+  .card { background: #fff; padding: 28px; border-radius: 14px; box-shadow: 0 4px 24px #0001; width: 100%; max-width: 340px; }
+  .card h1 { margin: 0 0 16px; font-size: 22px; }
+  input, button { font: inherit; }
+  input { width: 100%; padding: 11px 12px; border: 1px solid #ccd3dd; border-radius: 8px; }
+  button { padding: 11px 16px; border: 0; border-radius: 8px; background: #2f6fed; color: #fff; cursor: pointer; }
+  button:hover { background: #2559c4; }
+  #err { color: #c0392b; font-size: 14px; min-height: 20px; margin: 8px 0; }
+  #app { display: none; height: 100%; grid-template-columns: 220px 1fr; }
+  #sidebar { background: #fff; border-right: 1px solid #e1e5ec; display: flex; flex-direction: column; overflow-y: auto; }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; color: #7a8599; margin: 16px 14px 6px; letter-spacing: .05em; }
+  .item { padding: 10px 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .item:hover { background: #f2f4f7; }
+  .item.active { background: #e3ecff; font-weight: 600; }
+  .badge { background: #e5484d; color: #fff; border-radius: 10px; font-size: 12px; padding: 1px 7px; }
+  #main { display: flex; flex-direction: column; min-width: 0; height: 100dvh; }
+  #title { padding: 14px 16px; background: #fff; border-bottom: 1px solid #e1e5ec; font-weight: 600; display: flex; gap: 10px; align-items: center; }
+  #menu { display: none; padding: 6px 10px; background: #e3ecff; color: #2f6fed; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 75%; padding: 8px 12px; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px #0001; word-wrap: break-word; overflow-wrap: anywhere; }
+  .msg.me { align-self: flex-end; background: #2f6fed; color: #fff; }
+  .msg .who { font-size: 12px; font-weight: 600; opacity: .7; margin-bottom: 2px; }
+  .sys { align-self: center; font-size: 12px; color: #7a8599; }
+  form { display: flex; gap: 8px; padding: 12px; background: #fff; border-top: 1px solid #e1e5ec; }
+  @media (max-width: 640px) {
+    #app { grid-template-columns: 1fr; }
+    #sidebar { position: fixed; inset: 0 25% 0 0; z-index: 5; transform: translateX(-100%); transition: transform .2s; box-shadow: 2px 0 12px #0003; }
+    #sidebar.open { transform: none; }
+    #menu { display: block; }
+  }
+</style>
+</head>
+<body>
 
-Sala
-# General
-Usuarios conectados
-☰# General
-Enviar
+<div id="login">
+  <form class="card" id="loginForm">
+    <h1>💬 Entrar al chat</h1>
+    <input id="nick" maxlength="20" placeholder="Tu apodo" autocomplete="off" autofocus>
+    <div id="err"></div>
+    <button style="width:100%">Entrar</button>
+  </form>
+</div>
 
+<div id="app">
+  <aside id="sidebar">
+    <h2>Sala</h2>
+    <div class="item active" data-chat="__general__"><span># General</span><span class="badge" hidden></span></div>
+    <h2>Usuarios conectados</h2>
+    <div id="userList"></div>
+  </aside>
+  <section id="main">
+    <div id="title"><button id="menu">☰</button><span id="titleText"># General</span></div>
+    <div id="messages"></div>
+    <form id="msgForm">
+      <input id="text" maxlength="500" placeholder="Escribí un mensaje…" autocomplete="off">
+      <button>Enviar</button>
+    </form>
+  </section>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const GENERAL = "__general__";
+let me = "";
+let current = GENERAL;
+let online = [];
+const history = { [GENERAL]: [] };   // chatId -> [{type, from, text}]
+const unread = {};
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- Login ----------
+$("loginForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  socket.emit("join", $("nick").value, (res) => {
+    if (!res.ok) { $("err").textContent = res.error; return; }
+    me = res.nick;
+    online = res.users;
+    $("login").style.display = "none";
+    $("app").style.display = "grid";
+    renderUsers();
+    renderMessages();
+    $("text").focus();
+  });
+});
+
+// ---------- Render ----------
+function renderUsers() {
+  const box = $("userList");
+  box.innerHTML = "";
+  online.filter((u) => u !== me).forEach((u) => {
+    const div = document.createElement("div");
+    div.className = "item" + (current === u ? " active" : "");
+    div.dataset.chat = u;
+    const name = document.createElement("span");
+    name.textContent = "👤 " + u;
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.hidden = !unread[u];
+    badge.textContent = unread[u] || "";
+    div.append(name, badge);
+    box.appendChild(div);
+  });
+  document.querySelector('[data-chat="__general__"]').classList.toggle("active", current === GENERAL);
+  const gb = document.querySelector('[data-chat="__general__"] .badge');
+  gb.hidden = !unread[GENERAL]; gb.textContent = unread[GENERAL] || "";
+}
+
+function renderMessages() {
+  const box = $("messages");
+  box.innerHTML = "";
+  (history[current] || []).forEach((m) => {
+    const d = document.createElement("div");
+    if (m.type === "sys") { d.className = "sys"; d.textContent = m.text; }
+    else {
+      d.className = "msg" + (m.from === me ? " me" : "");
+      if (m.from !== me && current === GENERAL) {
+        const w = document.createElement("div");
+        w.className = "who"; w.textContent = m.from; d.appendChild(w);
+      }
+      const t = document.createElement("div"); t.textContent = m.text; d.appendChild(t);
+    }
+    box.appendChild(d);
+  });
+  box.scrollTop = box.scrollHeight;
+  $("titleText").textContent = current === GENERAL ? "# General" : "🔒 " + current;
+}
+
+function push(chat, m) {
+  (history[chat] ||= []).push(m);
+  if (chat === current) renderMessages();
+  else { unread[chat] = (unread[chat] || 0) + 1; renderUsers(); }
+}
+
+// ---------- Cambiar de chat ----------
+document.addEventListener("click", (e) => {
+  const item = e.target.closest(".item");
+  if (!item) return;
+  current = item.dataset.chat;
+  unread[current] = 0;
+  renderUsers(); renderMessages();
+  $("sidebar").classList.remove("open");
+  $("text").focus();
+});
+$("menu").addEventListener("click", () => $("sidebar").classList.toggle("open"));
+
+// ---------- Enviar ----------
+$("msgForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("text").value = "";
+  if (current === GENERAL) {
+    socket.emit("public-message", text);
+  } else {
+    const to = current;
+    socket.emit("private-message", { to, text }, (res) => {
+      if (res.ok) push(to, { from: me, text });
+      else push(to, { type: "sys", text: res.error });
+    });
+  }
+});
+
+// ---------- Eventos del servidor ----------
+socket.on("public-message", (m) => push(GENERAL, m));
+socket.on("private-message", (m) => push(m.from, { from: m.from, text: m.text }));
+socket.on("users", (list) => { online = list; renderUsers(); });
+socket.on("user-joined", (n) => push(GENERAL, { type: "sys", text: n + " entró al chat" }));
+socket.on("user-left", (n) => {
+  push(GENERAL, { type: "sys", text: n + " salió del chat" });
+  if (history[n]) push(n, { type: "sys", text: n + " se desconectó" });
+});
+socket.on("disconnect", () => push(GENERAL, { type: "sys", text: "Conexión perdida. Recargá la página." }));
+</script>
+</body>
+</html>
