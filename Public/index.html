@@ -5,73 +5,115 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0b0b">
 <title>Gente Rota</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Special+Elite&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0b0b0b; --panel: #151515; --panel2: #1e1e1e; --border: #2a2a2a;
+    --bg: #0b0b0b; --panel: #151515; --panel2: #1f1f1f; --border: #2c2c2c;
     --text: #f2f2f2; --muted: #9a9a9a; --accent: #ffd400; --accent-text: #0b0b0b;
-    --bubble: #222; --mention: #3a3200; --ink: #ffd400;
+    --bubble: #222; --mention: #3a3200; --ink: #ffd400; --danger: #ff5c5c;
   }
   [data-theme="light"] {
     --bg: #fbf7e6; --panel: #ffffff; --panel2: #fff6c7; --border: #e6dca8;
-    --text: #141414; --muted: #6b6b6b; --accent: #ffd400; --accent-text: #0b0b0b;
-    --bubble: #ffffff; --mention: #fff0a0; --ink: #8a6a00;
+    --text: #141414; --muted: #6b6b6b; --bubble: #ffffff; --mention: #fff0a0; --ink: #8a6a00; --danger: #c62828;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100dvh; }
-  input, button { font: inherit; color: inherit; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  input, button, select, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; }
+  [hidden] { display: none !important; }
 
   /* ---------- Banner ---------- */
-  header { background: #0b0b0b; border-bottom: 3px solid var(--accent); padding: 10px 14px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-  .brand { flex: 1; min-width: 0; }
-  .brand h1 { margin: 0; font-size: 22px; letter-spacing: .04em; color: var(--accent); font-weight: 900; text-transform: uppercase; line-height: 1.1; }
-  .brand p { margin: 2px 0 0; font-size: 13px; color: #cfcfcf; font-style: italic; }
-  .brand small { color: #777; font-size: 11px; }
-  .hbtn { background: transparent; border: 1px solid #444; color: var(--accent); border-radius: 8px; width: 38px; height: 38px; font-size: 18px; flex-shrink: 0; }
+  header { position: relative; background: #0b0b0b; border-bottom: 3px solid var(--accent); padding: 12px 100px; text-align: center; flex-shrink: 0;
+    background-image: repeating-linear-gradient(-45deg, transparent 0 22px, #ffd40008 22px 24px); }
+  header h1 { margin: 0; font-family: "Permanent Marker", cursive; font-weight: 400; font-size: 34px; color: var(--accent); letter-spacing: .03em; line-height: 1.05;
+    text-shadow: 3px 3px 0 #000, 0 0 18px #ffd40033; transform: rotate(-1.5deg); }
+  header p { margin: 4px 0 0; font-family: "Special Elite", monospace; font-size: 14px; color: #d8d8d8; }
+  header small { display: block; font-family: "Special Elite", monospace; color: #777; font-size: 11px; margin-top: 2px; letter-spacing: .1em; }
+  .hgroup { position: absolute; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; }
+  .hgroup.left { left: 12px; } .hgroup.right { right: 12px; }
+  .hbtn { background: transparent; border: 1px solid #444; color: var(--accent); border-radius: 8px; width: 38px; height: 38px; font-size: 17px; }
   .hbtn:hover { border-color: var(--accent); }
 
-  /* ---------- Login ---------- */
-  #login { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--border); padding: 28px; border-radius: 14px; width: 100%; max-width: 360px; }
+  /* ---------- Pantallas centradas ---------- */
+  .screen { flex: 1; display: flex; padding: 16px; overflow-y: auto; }
+  .screen > .card { margin: auto; }
+  .card { background: var(--panel); border: 1px solid var(--border); padding: 24px; border-radius: 14px; width: 100%; max-width: 440px; }
   .card h2 { margin: 0 0 6px; font-size: 20px; }
   .card .sub { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
   .field { width: 100%; padding: 12px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; outline: none; }
   .field:focus { border-color: var(--accent); }
   .primary { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 12px 16px; font-weight: 700; }
-  .primary:hover { filter: brightness(1.08); }
-  #err { color: #ff6b6b; font-size: 14px; min-height: 20px; margin: 8px 0; }
+  .primary:disabled { opacity: .4; cursor: not-allowed; }
+  .ghost { background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  #err { color: var(--danger); font-size: 14px; min-height: 20px; margin: 8px 0; }
+
+  /* ---------- Reglas ---------- */
+  .rules ol { padding-left: 20px; margin: 10px 0; line-height: 1.45; font-size: 14.5px; }
+  .rules li { margin-bottom: 6px; }
+  .rules li b { color: var(--ink); }
+  .helpbox { background: var(--panel2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; }
+  .helpbox a { color: var(--ink); font-weight: 700; }
+  .check { display: flex; gap: 10px; align-items: center; margin: 14px 0; font-size: 14.5px; }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  #modal { position: fixed; inset: 0; background: #000b; z-index: 50; display: flex; padding: 16px; overflow-y: auto; }
+  #modal .card { margin: auto; }
+  #modal .card { max-height: 90dvh; overflow-y: auto; }
 
   /* ---------- App ---------- */
-  #app { flex: 1; display: none; grid-template-columns: 230px 1fr; min-height: 0; }
-  #sidebar { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; }
+  #app { flex: 1; display: none; grid-template-columns: 1fr 240px; min-height: 0; }
+  #sidebar { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; order: 2; }
+  #main { order: 1; }
   #sidebar h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 14px 12px 6px; letter-spacing: .08em; }
-  .item { padding: 9px 12px; display: flex; align-items: center; gap: 8px; border-left: 3px solid transparent; white-space: nowrap; }
-  .item:hover { background: var(--panel2); }
-  .item.active { background: var(--panel2); border-left-color: var(--accent); font-weight: 700; }
-  .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3ddc84; flex-shrink: 0; }
-  .dot.off { background: #666; }
-  .badge { background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 11px; font-weight: 800; padding: 1px 7px; }
-  .typing-ico { color: var(--ink); font-size: 12px; }
   .me-row { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
   .me-row b { color: var(--ink); }
+  .me-row select { width: 100%; margin-top: 6px; padding: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .item { padding: 8px 12px; display: flex; align-items: center; gap: 7px; border-right: 3px solid transparent; white-space: nowrap; cursor: pointer; }
+  .item:hover { background: var(--panel2); }
+  .item.active { background: var(--panel2); border-right-color: var(--accent); font-weight: 700; }
+  .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .item .st { font-size: 14px; flex-shrink: 0; }
+  .item.off { opacity: .5; }
+  .item.blocked .name { text-decoration: line-through; }
+  .badge { background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 11px; font-weight: 800; padding: 1px 7px; }
+  .typing-ico { color: var(--ink); font-size: 12px; }
+  .legend { font-size: 11px; color: var(--muted); padding: 10px 12px; line-height: 1.6; border-top: 1px solid var(--border); margin-top: 10px; }
 
   #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  #title { padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 700; display: flex; justify-content: space-between; gap: 10px; }
-  #title span:last-child { color: var(--muted); font-weight: 400; font-size: 13px; }
+  #title { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  #titleText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #titleSub { color: var(--muted); font-weight: 400; font-size: 13px; }
+  #titleMore { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+  #pinned { background: var(--panel2); border-bottom: 1px solid var(--accent); padding: 8px 14px; font-size: 13.5px; }
+  #pinned b { color: var(--ink); }
   #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
-  .msg { max-width: 78%; align-self: flex-start; }
-  .msg .bubble { padding: 8px 12px; border-radius: 12px; background: var(--bubble); border: 1px solid var(--border); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .msg { max-width: 78%; align-self: flex-start; position: relative; }
+  .msg .bubble { padding: 8px 12px; border-radius: 12px; background: var(--bubble); border: 1px solid var(--border); overflow-wrap: anywhere; white-space: pre-wrap; cursor: pointer; }
   .msg.me { align-self: flex-end; }
   .msg.me .bubble { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .msg.mention .bubble { background: var(--mention); border-color: var(--accent); }
-  .msg .meta { font-size: 11px; color: var(--muted); margin: 0 4px 2px; display: flex; gap: 6px; }
+  .msg.bot .bubble { background: transparent; border: 1px dashed var(--accent); color: var(--text); }
+  .msg.deleted .bubble { font-style: italic; opacity: .55; cursor: default; }
+  .msg .meta { font-size: 11px; color: var(--muted); margin: 0 4px 2px; display: flex; gap: 6px; align-items: center; }
   .msg.me .meta { justify-content: flex-end; }
-  .msg .who { font-weight: 700; }
+  .msg .who { font-weight: 800; cursor: pointer; }
+  .msg.me .who { color: var(--accent-text) !important; cursor: default; }
+  .msg.big .who { font-size: 15px; vertical-align: middle; }
+  .msg .mod { color: var(--ink); }
   .msg a { color: inherit; text-decoration: underline; }
   .msg.big .bubble { font-size: 34px; background: transparent; border: 0; padding: 0 4px; }
-  .sys { align-self: center; font-size: 12px; color: var(--muted); padding: 2px 10px; border: 1px dashed var(--border); border-radius: 10px; }
+  .reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+  .msg.me .reacts { justify-content: flex-end; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 1px 7px; font-size: 13px; }
+  .chip.mine { border-color: var(--accent); background: var(--mention); }
+  .sys { align-self: center; font-size: 12px; color: var(--muted); padding: 2px 10px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
+  .notice { align-self: stretch; font-size: 13.5px; padding: 10px 12px; border-radius: 10px; background: var(--panel2); border-left: 3px solid var(--accent); white-space: pre-wrap; }
+  .notice.warn { border-left-color: var(--danger); }
+  .notice.help { border-left-color: #3ddc84; }
+  .announce { align-self: stretch; text-align: center; background: var(--accent); color: var(--accent-text); padding: 10px 14px; border-radius: 10px; font-weight: 700; }
+  .announce small { display: block; font-weight: 400; font-size: 11px; opacity: .7; }
   #typing { min-height: 20px; padding: 0 16px; font-size: 12px; color: var(--ink); font-style: italic; }
 
   #msgForm { display: flex; gap: 8px; padding: 10px; background: var(--panel); border-top: 1px solid var(--border); position: relative; }
@@ -79,22 +121,40 @@
   #emojiBtn { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; width: 44px; font-size: 20px; flex-shrink: 0; }
   #emojiPanel { display: none; position: absolute; bottom: 62px; left: 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 8px; grid-template-columns: repeat(8, 1fr); gap: 2px; z-index: 10; box-shadow: 0 6px 24px #0008; }
   #emojiPanel.open { display: grid; }
-  #emojiPanel button { background: none; border: 0; font-size: 22px; padding: 4px; border-radius: 6px; }
-  #emojiPanel button:hover { background: var(--panel2); }
+  #emojiPanel button, #msgMenu button { background: none; border: 0; font-size: 22px; padding: 4px; border-radius: 6px; }
+  #emojiPanel button:hover, #msgMenu button:hover { background: var(--panel2); }
+
+  /* Menú de reacciones */
+  #msgMenu { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--accent); border-radius: 24px; padding: 4px 6px; display: flex; gap: 2px; box-shadow: 0 6px 24px #0009; }
+  #msgMenu .del { font-size: 18px; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; margin-left: 2px; }
+
+  /* Hoja de acciones de usuario */
+  #sheetBg { position: fixed; inset: 0; background: #0009; z-index: 45; display: flex; align-items: flex-end; justify-content: center; }
+  #sheet { background: var(--panel); border-top: 3px solid var(--accent); width: 100%; max-width: 480px; border-radius: 16px 16px 0 0; padding: 16px; }
+  #sheet h4 { margin: 0 0 2px; font-size: 18px; }
+  #sheet .stline { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  #sheet button { display: block; width: 100%; text-align: left; padding: 12px; margin-bottom: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; }
+  #sheet button.danger { color: var(--danger); }
+  #sheet .modsep { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 12px 0 6px; }
 
   @media (max-width: 640px) {
-    header { padding: 8px 10px; }
-    .brand h1 { font-size: 18px; }
-    .brand p { font-size: 11px; }
-    .brand small { display: none; }
-    #app { grid-template-columns: 112px 1fr; }
+    header { padding: 8px 52px; }
+    header h1 { font-size: 26px; }
+    header p { font-size: 11.5px; }
+    header small { display: none; }
+    .hgroup { flex-direction: column; gap: 4px; }
+    .hgroup.left { left: 8px; } .hgroup.right { right: 8px; }
+    .hbtn { width: 34px; height: 30px; font-size: 14px; }
+    .hgroup.left .hbtn { height: 64px; }
+    #app { grid-template-columns: 1fr 118px; }
     #sidebar h3 { margin: 10px 8px 4px; font-size: 10px; }
-    .item { padding: 8px; font-size: 13px; gap: 5px; }
+    .item { padding: 8px; font-size: 13px; gap: 4px; }
     .me-row { padding: 8px; font-size: 12px; }
+    .me-row select { font-size: 12px; padding: 4px; }
+    .legend { display: none; }
     .msg { max-width: 90%; }
     #messages { padding: 10px; }
-    #title { padding: 10px 12px; }
-    #title span:last-child { display: none; }
+    #titleSub { display: none; }
     #emojiPanel { grid-template-columns: repeat(7, 1fr); left: 6px; right: 6px; }
   }
 </style>
@@ -102,36 +162,63 @@
 <body>
 
 <header>
-  <div class="brand">
-    <h1>Gente Rota</h1>
-    <p>Lo que quedó después del trauma</p>
-    <small>genterota.com.ar</small>
+  <div class="hgroup left"><button class="hbtn" id="rulesBtn" title="Reglas">📜</button></div>
+  <h1>Gente Rota</h1>
+  <p>Lo que quedó después del trauma</p>
+  <small>GENTEROTA.COM.AR</small>
+  <div class="hgroup right">
+    <button class="hbtn" id="soundBtn" title="Sonido">🔔</button>
+    <button class="hbtn" id="themeBtn" title="Modo claro / oscuro">☀️</button>
   </div>
-  <button class="hbtn" id="soundBtn" title="Sonido">🔔</button>
-  <button class="hbtn" id="themeBtn" title="Modo claro / oscuro">☀️</button>
 </header>
 
-<div id="login">
+<!-- Pantalla de reglas (primera vez) -->
+<div class="screen" id="rulesScreen" hidden>
+  <div class="card rules" id="rulesCard"></div>
+</div>
+
+<!-- Login -->
+<div class="screen" id="login" hidden>
   <form class="card" id="loginForm">
     <h2>Entrar</h2>
     <p class="sub">Sin registro. Elegí un apodo y listo.</p>
-    <input class="field" id="nick" maxlength="20" placeholder="Tu apodo" autocomplete="off" autofocus>
+    <input class="field" id="nick" maxlength="20" placeholder="Tu apodo" autocomplete="off">
     <div id="err"></div>
     <button class="primary" style="width:100%">Entrar al chat</button>
   </form>
 </div>
 
+<!-- Expulsado -->
+<div class="screen" id="kicked" hidden>
+  <div class="card" style="text-align:center">
+    <h2 id="kickTitle">Fuiste expulsado/a</h2>
+    <p class="sub" id="kickReason"></p>
+    <button class="primary" id="kickBtn" onclick="location.reload()">Volver a entrar</button>
+  </div>
+</div>
+
 <div id="app">
   <aside id="sidebar">
-    <div class="me-row">Sos <b id="meName"></b></div>
+    <div class="me-row">
+      Sos <b id="meName"></b><span id="meAdmin" hidden> 🛡️</span>
+      <select id="statusSel" title="Tu estado">
+        <option value="disponible">🟢 Disponible</option>
+        <option value="hablar">🫂 Quiero hablar</option>
+        <option value="escucho">👂 Escucho</option>
+        <option value="ausente">🌙 Ausente</option>
+        <option value="nomolestar">🔕 No molestar</option>
+      </select>
+    </div>
     <h3>Sala</h3>
-    <div class="item" data-chat="__general__"><span class="name"># General</span><span class="badge" hidden></span></div>
+    <div id="genItem"></div>
     <h3>Conectados (<span id="count">0</span>)</h3>
     <div id="userList"></div>
     <div id="offList"></div>
+    <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 🛡️ moderador</div>
   </aside>
   <section id="main">
-    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span></div>
+    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="titleMore" hidden>⋯</button></div>
+    <div id="pinned" hidden></div>
     <div id="messages"></div>
     <div id="typing"></div>
     <form id="msgForm" autocomplete="off">
@@ -143,52 +230,99 @@
   </section>
 </div>
 
+<div id="msgMenu" hidden></div>
+<div id="sheetBg" hidden><div id="sheet"></div></div>
+<div id="modal" hidden><div class="card rules" id="modalCard"></div></div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
 const GENERAL = "__general__";
+const BOT = "Guardián";
+const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
+const STATUS = { disponible: ["🟢", "Disponible"], hablar: ["🫂", "Necesita hablar"], escucho: ["👂", "Solo escucha"], ausente: ["🌙", "Ausente"], nomolestar: ["🔕", "No molestar"] };
 const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
-let me = "";
-let current = GENERAL;
-let online = [];
+let me = "", isAdmin = false, current = GENERAL;
+let online = [];                // [{nick, status, admin}]
 const history = { [GENERAL]: [] };
 const unread = {};
-const typingNow = {};            // chat -> Set de apodos escribiendo
-let totalUnread = 0;
+const typingNow = {};
+const byId = new Map();         // id de mensaje -> objeto mensaje
 
-// ---------- Preferencias (tema y sonido) ----------
+// ---------- Preferencias ----------
 const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} }
 };
 let theme = store.get("gr-theme", "dark");
 let sound = store.get("gr-sound", "on") === "on";
+let blocked = new Set(JSON.parse(store.get("gr-blocked", "[]")));
+const saveBlocked = () => store.set("gr-blocked", JSON.stringify([...blocked]));
+const isBlocked = (n) => blocked.has(String(n).toLowerCase());
 function applyPrefs() {
   document.documentElement.dataset.theme = theme;
   $("themeBtn").textContent = theme === "dark" ? "☀️" : "🌙";
   $("soundBtn").textContent = sound ? "🔔" : "🔕";
 }
 applyPrefs();
-$("themeBtn").onclick = () => { theme = theme === "dark" ? "light" : "dark"; store.set("gr-theme", theme); applyPrefs(); };
+$("themeBtn").onclick = () => { theme = theme === "dark" ? "light" : "dark"; store.set("gr-theme", theme); applyPrefs(); if (me) { renderUsers(); renderMessages(); } };
 $("soundBtn").onclick = () => { sound = !sound; store.set("gr-sound", sound ? "on" : "off"); applyPrefs(); if (sound) beep(); };
 
-// ---------- Sonido (sin archivos) ----------
+// ---------- Reglas ----------
+function rulesHTML(card, mode) {
+  card.innerHTML = `
+    <h2>📜 Reglas de Gente Rota</h2>
+    <p class="sub">Este es un espacio para hablar de lo que duele. Cuidémoslo entre todos.</p>
+    <ol>
+      <li><b>Respeto ante todo.</b> Nada de insultos, burlas, discriminación ni ataques.</li>
+      <li><b>No juzgues.</b> Cada historia es distinta. Escuchá antes de opinar.</li>
+      <li><b>Nunca incites a nadie a hacerse daño.</b> Es expulsión inmediata.</li>
+      <li><b>Cuidá tu privacidad.</b> No compartas tu dirección, teléfono, documentos ni datos de otras personas.</li>
+      <li><b>Sin spam ni publicidad.</b> Ni mensajes repetidos, ni links sospechosos.</li>
+      <li><b>Nada de contenido sexual ni violento explícito.</b></li>
+      <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Podés bloquear o reportar desde el nombre de cada persona.</li>
+      <li><b>Esto no reemplaza ayuda profesional.</b> Acá hay gente que escucha, no terapeutas.</li>
+    </ol>
+    <p class="sub" style="margin:0">🤖 El bot <b>Guardián</b> modera automáticamente: censura insultos, frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
+    <div class="helpbox">
+      💛 <b>Si estás en crisis, llamá:</b><br>
+      • <a href="tel:08009990091">0800-999-0091</a> — Línea Nacional de Salud Mental (gratis, 24 h)<br>
+      • <a href="tel:135">135</a> (CABA y GBA) o <a href="tel:01152751135">(011) 5275-1135</a> — Asistencia al Suicida<br>
+      • <a href="tel:08002225462">0800-222-5462</a> — Salud Mental Prov. de Buenos Aires (24 h)<br>
+      • <a href="tel:911">911</a> en una emergencia
+    </div>
+    ${mode === "accept"
+      ? `<label class="check"><input type="checkbox" id="acceptChk"> Leí y acepto las reglas</label>
+         <button class="primary" id="acceptBtn" style="width:100%" disabled>Continuar</button>`
+      : `<button class="primary" id="closeRules" style="width:100%">Cerrar</button>`}`;
+  if (mode === "accept") {
+    card.querySelector("#acceptChk").onchange = (e) => card.querySelector("#acceptBtn").disabled = !e.target.checked;
+    card.querySelector("#acceptBtn").onclick = () => { store.set("gr-rules", "v1"); showLogin(); };
+  } else card.querySelector("#closeRules").onclick = () => $("modal").hidden = true;
+}
+function showLogin() { $("rulesScreen").hidden = true; $("login").hidden = false; $("nick").focus(); }
+if (store.get("gr-rules", "") === "v1") showLogin();
+else { rulesHTML($("rulesCard"), "accept"); $("rulesScreen").hidden = false; }
+$("rulesBtn").onclick = () => {
+  if (!$("rulesScreen").hidden) return;
+  rulesHTML($("modalCard"), "view"); $("modal").hidden = false;
+};
+$("modal").onclick = (e) => { if (e.target.id === "modal") $("modal").hidden = true; };
+
+// ---------- Sonido y notificaciones ----------
 let audioCtx;
 function beep(freq = 880) {
   if (!sound) return;
   try {
     audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.frequency.value = freq; o.type = "sine";
-    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
-    o.connect(g).connect(audioCtx.destination);
-    o.start(); o.stop(audioCtx.currentTime + 0.25);
+    o.frequency.value = freq || 1; g.gain.setValueAtTime(freq ? 0.15 : 0.0001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
+    o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.25);
   } catch {}
 }
-
-// ---------- Notificaciones del navegador ----------
 function notify(title, body) {
   if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
   try { new Notification(title, { body }); } catch {}
@@ -198,22 +332,23 @@ function notify(title, body) {
 const hhmm = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
 function nickColor(n) {
   let h = 0; for (const c of n.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `hsl(${h}, 75%, ${theme === "dark" ? 65 : 38}%)`;
+  return `hsl(${h}, 75%, ${theme === "dark" ? 65 : 36}%)`;
 }
-const onlyEmoji = (t) => /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(t) && /\p{Extended_Pictographic}/u.test(t);
-function linkify(el, text) {
+const onlyEmoji = (t) => /\p{Extended_Pictographic}/u.test(t) && /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(t);
+const mentionsMe = (t) => me && new RegExp("@" + me.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\p{L}\\p{N}])", "iu").test(t);
+function linkify(node, text) {
   const re = /(https?:\/\/[^\s]+)/g; let last = 0, m;
   while ((m = re.exec(text))) {
-    el.append(text.slice(last, m.index));
-    const a = document.createElement("a");
-    a.href = m[0]; a.textContent = m[0]; a.target = "_blank"; a.rel = "noopener noreferrer";
-    el.append(a); last = m.index + m[0].length;
+    node.append(text.slice(last, m.index));
+    const a = el("a", null, m[0]); a.href = m[0]; a.target = "_blank"; a.rel = "noopener noreferrer nofollow";
+    node.append(a); last = m.index + m[0].length;
   }
-  el.append(text.slice(last));
+  node.append(text.slice(last));
 }
+const userInfo = (n) => online.find((u) => u.nick === n);
 function updateTitle() {
-  totalUnread = Object.values(unread).reduce((a, b) => a + (b || 0), 0);
-  document.title = totalUnread ? `(${totalUnread}) Gente Rota` : "Gente Rota";
+  const total = Object.values(unread).reduce((a, b) => a + (b || 0), 0);
+  document.title = total ? `(${total}) Gente Rota` : "Gente Rota";
 }
 
 // ---------- Login ----------
@@ -222,139 +357,243 @@ function join(nick, onFail) {
     if (!res.ok) return onFail && onFail(res.error);
     me = res.nick; online = res.users;
     $("meName").textContent = me;
-    $("login").style.display = "none";
+    $("login").hidden = true;
     $("app").style.display = "grid";
+    setPinned(res.pinned);
+    if (res.slowMode) push(GENERAL, { type: "sys", text: `🐢 Modo lento activo: un mensaje cada ${res.slowMode} s` });
+    const st = store.get("gr-status", "disponible");
+    $("statusSel").value = st; socket.emit("status", st);
+    blocked.forEach((b) => socket.emit("block", { target: b, on: true }));
     renderUsers(); renderMessages();
   });
 }
 $("loginForm").addEventListener("submit", (e) => {
   e.preventDefault();
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
-  beep(0); // desbloquea el audio en celulares
+  beep(0);
   join($("nick").value, (err) => $("err").textContent = err);
 });
 
-// Reconexión automática: vuelve a entrar con el mismo apodo
+let wasKicked = false;
 socket.on("connect", () => {
-  if (!me) return;
+  if (!me || wasKicked) return;
   join(me, () => push(GENERAL, { type: "sys", text: "No se pudo recuperar tu apodo. Recargá la página." }));
   push(GENERAL, { type: "sys", text: "Reconectado ✔" });
 });
-socket.on("disconnect", () => { if (me) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
+socket.on("disconnect", () => { if (me && !wasKicked) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
+socket.on("kicked", ({ reason, ban }) => {
+  wasKicked = true;
+  socket.io.opts.reconnection = false;
+  $("app").style.display = "none"; ["login", "rulesScreen"].forEach((i) => $(i).hidden = true);
+  $("kicked").hidden = false;
+  $("kickTitle").textContent = ban ? "Fuiste baneado/a por 24 horas" : "Fuiste expulsado/a del chat";
+  $("kickReason").textContent = "Motivo: " + reason;
+  $("kickBtn").hidden = !!ban;
+});
+socket.on("admin", (v) => { isAdmin = v; $("meAdmin").hidden = !v; });
 
-// ---------- Render ----------
-function sideItem(chat, label, isOnline) {
-  const div = document.createElement("div");
-  div.className = "item" + (current === chat ? " active" : "");
+// ---------- Estado ----------
+$("statusSel").onchange = (e) => { store.set("gr-status", e.target.value); socket.emit("status", e.target.value); };
+
+// ---------- Columna izquierda ----------
+function sideItem(chat, label, opts = {}) {
+  const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (isBlocked(chat) && chat !== GENERAL ? " blocked" : ""));
   div.dataset.chat = chat;
-  if (chat !== GENERAL) { const d = document.createElement("span"); d.className = "dot" + (isOnline ? "" : " off"); div.append(d); }
-  const name = document.createElement("span"); name.className = "name"; name.textContent = label;
+  if (chat !== GENERAL) div.append(el("span", "st", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢")));
+  const name = el("span", "name", label);
   if (chat !== GENERAL) name.style.color = nickColor(chat);
   div.append(name);
-  if (typingNow[chat]?.size) { const t = document.createElement("span"); t.className = "typing-ico"; t.textContent = "✎"; div.append(t); }
-  if (unread[chat]) { const b = document.createElement("span"); b.className = "badge"; b.textContent = unread[chat]; div.append(b); }
+  if (opts.admin) div.append(el("span", "st", "🛡️"));
+  if (typingNow[chat]?.size) div.append(el("span", "typing-ico", "✎"));
+  if (unread[chat]) div.append(el("span", "badge", unread[chat]));
   return div;
 }
 function renderUsers() {
-  const gen = document.querySelector('#sidebar > [data-chat="__general__"]');
-  gen.replaceWith(sideItem(GENERAL, "# General"));
-  const others = online.filter((u) => u !== me);
+  $("genItem").replaceChildren(sideItem(GENERAL, "# General"));
+  const others = online.filter((u) => u.nick !== me);
   $("count").textContent = online.length;
-  $("userList").replaceChildren(...others.map((u) => sideItem(u, u, true)));
-  // chats privados abiertos con gente que ya se fue
-  const gone = Object.keys(history).filter((c) => c !== GENERAL && !online.includes(c));
-  $("offList").replaceChildren(...gone.map((u) => sideItem(u, u, false)));
+  $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
+  const gone = Object.keys(history).filter((c) => c !== GENERAL && !online.some((u) => u.nick === c));
+  $("offList").replaceChildren(...gone.map((u) => sideItem(u, u, { off: true })));
   updateTitle();
 }
+$("sidebar").addEventListener("click", (e) => {
+  const item = e.target.closest(".item"); if (!item) return;
+  openChat(item.dataset.chat);
+});
+function openChat(chat) {
+  stopTyping();
+  current = chat; unread[current] = 0;
+  history[chat] ||= [];
+  renderUsers(); renderMessages();
+  $("text").placeholder = current === GENERAL ? "Escribí un mensaje…" : `Mensaje privado a ${current}…`;
+  $("text").focus();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && me) { unread[current] = 0; renderUsers(); } });
 
+// ---------- Mensajes ----------
+function setPinned(text) {
+  $("pinned").hidden = !text || current !== GENERAL;
+  $("pinned").replaceChildren(el("b", null, "📌 Fijado: "), text || "");
+  $("pinned").dataset.text = text || "";
+}
+function renderMessage(m) {
+  if (m.type === "sys") return el("div", "sys", m.text);
+  if (m.type === "notice") return el("div", "notice " + (m.kind || ""), m.text);
+  if (m.type === "announce") { const d = el("div", "announce", "📢 " + m.text); d.append(el("small", null, "Anuncio de moderación · " + hhmm(m.ts))); return d; }
+  if (isBlocked(m.from)) return null;
+  const mine = m.from === me;
+  const d = el("div", "msg" + (mine ? " me" : "") + (m.bot ? " bot" : "") + (m.deleted ? " deleted" : "")
+    + (!mine && !m.bot && mentionsMe(m.text) ? " mention" : "") + (!m.deleted && onlyEmoji(m.text) ? " big" : ""));
+  d.dataset.id = m.id || "";
+  const meta = el("div", "meta");
+  if (m.admin) meta.append(el("span", "mod", "🛡️ mod"));
+  meta.append(el("span", null, hhmm(m.ts || Date.now())));
+  const b = el("div", "bubble");
+  const w = el("span", "who", (m.bot ? "🤖 " + BOT : m.from) + ": ");
+  if (!mine) w.style.color = m.bot ? "var(--ink)" : nickColor(m.from);
+  if (!mine && !m.bot) w.onclick = (e) => { e.stopPropagation(); openSheet(m.from); };
+  b.append(w);
+  if (m.deleted) b.append(m.deletedByMod ? "🚫 Mensaje eliminado por moderación" : "🚫 Mensaje eliminado");
+  else linkify(b, m.text);
+  d.append(meta, b);
+  const rx = Object.entries(m.reactions || {}).filter(([, ns]) => ns.length);
+  if (rx.length && !m.deleted) {
+    const r = el("div", "reacts");
+    rx.forEach(([emo, ns]) => {
+      const chip = el("button", "chip" + (ns.includes(me) ? " mine" : ""), `${emo} ${ns.length}`);
+      chip.title = ns.join(", ");
+      chip.onclick = (e) => { e.stopPropagation(); socket.emit("react", { id: m.id, emoji: emo }); };
+      r.append(chip);
+    });
+    d.append(r);
+  }
+  return d;
+}
 function renderMessages() {
   const box = $("messages");
-  box.replaceChildren();
-  (history[current] || []).forEach((m) => {
-    if (m.type === "sys") {
-      const d = document.createElement("div"); d.className = "sys"; d.textContent = m.text; box.append(d); return;
-    }
-    const mine = m.from === me;
-    const mention = !mine && me && new RegExp("@" + me.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(m.text);
-    const d = document.createElement("div");
-    d.className = "msg" + (mine ? " me" : "") + (mention ? " mention" : "") + (onlyEmoji(m.text) ? " big" : "");
-    const meta = document.createElement("div"); meta.className = "meta";
-    if (!mine && current === GENERAL) {
-      const w = document.createElement("span"); w.className = "who"; w.textContent = m.from; w.style.color = nickColor(m.from);
-      meta.append(w);
-    }
-    const t = document.createElement("span"); t.textContent = hhmm(m.ts || Date.now()); meta.append(t);
-    const b = document.createElement("div"); b.className = "bubble"; linkify(b, m.text);
-    d.append(meta, b);
-    box.append(d);
-  });
-  box.scrollTop = box.scrollHeight;
-  $("titleText").textContent = current === GENERAL ? "# General" : "🔒 " + current;
-  $("titleSub").textContent = current === GENERAL ? "Todos ven estos mensajes" : "Privado: solo ustedes dos";
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  box.replaceChildren(...(history[current] || []).map(renderMessage).filter(Boolean));
+  if (atBottom || box.dataset.chat !== current) box.scrollTop = box.scrollHeight;
+  box.dataset.chat = current;
+  const priv = current !== GENERAL;
+  const info = userInfo(current);
+  $("titleText").textContent = priv ? `🔒 ${current}` : "# General";
+  $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : "Todos ven estos mensajes";
+  $("titleMore").hidden = !priv;
+  $("pinned").hidden = priv || !$("pinned").dataset.text;
   renderTyping();
 }
-
 function renderTyping() {
-  const set = typingNow[current];
-  const names = set ? [...set] : [];
+  const names = [...(typingNow[current] || [])].filter((n) => !isBlocked(n));
   $("typing").textContent = !names.length ? "" :
     names.length === 1 ? `${names[0]} está escribiendo…` :
     names.length < 4 ? `${names.join(", ")} están escribiendo…` : "Varios están escribiendo…";
 }
-
 function push(chat, m) {
   (history[chat] ||= []).push(m);
-  if (history[chat].length > 300) history[chat].shift();
-  if (chat === current && !document.hidden) renderMessages();
-  else {
-    if (m.type !== "sys") unread[chat] = (unread[chat] || 0) + 1;
-    if (chat === current) renderMessages();
-  }
+  if (m.id) byId.set(m.id, m);
+  if (history[chat].length > 300) { const old = history[chat].shift(); if (old.id) byId.delete(old.id); }
+  if (chat !== current || document.hidden) if (!["sys"].includes(m.type) && !isBlocked(m.from)) unread[chat] = (unread[chat] || 0) + 1;
+  if (chat === current) renderMessages();
   renderUsers();
 }
 
-// ---------- Cambiar de chat ----------
-$("sidebar").addEventListener("click", (e) => {
-  const item = e.target.closest(".item"); if (!item) return;
-  stopTyping();
-  current = item.dataset.chat;
-  unread[current] = 0;
-  renderUsers(); renderMessages();
-  $("text").placeholder = current === GENERAL ? "Escribí un mensaje…" : `Mensaje privado a ${current}…`;
-  $("text").focus();
+// ---------- Menú de reacciones (tocar un mensaje) ----------
+$("messages").addEventListener("click", (e) => {
+  const msgEl = e.target.closest(".msg"); if (!msgEl || e.target.closest("a, .chip, .who")) return;
+  const m = byId.get(msgEl.dataset.id); if (!m || m.deleted) return;
+  e.stopPropagation();
+  const menu = $("msgMenu");
+  menu.replaceChildren(...REACTIONS.map((emo) => {
+    const b = el("button", null, emo); b.onclick = () => { socket.emit("react", { id: m.id, emoji: emo }); menu.hidden = true; }; return b;
+  }));
+  if (m.from === me || (isAdmin && current === GENERAL && !m.bot)) {
+    const del = el("button", "del", "🗑️"); del.title = "Eliminar";
+    del.onclick = () => { socket.emit("delete-message", m.id); menu.hidden = true; };
+    menu.append(del);
+  }
+  menu.hidden = false;
+  const r = msgEl.querySelector(".bubble").getBoundingClientRect();
+  const w = menu.offsetWidth;
+  menu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + "px";
 });
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && me) { unread[current] = 0; renderUsers(); renderMessages(); }
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#msgMenu")) $("msgMenu").hidden = true;
+  if (!e.target.closest("#emojiPanel") && e.target.id !== "emojiBtn") $("emojiPanel").classList.remove("open");
 });
+$("messages").addEventListener("scroll", () => $("msgMenu").hidden = true);
+
+// ---------- Hoja de acciones de un usuario ----------
+function openSheet(nick) {
+  if (nick === me || nick === BOT) return;
+  const info = userInfo(nick);
+  const sheet = $("sheet");
+  sheet.replaceChildren();
+  const h = el("h4", null, nick + (info?.admin ? " 🛡️" : "")); h.style.color = nickColor(nick);
+  sheet.append(h, el("div", "stline", info ? STATUS[info.status]?.join(" ") : "Desconectado/a"));
+  const btn = (txt, fn, cls) => { const b = el("button", cls, txt); b.onclick = () => { closeSheet(); fn(); }; sheet.append(b); };
+  if (info && current !== nick) btn("💬 Mensaje privado", () => openChat(nick));
+  btn(isBlocked(nick) ? "✅ Desbloquear" : "🚫 Bloquear (no ver sus mensajes)", () => toggleBlock(nick));
+  if (info) btn("🚩 Reportar", () => reportUser(nick), "danger");
+  if (isAdmin && info && !info.admin) {
+    sheet.append(el("div", "modsep", "Moderación"));
+    btn("🔇 Silenciar 10 min", () => cmd(`/silenciar ${nick} 10`));
+    btn("🔇 Silenciar 1 hora", () => cmd(`/silenciar ${nick} 60`));
+    btn("🔊 Quitar silencio", () => cmd(`/desilenciar ${nick}`));
+    btn("👢 Expulsar", () => { const r = prompt("Motivo de la expulsión:", "No respetar las reglas"); if (r !== null) cmd(`/expulsar ${nick} ${r}`); }, "danger");
+    btn("⛔ Banear 24 h", () => { const r = prompt("Motivo del baneo:", "Faltas graves a las reglas"); if (r !== null) cmd(`/banear ${nick} ${r}`); }, "danger");
+  }
+  btn("Cancelar", () => {});
+  $("sheetBg").hidden = false;
+}
+const closeSheet = () => $("sheetBg").hidden = true;
+$("sheetBg").onclick = (e) => { if (e.target.id === "sheetBg") closeSheet(); };
+$("titleMore").onclick = () => openSheet(current);
+const cmd = (text) => socket.emit("public-message", text);
+function toggleBlock(nick) {
+  const k = nick.toLowerCase(), on = !blocked.has(k);
+  on ? blocked.add(k) : blocked.delete(k);
+  saveBlocked(); socket.emit("block", { target: nick, on });
+  push(current, { type: "sys", text: on ? `Bloqueaste a ${nick}. No vas a ver sus mensajes.` : `Desbloqueaste a ${nick}.` });
+  renderMessages();
+}
+function reportUser(nick) {
+  const reason = prompt(`¿Por qué reportás a ${nick}?`, "");
+  if (reason === null) return;
+  socket.emit("report", { target: nick, reason }, (r) =>
+    push(current, { type: "notice", kind: "help", text: r?.ok ? `🚩 Gracias. Reportaste a ${nick}. Los moderadores fueron avisados.` : "No se pudo enviar el reporte." }));
+}
 
 // ---------- Emojis ----------
 const EMOJIS = "😀 😂 🤣 😊 😍 😘 😎 🤔 😐 😴 😢 😭 😡 🤯 🥲 🙃 🖤 💛 💔 ❤️‍🩹 🔥 ✨ 👍 👎 👏 🙏 🤝 💪 👀 🫂 🤗 😬 🥺 😅 🎉 ☕ 🍺 🌙 ⚡ 💀".split(" ");
 $("emojiPanel").append(...EMOJIS.map((em) => {
-  const b = document.createElement("button"); b.type = "button"; b.textContent = em;
+  const b = el("button", null, em); b.type = "button";
   b.onclick = () => { const i = $("text"); const p = i.selectionStart ?? i.value.length;
     i.value = i.value.slice(0, p) + em + i.value.slice(p); i.focus(); i.setSelectionRange(p + em.length, p + em.length); };
   return b;
 }));
-$("emojiBtn").onclick = (e) => { e.stopPropagation(); $("emojiPanel").classList.toggle("open"); };
-document.addEventListener("click", (e) => { if (!e.target.closest("#emojiPanel")) $("emojiPanel").classList.remove("open"); });
+$("emojiBtn").onclick = () => $("emojiPanel").classList.toggle("open");
 
 // ---------- Escribiendo… ----------
-let typingTimer = null, typingSentTo = undefined;
+let typingTimer = null, typingSentTo;
 function stopTyping() {
   if (typingSentTo !== undefined) socket.emit("typing", { to: typingSentTo, on: false });
   typingSentTo = undefined; clearTimeout(typingTimer);
 }
 $("text").addEventListener("input", () => {
+  if ($("text").value.startsWith("/")) return;
   const to = current === GENERAL ? null : current;
   if (typingSentTo === undefined) { socket.emit("typing", { to, on: true }); typingSentTo = to; }
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(stopTyping, 2500);
+  clearTimeout(typingTimer); typingTimer = setTimeout(stopTyping, 2500);
 });
 socket.on("typing", ({ from, chat, on }) => {
   const s = (typingNow[chat] ||= new Set());
   on ? s.add(from) : s.delete(from);
   renderTyping(); renderUsers();
 });
+const clearTyping = (from) => Object.values(typingNow).forEach((s) => s.delete(from));
 
 // ---------- Enviar ----------
 $("msgForm").addEventListener("submit", (e) => {
@@ -364,38 +603,53 @@ $("msgForm").addEventListener("submit", (e) => {
   $("text").value = "";
   $("emojiPanel").classList.remove("open");
   stopTyping();
-  if (current === GENERAL) socket.emit("public-message", text);
-  else {
-    const to = current;
-    socket.emit("private-message", { to, text }, (res) => {
-      if (res.ok) push(to, { from: me, text, ts: res.msg.ts });
-      else push(to, { type: "sys", text: res.error });
-    });
-  }
+  if (text === "/reglas") { $("rulesBtn").click(); return; }
+  if (current === GENERAL || text.startsWith("/")) return socket.emit(current === GENERAL ? "public-message" : "private-message", current === GENERAL ? text : { to: current, text }, () => {});
+  const to = current;
+  socket.emit("private-message", { to, text }, (res) => {
+    if (res.ok) push(to, { ...res.msg, from: me });
+    else if (!res.silent) push(to, { type: "sys", text: res.error });
+  });
 });
 
 // ---------- Eventos del servidor ----------
-function clearTyping(from) { Object.values(typingNow).forEach((s) => s.delete(from)); }
 socket.on("public-message", (m) => {
   clearTyping(m.from);
   push(GENERAL, m);
-  if (m.from !== me) {
-    const mention = new RegExp("@" + me.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(m.text);
-    if (mention) { beep(1200); notify(`${m.from} te mencionó`, m.text); }
-    else if (current !== GENERAL || document.hidden) beep(660);
-  }
+  if (m.from === me || isBlocked(m.from) || m.bot) return;
+  if (mentionsMe(m.text)) { beep(1200); notify(`${m.from} te mencionó`, m.text); }
+  else if (current !== GENERAL || document.hidden) beep(660);
 });
 socket.on("private-message", (m) => {
   clearTyping(m.from);
-  push(m.from, { from: m.from, text: m.text, ts: m.ts });
+  if (isBlocked(m.from)) return;
+  push(m.from, m);
   beep(990); notify(`Mensaje privado de ${m.from}`, m.text);
 });
-socket.on("users", (list) => { online = list; renderUsers(); });
+socket.on("notice", (n) => {
+  push(current, { type: "notice", kind: n.kind, text: n.text, ts: n.ts });
+  if (n.kind === "warn" || n.kind === "help") beep(440);
+  if (n.kind === "mod") { beep(1100); notify("Moderación", n.text); }
+});
+socket.on("announce", (a) => { push(GENERAL, { type: "announce", ...a }); beep(770); notify("📢 Anuncio", a.text); });
+socket.on("pinned", (t) => { setPinned(t); if (t) push(GENERAL, { type: "sys", text: "📌 Hay un mensaje fijado nuevo" }); });
+socket.on("clear", () => { history[GENERAL] = []; if (current === GENERAL) renderMessages(); });
+socket.on("reactions", ({ id, reactions }) => {
+  const m = byId.get(id); if (!m) return;
+  m.reactions = reactions;
+  if ((history[current] || []).includes(m)) renderMessages();
+});
+socket.on("deleted", ({ id, byMod }) => {
+  const m = byId.get(id); if (!m) return;
+  m.deleted = true; m.deletedByMod = byMod; m.text = ""; m.reactions = {};
+  if ((history[current] || []).includes(m)) renderMessages();
+});
+socket.on("users", (list) => { online = list; renderUsers(); if (current !== GENERAL) renderMessages(); });
 socket.on("user-joined", (n) => push(GENERAL, { type: "sys", text: `${n} entró` }));
 socket.on("user-left", (n) => {
   clearTyping(n);
   push(GENERAL, { type: "sys", text: `${n} salió` });
-  if (history[n]) push(n, { type: "sys", text: `${n} se desconectó` });
+  if (history[n]?.length) push(n, { type: "sys", text: `${n} se desconectó` });
 });
 </script>
 </body>
