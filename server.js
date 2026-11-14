@@ -19,7 +19,7 @@ const BOT = "Fastidio";
 const CRUPIER = "Crupier";
 const ROOMS = ["general", "juegos", "mods"]; // "mods" = sala privada de moderadores
 const lockedRooms = new Set();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ""; // clave del dueño (👑), se configura en Render
+const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim(); // clave del dueño (👑), se configura en Render
 // Moderadores permanentes: en Render, MOD_KEYS = "Lucia:clave1,Pedro:clave2"
 const modKeys = new Map(); // clave -> nombre del moderador
 String(process.env.MOD_KEYS || "").split(",").map((x) => x.trim()).filter(Boolean).forEach((pair) => {
@@ -198,8 +198,14 @@ function checkMessage(c, id, raw, room = "general", allowEmpty = false) {
 
 // ---------- Comandos (/algo) ----------
 function runCommand(c, id, text, room = "general") {
-  const [cmdRaw, ...rest] = text.slice(1).split(" ");
-  const cmd = cmdRaw.toLowerCase();
+  // Tolerante al autocorrector del celu: "/ Crear clave Pedro", "/crear-clave", tildes, mayúsculas
+  let body = text.slice(1).trim().replace(/\s+/g, " ");
+  body = body.replace(/^(crear|quitar|anular|borrar)[\s_-]+clave\b/i, (m, v) => (v.toLowerCase() === "crear" ? "crearclave" : "quitarclave"))
+             .replace(/^des[\s_-]+(mod|silenciar)\b/i, "des$1")
+             .replace(/^desbanear[\s_-]+todo\b/i, "desbanear-todo")
+             .replace(/^(sin|con)[\s_-]+fotos\b/i, "$1fotos");
+  const [cmdRaw, ...rest] = body.split(" ");
+  const cmd = cmdRaw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const arg = rest.join(" ").trim();
 
   if (GAME_CMDS.includes(cmd)) {
@@ -219,8 +225,10 @@ function runCommand(c, id, text, room = "general") {
     return notice(id, help);
   }
   if (cmd === "admin") {
-    if (c.adminTries >= 5) return notice(id, "Demasiados intentos.");
+    if (c.adminTries >= 5) return notice(id, "Demasiados intentos. Recargá la página para probar de nuevo.");
     c.adminTries++;
+    if (!arg) return notice(id, "Escribí /admin seguido de tu clave.");
+    if (!ADMIN_PASSWORD && !modKeys.size) return notice(id, "⚠️ El servidor no tiene ADMIN_PASSWORD cargada. Agregala en Render → Environment.", "warn");
     if (ADMIN_PASSWORD && arg === ADMIN_PASSWORD) {
       c.admin = true; c.owner = true;
       pushUsers(); io.to(id).emit("admin", { mod: true, owner: true });
@@ -231,9 +239,13 @@ function runCommand(c, id, text, room = "general") {
       pushUsers(); io.to(id).emit("admin", { mod: true, owner: false });
       return notice(id, "🛡️ Sos moderador/a. Escribí /ayuda para ver los comandos.", "mod");
     }
+    io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  if (!c.admin) return notice(id, "Comando desconocido o sin permiso. Probá /ayuda.");
+  const MOD_ONLY = ["mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
+    ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
+    : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
 
   const [targetNick, ...why] = arg.split(" ");
   const reason = why.join(" ") || "Decisión de moderación";
@@ -395,7 +407,7 @@ function runCommand(c, id, text, room = "general") {
       return notice(id, lines.length ? "Reportes: " + lines.join(" · ") : "No hay reportes.", "mod");
     }
     default:
-      return notice(id, "Comando desconocido. Probá /ayuda.");
+      return notice(id, `No conozco el comando "/${cmdRaw}". Probá /ayuda para ver la lista.`);
   }
 }
 
@@ -797,6 +809,16 @@ io.on("connection", (socket) => {
     }
     const target = byNick(to);
     if (target && !blockedPair(c, target.c)) io.to(target.id).emit("typing", { from: c.nick, chat: c.nick, on: !!on });
+  });
+
+  socket.on("reauth", (key) => {
+    if (!c.nick || c.admin || typeof key !== "string" || c.adminTries >= 5) return;
+    c.adminTries++;
+    key = key.trim();
+    if (ADMIN_PASSWORD && key === ADMIN_PASSWORD) { c.admin = true; c.owner = true; }
+    else if (modKeys.has(key)) { c.admin = true; c.modKey = key; }
+    else return io.to(socket.id).emit("admin-fail");
+    pushUsers(); io.to(socket.id).emit("admin", { mod: true, owner: c.owner });
   });
 
   socket.on("status", (s) => {
