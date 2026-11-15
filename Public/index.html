@@ -484,6 +484,7 @@
         <option value="nomolestar">🔕 No molestar</option>
       </select>
     </div>
+    <div id="staffBox" hidden><h3>Moderación</h3><div id="staffList"></div></div>
     <h3>Salas</h3>
     <div id="roomList"></div>
     <div id="eventsItem"></div>
@@ -955,11 +956,16 @@ function renderUsers() {
     items.push(roomItem(e));
   }
   $("roomList").replaceChildren(...items);
-  // el dueño 👑 primero, después los moderadores 🛡️ y después el resto
-  const rank = (u) => (u.role === "owner" ? 0 : u.role === "mod" || u.admin ? 1 : 2);
-  const others = online.filter((u) => u.nick !== me).sort((a, b) => rank(a) - rank(b));
-  $("count").textContent = online.length;
-  $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
+  // Arriba de todo: el dueño 👑 y los moderadores 🛡️ conectados. Abajo, el resto.
+  const rank = (u) => (u.role === "owner" ? 0 : 1);
+  const isStaff = (u) => u.role === "owner" || u.role === "mod" || u.admin;
+  const others = online.filter((u) => u.nick !== me);
+  const staff = others.filter(isStaff).sort((a, b) => rank(a) - rank(b));
+  const rest = others.filter((u) => !isStaff(u));
+  $("staffBox").hidden = !staff.length;
+  $("staffList").replaceChildren(...staff.map((u) => sideItem(u.nick, u.nick, u)));
+  $("count").textContent = rest.length + (online.some((u) => u.nick === me && !isStaff(u)) ? 1 : 0);
+  $("userList").replaceChildren(...rest.map((u) => sideItem(u.nick, u.nick, u)));
   const gone = Object.keys(history).filter((c) => !isRoom(c) && !online.some((u) => u.nick === c));
   $("offList").replaceChildren(...gone.filter((u) => !isBlocked(u)).map((u) => sideItem(u, u, { off: true })));
   $("blockedBox").hidden = !blocked.size;
