@@ -656,9 +656,20 @@ function rulesHTML(card, mode) {
     card.querySelector("#acceptBtn").onclick = () => { store.set("gr-rules", "v2"); showLogin(); };
   } else card.querySelector("#closeRules").onclick = () => $("modal").hidden = true;
 }
-function showLogin() { $("rulesScreen").hidden = true; $("login").hidden = false; $("nick").focus(); }
-if (store.get("gr-rules", "") === "v2") showLogin();
-else { rulesHTML($("rulesCard"), "accept"); $("rulesScreen").hidden = false; }
+function showLogin(force) {
+  $("rulesScreen").hidden = true;
+  const ss = getSess();
+  if (!force && ss?.nick) { // ya había entrado: vuelve solo, sin pedir el apodo
+    $("login").hidden = true;
+    if (socket.connected) restoreSession();
+    return;
+  }
+  $("login").hidden = false; $("nick").focus();
+}
+setTimeout(() => { // espera a que cargue todo el script
+  if (store.get("gr-rules", "") === "v2") showLogin();
+  else { rulesHTML($("rulesCard"), "accept"); $("rulesScreen").hidden = false; }
+}, 0);
 $("rulesBtn").onclick = () => {
   if (!$("rulesScreen").hidden) return;
   rulesHTML($("modalCard"), "view"); $("modal").hidden = false;
@@ -668,7 +679,7 @@ $("modal").onclick = (e) => { if (e.target.id === "modal") $("modal").hidden = t
 // ---------- Sonido y notificaciones ----------
 let audioCtx;
 function beep(freq = 880) {
-  if (!sound) return;
+  if (!sound || replaying) return;
   try {
     audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -678,7 +689,7 @@ function beep(freq = 880) {
   } catch {}
 }
 function notify(title, body) {
-  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (replaying || !document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
   try { new Notification(title, { body }); } catch {}
 }
 
@@ -722,9 +733,42 @@ $("sideBtn").onclick = () => { sideOff = !sideOff; store.set("gr-side", sideOff 
 updateSideBtn();
 
 // ---------- Login ----------
+// Sesión guardada en el celu: si Chrome se minimiza o recarga la página, vuelve solo
+const SESS_KEY = "gr-sess";
+const getSess = () => { try { return JSON.parse(store.get(SESS_KEY, "") || "null"); } catch { return null; } };
+const setSess = (v) => store.set(SESS_KEY, v ? JSON.stringify(v) : "");
+let replaying = false, restoring = false;
+function restoreSession() {
+  const ss = getSess();
+  if (restoring || wasKicked || (!me && !ss)) return;
+  restoring = true;
+  const nick = me || ss.nick;
+  const fallback = () => join(nick, (err) => { restoring = false; me = ""; setSess(null); $("app").style.display = "none"; showLogin(true); $("nick").value = nick; $("err").textContent = err; });
+  if (!ss?.token) return fallback();
+  socket.emit("resume", ss.token, (res) => {
+    if (!res?.ok) return fallback();
+    enterChat(res);
+    const items = res.replay || [];
+    replaying = true;
+    for (const [ev, ...args] of items) { try { socket.listeners(ev).forEach((fn) => fn(...args)); } catch {} }
+    replaying = false;
+    const msgs = items.filter(([ev]) => ev === "public-message" || ev === "private-message").length;
+    if (lostShown || msgs) push(current, { type: "sys", text: msgs ? `✔ Volviste. Mientras no estabas ${msgs === 1 ? "llegó 1 mensaje" : `llegaron ${msgs} mensajes`} (ya está${msgs === 1 ? "" : "n"} acá).` : "✔ Reconectado" });
+    lostShown = false;
+  });
+}
 function join(nick, onFail) {
   socket.emit("join", nick, (res) => {
     if (!res.ok) return onFail && onFail(res.error);
+    enterChat(res);
+    if (lostShown) push(GENERAL, { type: "sys", text: "✔ Reconectado" });
+    lostShown = false;
+  });
+}
+function enterChat(res) {
+  {
+    restoring = false;
+    if (res.token) setSess({ nick: res.nick, token: res.token });
     me = res.nick; online = res.users;
     $("meName").textContent = me;
     $("login").hidden = true;
@@ -740,9 +784,9 @@ function join(nick, onFail) {
     blocked.forEach((b) => socket.emit("block", { target: b, on: true }));
     if (myAvatar || myBio) sendProfile();
     const savedKey = store.get("gr-key", "");
-    if (savedKey) socket.emit("reauth", savedKey);
+    if (savedKey && !res.replay) socket.emit("reauth", savedKey);
     renderUsers(); renderMessages();
-  });
+  }
 }
 $("loginForm").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -751,15 +795,19 @@ $("loginForm").addEventListener("submit", (e) => {
   join($("nick").value, (err) => $("err").textContent = err);
 });
 
-let wasKicked = false;
-socket.on("connect", () => {
+let wasKicked = false, lostShown = false;
+socket.on("connect", () => { if (me || ($("login").hidden && $("rulesScreen").hidden && getSess())) restoreSession(); });
+socket.on("disconnect", (reason) => {
+  voiceCleanup(true); restoring = false;
   if (!me || wasKicked) return;
-  join(me, () => push(GENERAL, { type: "sys", text: "No se pudo recuperar tu apodo. Recargá la página." }));
-  push(GENERAL, { type: "sys", text: "Reconectado ✔" });
+  if (reason === "io server disconnect") return push(current, { type: "sys", text: "📱 Abriste el chat en otra pestaña o dispositivo. Recargá la página para seguir acá." });
+  // si la página está minimizada no hace falta avisar: al volver se recupera sola
+  if (!document.hidden) { push(current, { type: "sys", text: "Conexión perdida… reconectando" }); lostShown = true; }
 });
-socket.on("disconnect", () => { voiceCleanup(true); isAdmin = false; isOwner = false; $("modPanelBtn").hidden = true; $("meAdmin").hidden = true; if (me && !wasKicked) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
+// al volver a la pestaña, si se había cortado, reconectar ya (sin esperar el reintento)
+document.addEventListener("visibilitychange", () => { if (!document.hidden && me && !socket.connected && !wasKicked) socket.connect(); });
 socket.on("kicked", ({ reason, ban, mins }) => {
-  wasKicked = true;
+  wasKicked = true; setSess(null);
   socket.io.opts.reconnection = false;
   $("app").style.display = "none"; ["login", "rulesScreen"].forEach((i) => $(i).hidden = true);
   $("kicked").hidden = false;
@@ -790,7 +838,7 @@ function sideItem(chat, label, opts = {}) {
   const room = isRoom(chat);
   const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (!room && isBlocked(chat) ? " blocked" : ""));
   div.dataset.chat = chat;
-  if (!room) { const w = el("span", "av-wrap"); w.append(avatarEl(chat, 22), el("span", "st-badge", opts.off ? "⚪" : (STATUS[opts.status]?.[0] || "🟢"))); div.append(w); }
+  if (!room) { const w = el("span", "av-wrap"); w.append(avatarEl(chat, 22), el("span", "st-badge", opts.off ? "⚪" : opts.away ? "💤" : (STATUS[opts.status]?.[0] || "🟢"))); div.append(w); if (opts.away) div.title = "Tiene el chat minimizado (vuelve en cualquier momento)"; }
   const name = el("span", "name", label);
   if (!room) name.style.color = nickColor(chat);
   div.append(name);
