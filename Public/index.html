@@ -638,7 +638,7 @@
 const DEV = (() => { try { let d = localStorage.getItem("gr-dev"); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("gr-dev", d); } return d; } catch { return ""; } })();
 const socket = io({ auth: { dev: DEV } });
 const GENERAL = "#general", JT = "#j-trivia", JI = "#j-ia", JF = "#j-fiesta", JD = "#j-duelos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz", MURO = "#comunidad";
-const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JT]: ["🧠", "Trivia", "Trivia, rondas, número y ahorcado"], [JI]: ["🕵️", "Engaño", "¿Quién es la IA?, Impostor, Mentiroso y Asesinato"], [JF]: ["🎉", "Fiesta", "Verdad o reto, Dibujo, 100 rotos y Juicio"], [JD]: ["⚔️", "Duelos", "Duelos 1 contra 1, eliminatorio y torneo semanal"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
+const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JT]: ["🧠", "Trivia", "Trivia, rondas y ahorcado"], [JI]: ["🕵️", "Engaño", "¿Quién es la IA?, Impostor, Mentiroso y Asesinato"], [JF]: ["🎉", "Fiesta", "Verdad o reto, Dibujo, 100 rotos y Juicio"], [JD]: ["⚔️", "Duelos", "Duelos 1 contra 1, eliminatorio y torneo semanal"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
 const isRoom = (c) => c.startsWith("#");
 // Sub-salas de 🎮 Juegos (cada una con sus juegos)
@@ -955,7 +955,9 @@ function renderUsers() {
     items.push(roomItem(e));
   }
   $("roomList").replaceChildren(...items);
-  const others = online.filter((u) => u.nick !== me);
+  // el dueño 👑 primero, después los moderadores 🛡️ y después el resto
+  const rank = (u) => (u.role === "owner" ? 0 : u.role === "mod" || u.admin ? 1 : 2);
+  const others = online.filter((u) => u.nick !== me).sort((a, b) => rank(a) - rank(b));
   $("count").textContent = online.length;
   $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
   const gone = Object.keys(history).filter((c) => !isRoom(c) && !online.some((u) => u.nick === c));
