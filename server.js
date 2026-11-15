@@ -99,7 +99,8 @@ function remember(id, data) {
 // ---------- Sesiones: minimizar Chrome no te saca del chat ----------
 // Cuando el celu pausa la página se corta la conexión, pero la persona sigue figurando
 // (con 💤) durante GRACE_MS. Si vuelve en ese tiempo, recupera todo y recibe lo que se perdió.
-const GRACE_MS = (parseFloat(process.env.GRACE_MIN) || 15) * 60000;
+// GRACE_MIN en Render: minutos que te guarda el lugar (máximo 1 día). "infinito" también vale 1 día.
+const GRACE_MS = Math.min(1440, /^inf/i.test(process.env.GRACE_MIN || "") ? 1440 : (parseFloat(process.env.GRACE_MIN) || 15)) * 60000;
 const sessions = new Map(); // token -> { c, id, timer, buf, bytes }
 const ghostIds = new Map(); // id de la conexión cortada -> sesión
 const newToken = () => require("crypto").randomBytes(18).toString("base64url");
@@ -1862,6 +1863,9 @@ io.on("connection", (socket) => {
     if (c.admin) socket.emit("admin", { mod: true, owner: !!c.owner });
     pushUsers();
   });
+
+  // Salir a propósito (botón 🚪): se va en el momento, sin quedar 💤
+  socket.on("leave", () => { if (!c.nick) return; c.gone = true; socket.disconnect(true); });
 
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
