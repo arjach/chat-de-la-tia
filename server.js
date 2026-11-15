@@ -20,7 +20,7 @@ app.get("/avatar/:nick", (req, res) => {
 // Servidores para las llamadas de voz. STUN gratis de Google; TURN opcional (mejora la conexión en datos móviles)
 const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
 if (process.env.TURN_URL) ICE_SERVERS.push({ urls: process.env.TURN_URL.split(",").map((x) => x.trim()), username: process.env.TURN_USER || "", credential: process.env.TURN_PASS || "" });
-app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!process.env.GEMINI_API_KEY, iceServers: ICE_SERVERS }));
+app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY), iceServers: ICE_SERVERS }));
 
 // ================== Configuración ==================
 const BOT = "Fastidio";
@@ -132,6 +132,19 @@ function censor(text) {
 }
 
 // ---------- Sanciones ----------
+// Penalizaciones de juegos: quedás afuera de 🎮 Juegos un rato (por apodo y por conexión)
+// Se guarda por apodo y por dispositivo (no por IP: con datos móviles mucha gente comparte la misma IP)
+const juegosBans = new Map(); // "nick:x" | "dev:x" -> vencimiento (ms)
+const chatPenalties = new Map(); // igual, pero afuera de todo el chat (castigo "chat" de Verdad o reto)
+const penKeys = (c, nick = c?.nick) => ["nick:" + String(nick || "").toLowerCase(), ...(c?.dev ? ["dev:" + c.dev] : [])];
+function penUntil(map, c, nick) {
+  const t = now(); let u = 0;
+  for (const k of penKeys(c, nick)) { const v = map.get(k) || 0; if (v > t) u = Math.max(u, v); else map.delete(k); }
+  return u;
+}
+const juegosBanUntil = (c) => penUntil(juegosBans, c);
+const minsLeft = (u) => `${Math.ceil((u - now()) / 60000)} min`;
+function juegosBanNotice(c, id) { const u = juegosBanUntil(c); if (!u) return false; notice(id, `⛔ Estás penalizado/a en 🎮 Juegos. Faltan ${minsLeft(u)}.`, "warn"); return true; }
 function mute(c, id, minutes, reason, by = BOT) {
   c.mutedUntil = now() + minutes * 60000;
   voiceLeave(id);
@@ -143,7 +156,7 @@ function kick(id, reason, ban = false, by = BOT) {
   const c = clients.get(id);
   if (!c) return;
   if (ban) { bans.set(c.ip, now() + 24 * 3600000); dirty(); }
-  io.to(id).emit("kicked", { reason, ban });
+  io.to(id).emit("kicked", { reason, ban, mins: ban ? 24 * 60 : 0 });
   botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? "baneado/a por 24 h" : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
   setTimeout(() => io.sockets.sockets.get(id)?.disconnect(true), 300);
 }
@@ -168,6 +181,7 @@ function checkMessage(c, id, raw, room = "general", allowEmpty = false) {
     notice(id, "🔒 Esta sala está cerrada por moderación. Solo pueden escribir los moderadores.", "warn");
     return null;
   }
+  if (room === "juegos" && juegosBanNotice(c, id)) return null;
   if (c.mutedUntil > t) {
     notice(id, `🔇 Estás silenciado/a. Faltan ${Math.ceil((c.mutedUntil - t) / 60000)} min.`, "warn");
     return null;
@@ -332,7 +346,9 @@ function runCommand(c, id, text, room = "general") {
     case "desilenciar": case "unmute":
       if (!target) return notice(id, "No encuentro a ese usuario.");
       target.c.mutedUntil = 0; target.c.strikes = [];
-      notice(target.id, "🔊 Ya podés volver a escribir.");
+      penKeys(target.c).forEach((k) => juegosBans.delete(k));
+      io.to(target.id).emit("juegos-ban", { until: 0 });
+      notice(target.id, "🔊 Ya podés volver a escribir (y jugar).");
       return notice(id, `${target.c.nick} ya puede escribir.`, "mod");
     case "expulsar": case "kick":
       if (!target) return notice(id, "No encuentro a ese usuario.");
@@ -540,9 +556,13 @@ const WORDS = ["murcielago", "computadora", "mate", "asado", "empanada", "bandon
 
 function endGame() { if (game?.timer) clearTimeout(game.timer); const g = game; game = null; if (g?.cleanup) g.cleanup(); }
 
-// ---------- Trivia (con IA si hay GEMINI_API_KEY) ----------
+// ---------- IA: Groq (gratis, sin tarjeta) y/o Gemini ----------
+// Usa la que tenga clave cargada en Render. Si están las dos, prueba primero Groq y después Gemini.
 const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GROQ_KEY = (process.env.GROQ_API_KEY || "").trim();
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+const AI_ON = !!(GROQ_KEY || GEMINI_KEY);
 const TOPICS = ["historia argentina", "geografía del mundo", "ciencia", "fútbol", "música argentina", "cine", "series", "videojuegos", "animales",
   "comida", "literatura", "historia universal", "deportes", "tecnología", "cuerpo humano", "espacio y astronomía", "rock nacional", "mitología", "arte", "idiomas"];
 const recentQs = [];
@@ -551,75 +571,92 @@ const roundTema = () => triviaRound?.temas.length ? triviaRound.temas[(triviaRou
 
 let aiLastError = "";
 let aiWorkingModel = "";
-// Prueba el modelo configurado y, si no existe, otros parecidos
-const MODELS = [...new Set([GEMINI_MODEL, "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"])];
-function explainGemini(status, body) {
-  const b = String(body || "");
-  if (status === 400 && /API key not valid|API_KEY_INVALID/i.test(b)) return "la clave de Gemini no es válida (revisá que esté bien copiada en Render, sin espacios)";
-  if (status === 403 && /referer|referrer|BLOCKED|restricted|android|ios/i.test(b)) return "la clave de Gemini tiene restricciones (solo funciona desde otra web/app). Creá una clave nueva sin restricciones";
-  if (status === 403 && /SERVICE_DISABLED|has not been used|disabled/i.test(b)) return "la API de Gemini no está habilitada en ese proyecto de Google. Creá la clave desde aistudio.google.com";
-  if (status === 403) return "Google rechazó la clave (403). Probá con una clave nueva de aistudio.google.com";
-  if (status === 429) return "se alcanzó el límite gratis de Gemini por ahora. Probá en un rato";
-  if (status === 404) return "el modelo de IA no está disponible";
-  if (status >= 500) return "Gemini tuvo un error de su lado. Probá de nuevo";
-  return `Gemini respondió un error ${status}`;
+const GEMINI_MODELS = [...new Set([GEMINI_MODEL, "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"])];
+const GROQ_MODELS = [...new Set([GROQ_MODEL, "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"])];
+const AI_TARGETS = [...(GROQ_KEY ? GROQ_MODELS.map((m) => ({ p: "groq", m })) : []), ...(GEMINI_KEY ? GEMINI_MODELS.map((m) => ({ p: "gemini", m })) : [])];
+const targetName = (t) => `${t.p === "groq" ? "Groq" : "Gemini"} · ${t.m}`;
+function explainAI(p, status, body) {
+  const b = String(body || ""), who = p === "groq" ? "Groq" : "Gemini";
+  if ((status === 400 && /API key not valid|API_KEY_INVALID/i.test(b)) || status === 401) return `la clave de ${who} no es válida (revisá que esté bien copiada en Render, sin espacios)`;
+  if (status === 403 && /referer|referrer|BLOCKED|restricted|android|ios/i.test(b)) return `la clave de ${who} tiene restricciones. Creá una clave nueva sin restricciones`;
+  if (status === 403 && /SERVICE_DISABLED|has not been used|disabled/i.test(b)) return "la API de Gemini no está habilitada en ese proyecto de Google";
+  if (status === 403) return `${who} rechazó la clave (403). Probá con una clave nueva`;
+  if (status === 402 || /prepay|billing|credits are depleted/i.test(b)) return `${who} pide cargar crédito`;
+  if (status === 429) return `se alcanzó el límite gratis de ${who} por ahora. Probá en un rato`;
+  if (status === 404 || /model_not_found|decommissioned|does not exist/i.test(b)) return "el modelo de IA no está disponible";
+  if (status >= 500) return `${who} tuvo un error de su lado. Probá de nuevo`;
+  return `${who} respondió un error ${status}`;
 }
-async function callGemini(model, prompt, json = true, temperature = 1) {
+async function postJSON(url, headers, body, ms = 20000) {
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 12000);
+  const to = setTimeout(() => ctrl.abort(), ms);
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST", signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(json ? { responseMimeType: "application/json" } : {}), temperature } }),
-    });
-    if (!r.ok) { const body = await r.text(); console.error("Gemini", model, r.status, body.slice(0, 300)); return { status: r.status, body }; }
+    const r = await fetch(url, { method: "POST", signal: ctrl.signal, headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+    if (!r.ok) return { status: r.status, body: await r.text() };
     return { data: await r.json() };
   } finally { clearTimeout(to); }
 }
+async function callGemini(model, prompt, json, temperature) {
+  const res = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { "x-goog-api-key": GEMINI_KEY },
+    { contents: [{ parts: [{ text: prompt }] }], generationConfig: { ...(json ? { responseMimeType: "application/json" } : {}), temperature } });
+  if (res.status) return res;
+  return { text: res.data?.candidates?.[0]?.content?.parts?.map((x) => x.text || "").join("") || "" };
+}
+async function callGroq(model, prompt, json, temperature, extras = true) {
+  const body = { model, messages: [{ role: "user", content: prompt }], temperature: Math.min(1.5, temperature), max_completion_tokens: 4096 };
+  if (extras && json) body.response_format = { type: "json_object" };
+  if (extras && /gpt-oss/.test(model)) body.reasoning_effort = "low";
+  const res = await postJSON("https://api.groq.com/openai/v1/chat/completions", { Authorization: `Bearer ${GROQ_KEY}` }, body);
+  // Si algún parámetro extra no le gusta (o el JSON salió mal), reintenta en modo simple
+  if (res.status === 400 && extras && /reasoning|response_format|json_validate_failed|unsupported/i.test(res.body)) return callGroq(model, prompt, json, temperature, false);
+  if (res.status) return res;
+  return { text: res.data?.choices?.[0]?.message?.content || "" };
+}
+// Saca el JSON aunque venga con texto o ``` alrededor
+function parseAIJson(raw) {
+  const t = String(raw || "").replace(/```(json)?/g, "").trim();
+  try { return JSON.parse(t); } catch {}
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+  throw new Error("json");
+}
 // Pide algo a la IA; devuelve el texto (o el objeto si json) o null
 async function aiCall(prompt, json = true, temperature = 1) {
-  if (!GEMINI_KEY || typeof fetch !== "function") { aiLastError = "la IA no está activada (falta GEMINI_API_KEY)"; return null; }
-  const models = aiWorkingModel ? [aiWorkingModel, ...MODELS.filter((m) => m !== aiWorkingModel)] : MODELS;
-  for (const model of models) {
+  if (!AI_ON) { aiLastError = "la IA no está activada (falta GROQ_API_KEY en Render)"; return null; }
+  if (typeof fetch !== "function") { aiLastError = "la versión de Node del servidor es muy vieja"; return null; }
+  const list = aiWorkingModel ? [...AI_TARGETS.filter((t) => targetName(t) === aiWorkingModel), ...AI_TARGETS.filter((t) => targetName(t) !== aiWorkingModel)] : AI_TARGETS;
+  let firstErr = "";
+  for (const t of list) {
     try {
-      const res = await callGemini(model, prompt, json, temperature);
-      if (res.status === 404) continue;
-      if (res.status) { aiLastError = explainGemini(res.status, res.body); return null; }
-      const raw = res.data?.candidates?.[0]?.content?.parts?.map((x) => x.text || "").join("") || "";
-      aiWorkingModel = model; aiLastError = "";
-      if (!json) return raw.trim();
-      return JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim());
-    } catch (e) { aiLastError = e.name === "AbortError" ? "la IA tardó demasiado" : "la IA respondió algo raro"; return null; }
+      const res = t.p === "groq" ? await callGroq(t.m, prompt, json, temperature) : await callGemini(t.m, prompt, json, temperature);
+      if (res.status) {
+        console.error("IA", t.p, t.m, res.status, String(res.body).slice(0, 300));
+        const why = explainAI(t.p, res.status, res.body);
+        if (!firstErr || /modelo/.test(firstErr)) firstErr = why;
+        continue; // probar el siguiente modelo / proveedor
+      }
+      if (!res.text.trim()) { firstErr ||= "la IA respondió vacío"; continue; }
+      const out = json ? parseAIJson(res.text) : res.text.trim();
+      aiWorkingModel = targetName(t); aiLastError = "";
+      return out;
+    } catch (e) {
+      console.error("IA error:", t.p, t.m, e.message);
+      firstErr ||= e.name === "AbortError" ? "la IA tardó demasiado" : e.message === "json" ? "la IA respondió algo raro" : "no se pudo conectar con la IA";
+    }
   }
+  aiLastError = firstErr || "la IA no respondió";
   return null;
 }
 async function aiQuestion(tema) {
-  if (!GEMINI_KEY) { aiLastError = "la IA no está activada: falta GEMINI_API_KEY en Render (Environment)"; return null; }
-  if (typeof fetch !== "function") { aiLastError = "la versión de Node del servidor es muy vieja"; return null; }
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
 La respuesta tiene que ser corta (1 a 3 palabras o un número), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
 No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
 Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula"],"dato":"un dato curioso breve sobre la respuesta"}`;
-  const models = aiWorkingModel ? [aiWorkingModel, ...MODELS.filter((m) => m !== aiWorkingModel)] : MODELS;
-  for (const model of models) {
-    try {
-      const res = await callGemini(model, prompt);
-      if (res.status === 404) { aiLastError = explainGemini(404); continue; } // probar el siguiente modelo
-      if (res.status) { aiLastError = explainGemini(res.status, res.body); return null; }
-      const raw = res.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const q = JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim() || "{}");
-      if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
-      aiWorkingModel = model; aiLastError = "";
-      const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map(plain).filter(Boolean))];
-      return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), ai: true };
-    } catch (e) {
-      console.error("Gemini error:", model, e.message);
-      aiLastError = e.name === "AbortError" ? "Gemini tardó demasiado en responder" : "no se pudo conectar con Gemini (" + e.message + ")";
-      return null;
-    }
-  }
-  return null;
+  const q = await aiCall(prompt, true, 1);
+  if (!q) return null;
+  if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
+  const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
+  return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), ai: true };
 }
 function bankQuestion() {
   const pool = TRIVIA.filter(([q]) => !recentQs.includes(q));
@@ -693,18 +730,19 @@ const hangView = () => game.word.split("").map((ch) => ch === " " ? "  " : game.
 const GALLOWS = ["😀", "😐", "😕", "😟", "😨", "😱", "💀"];
 
 function gameCommand(c, id, cmd, arg) {
+  if (cmd !== "ranking" && juegosBanNotice(c, id)) return;
   switch (cmd) {
     case "ia": {
-      if (!GEMINI_KEY) return gameSay("🤖 IA: ❌ desactivada. Falta cargar GEMINI_API_KEY en Render → Environment.");
+      if (!AI_ON) return gameSay("🤖 IA: ❌ desactivada. Falta cargar GROQ_API_KEY en Render → Environment.");
       gameSay("🤖 Probando la IA…");
       return aiQuestion("cultura general").then((q) => gameSay(q
-        ? `🤖 IA: ✅ funciona (modelo ${aiWorkingModel}). Probá /trivia química`
+        ? `🤖 IA: ✅ funciona (${aiWorkingModel}). Probá /trivia química`
         : `🤖 IA: ❌ falla: ${aiLastError}.`));
     }
     case "juegos":
       return notice(id, "🎮 JUEGOS (o usá los botones de abajo)\n" +
         "🤖 /quienesia — ¿Quién es la IA? · 🃏 /mentiroso · 🫣 /impostor · 🔪 /asesinato [tema]\n" +
-        "🎭 /vor — Verdad o reto\n" +
+        "🎭 /vor — Verdad o reto (castigo: /vor ban 10 · /vor silencio 5 · /vor chat 5 · /vor puntos 3 · /vor sin)\n" +
         "📊 /100rotos — 100 rotos dicen (pensá como la mayoría)\n" +
         "⚖️ /juicio Nombre cargo — Juicio popular en broma\n" +
         "🖍️ /dibujo [rondas] — Dibujá y adiviná\n" +
@@ -767,7 +805,7 @@ function gameCommand(c, id, cmd, arg) {
     case "llaves": return gameSay(bracketText());
     case "vor": case "verdadoreto": {
       if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
-      return startVor(c.nick);
+      return startVor(c.nick, vorParse(arg));
     }
     case "dibujo": {
       if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
@@ -966,11 +1004,37 @@ function picIntercept(c, sid, text) {
 }
 
 // ================== Verdad o reto (las verdades y retos los inventan los jugadores) ==================
+// Penalización configurable para quien no cumple, pasa sin comodín o se va en su turno.
+const VOR_PEN_TYPES = ["juegos", "silencio", "chat", "puntos", "nada"];
+const VOR_DEFAULT = { type: "juegos", mins: 5, pts: 3, free: 1, vote: true, doSecs: 180 };
+function vorParse(arg) {
+  const pen = { ...VOR_DEFAULT };
+  const a = plain(arg || "");
+  if (/\b(sin|nada|suave|tranqui)\b/.test(a)) pen.type = "nada";
+  else if (/\b(silencio|silenciar|mute|mudo)\b/.test(a)) pen.type = "silencio";
+  else if (/\b(chat|todo|echar|expulsion|afuera)\b/.test(a)) pen.type = "chat";
+  else if (/\b(puntos?|pts)\b/.test(a)) pen.type = "puntos";
+  const n = parseInt((a.match(/\d+/) || [])[0]);
+  if (n > 0) { if (pen.type === "puntos") pen.pts = Math.min(20, n); else pen.mins = Math.min(60, n); }
+  const cm = a.match(/comodin(?:es)?\s*(\d)/); if (cm) pen.free = Math.min(5, +cm[1]);
+  return pen;
+}
+function vorPenDesc(p) {
+  if (p.type === "nada") return "sin castigo 🫶";
+  if (p.type === "puntos") return `📉 -${p.pts} pts en el ranking`;
+  if (p.type === "silencio") return `🔇 silencio en todo el chat por ${p.mins} min`;
+  if (p.type === "chat") return `🚪 ban de TODO el chat por ${p.mins} min`;
+  return `⛔ ban de 🎮 Juegos por ${p.mins} min`;
+}
 function vorNames() { return [...game.players].join(", "); }
-function startVor(starter) {
-  game = { type: "vor", phase: "join", players: new Set([starter]), turns: 0, last: "", lastAsker: "", timers: [],
+function startVor(starter, pen = { ...VOR_DEFAULT }) {
+  game = { type: "vor", phase: "join", players: new Set([starter]), turns: 0, last: "", lastAsker: "", timers: [], pen, passes: new Map(),
     cleanup() { this.timers.forEach(clearTimeout); } };
-  gameSay(`🎭 VERDAD O RETO — ${starter} arrancó una partida.\n✋ Escriban "yo" para sumarse (25 s).\nEn cada turno, alguien del grupo inventa la verdad o el reto. Con respeto: si no querés hacer algo, escribís "paso" y listo.`);
+  const doMin = Math.round(pen.doSecs / 60);
+  const reglas = pen.type === "nada"
+    ? `Si no querés hacer algo, escribís "paso" y listo.`
+    : `⚖️ CASTIGO por no cumplir, pasar o irte en tu turno: ${vorPenDesc(pen)}.\n🃏 Comodines: ${pen.free ? `${pen.free} "paso" gratis por persona` : "ninguno"}.\n⏱️ Tiempo para cumplir: ${doMin} min.${pen.vote ? `\n🗳️ Cuando digas "listo", el grupo vota si cumpliste de verdad.` : ""}`;
+  gameSay(`🎭 VERDAD O RETO — ${starter} arrancó una partida.\n✋ Escriban "yo" para sumarse (25 s).\nEn cada turno, alguien del grupo inventa la verdad o el reto.\n${reglas}`);
   game.timers.push(setTimeout(() => {
     if (!game || game.type !== "vor") return;
     if (game.players.size < 2) { gameSay("🎭 Se necesitan al menos 2 para jugar. Partida cancelada."); return endGame(); }
@@ -979,6 +1043,35 @@ function startVor(starter) {
   }, 25000));
 }
 function vorClear() { game.timers.forEach(clearTimeout); game.timers = []; }
+const vorFreeLeft = (nick) => Math.max(0, game.pen.free - (game.passes.get(nick) || 0));
+// Aplica el castigo elegido. cRef sirve cuando la persona ya se desconectó.
+function vorPenalize(nick, why, cRef) {
+  const p = game.pen, t = byNick(nick), c = t?.c || cRef;
+  if (p.type === "nada") return gameSay(`🙅 ${nick} ${why}. Sin castigo esta vez 🫶`);
+  let type = p.type;
+  if (type === "chat" && c?.admin) type = "juegos"; // a los mods no se los echa del chat (tienen que poder moderar)
+  if (type === "puntos") {
+    addPoints(nick, -p.pts);
+    return gameSay(`⚖️ ${nick} ${why}.\n📉 CASTIGO: -${p.pts} pts en el ranking.`);
+  }
+  if (type === "silencio") {
+    if (c) { c.mutedUntil = Math.max(c.mutedUntil, now() + p.mins * 60000); if (t) { voiceLeave(t.id); notice(t.id, `🔇 Penalización de Verdad o reto: no podés escribir por ${p.mins} min.`, "warn"); } }
+    return gameSay(`⚖️ ${nick} ${why}.\n🔇 CASTIGO: silenciado/a en todo el chat por ${p.mins} min.`);
+  }
+  if (type === "chat") {
+    gameSay(`⚖️ ${nick} ${why}.\n🚪 CASTIGO: afuera de TODO el chat por ${p.mins} min. ¡Chau! 👋`);
+    const until = now() + p.mins * 60000;
+    penKeys(c, nick).forEach((k) => chatPenalties.set(k, until));
+    game.players.delete(nick);
+    if (t) { io.to(t.id).emit("kicked", { reason: `Penalización de Verdad o reto: ${p.mins} min afuera del chat.`, ban: true, mins: p.mins }); setTimeout(() => io.sockets.sockets.get(t.id)?.disconnect(true), 400); }
+    return;
+  }
+  const until = now() + p.mins * 60000;
+  penKeys(c, nick).forEach((k) => juegosBans.set(k, until));
+  game.players.delete(nick);
+  if (t) io.to(t.id).emit("juegos-ban", { until, reason: "Verdad o reto" });
+  gameSay(`⚖️ ${nick} ${why}.\n⛔ CASTIGO: ban de 🎮 Juegos por ${p.mins} min.`);
+}
 function vorNext() {
   if (!game || game.type !== "vor") return;
   vorClear();
@@ -988,7 +1081,8 @@ function vorNext() {
   game.turns++;
   const options = [...game.players].filter((n) => n !== game.last);
   game.current = pick(options); game.last = game.current; game.phase = "choose"; game.kind = ""; game.asker = "";
-  const t = byNick(game.current); if (t) io.to(t.id).emit("vor-choose");
+  const t = byNick(game.current);
+  if (t) io.to(t.id).emit("vor-choose", { free: vorFreeLeft(game.current), pen: game.pen.type === "nada" ? "" : vorPenDesc(game.pen) });
   gameSay(`🎭 Turno ${game.turns}: le toca a ${game.current}. ¿VERDAD 🗣️ o RETO 🔥? (escribí "verdad" o "reto")`);
   game.timers.push(setTimeout(() => vorPick(pick(["verdad", "reto"]), true), 45000));
 }
@@ -1019,9 +1113,39 @@ function vorIntercept(c, sid, text) {
   if (text.trim().length < 4) { notice(sid, "✍️ Escribí algo un poco más largo 😉", "help"); return true; }
   vorClear();
   game.phase = "doing";
-  gameSay(`${game.kind === "verdad" ? "🗣️ VERDAD" : "🔥 RETO"} de ${c.nick} para ${game.current}:\n«${text.trim().slice(0, 300)}»\n${game.current}, cuando termines escribí "listo" (o "paso" si no querés).`);
-  game.timers.push(setTimeout(() => { if (game?.type === "vor" && game.phase === "doing") { gameSay("⏰ Se terminó el tiempo de este turno."); vorNext(); } }, 3 * 60000));
+  const secs = game.pen.doSecs, nick = game.current;
+  const pasoTxt = game.pen.type === "nada" ? `(o "paso" si no querés)` : vorFreeLeft(nick) ? `("paso" usa tu comodín 🃏)` : `(si pasás: ${vorPenDesc(game.pen)})`;
+  gameSay(`${game.kind === "verdad" ? "🗣️ VERDAD" : "🔥 RETO"} de ${c.nick} para ${nick}:\n«${text.trim().slice(0, 300)}»\n${nick}, tenés ${Math.round(secs / 60)} min. Cuando termines escribí "listo" ${pasoTxt}.`);
+  game.timers.push(setTimeout(() => {
+    if (game?.type !== "vor" || game.phase !== "doing" || game.current !== nick) return;
+    gameSay(`⏰ Se terminó el tiempo de ${nick}.`);
+    vorPenalize(nick, "no cumplió a tiempo"); game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
+  }, secs * 1000));
+  if (secs >= 90) game.timers.push(setTimeout(() => { if (game?.type === "vor" && game.phase === "doing" && game.current === nick) gameSay(`⏳ ${nick}, te queda 1 minuto.`); }, (secs - 60) * 1000));
   return true;
+}
+function vorDone(nick) {
+  vorClear();
+  const others = [...game.players].filter((n) => n !== nick && byNick(n));
+  if (!game.pen.vote || game.pen.type === "nada" || !others.length) { gameSay(`👏 ¡Bien ${nick}!`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2500)); }
+  game.phase = "vote";
+  const que = game.kind === "verdad" ? "respondió la verdad" : "cumplió el reto";
+  gamePoll(`🗳️ ¿${nick} ${que} de verdad?`, ["✅ Cumplió", "❌ Trucho"], 20, (counts) => {
+    if (game?.type !== "vor" || game.phase !== "vote" || game.current !== nick) return;
+    if (counts[1] > counts[0]) vorPenalize(nick, `no convenció al grupo (${counts[1]} a ${counts[0]})`);
+    else gameSay(`👏 ¡Aprobado/a! ${nick} cumplió${counts[0] ? ` (${counts[0]} a ${counts[1]})` : ""}.`);
+    game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
+  }, [nick]);
+}
+function vorPass(nick) {
+  vorClear(); game.phase = "next";
+  if (game.pen.type === "nada") gameSay(`🙅 ${nick} pasó. Sin drama 🫶`);
+  else if (vorFreeLeft(nick) > 0) {
+    game.passes.set(nick, (game.passes.get(nick) || 0) + 1);
+    const left = vorFreeLeft(nick);
+    gameSay(`🃏 ${nick} usó un comodín y pasó sin castigo. ${left ? `Le queda${left === 1 ? "" : "n"} ${left}.` : "Ya no le quedan: la próxima, castigo."}`);
+  } else vorPenalize(nick, "pasó sin comodines");
+  game.timers.push(setTimeout(vorNext, 2500));
 }
 function vorGuess(nick, t) {
   if (t === "yo" || t === "yo juego" || t === "me sumo") {
@@ -1030,8 +1154,8 @@ function vorGuess(nick, t) {
   }
   if (nick !== game.current) return;
   if (game.phase === "choose" && (t === "verdad" || t === "reto")) return vorPick(t);
-  if (game.phase === "doing" && /^(listo|ya|hecho|termine)$/.test(t)) { gameSay(`👏 ¡Bien ${nick}!`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2500)); }
-  if (["doing", "choose", "asking", "asking-open"].includes(game.phase) && /^(paso|me planto)$/.test(t)) { vorClear(); gameSay(`🙅 ${nick} pasó. Sin drama 🫶`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2000)); }
+  if (game.phase === "doing" && /^(listo|ya|hecho|termine|cumpli)$/.test(t)) return vorDone(nick);
+  if (["doing", "choose", "asking", "asking-open"].includes(game.phase) && /^(paso|me planto)$/.test(t)) return vorPass(nick);
 }
 
 // ================== Duelos 1 contra 1 ==================
@@ -1342,7 +1466,7 @@ const topVoted = (counts) => { const max = Math.max(...counts); return max ? cou
 const TURING_TOPICS = ["¿Cuál es la peor comida que probaste?", "¿Qué harías con un millón de dólares?", "¿Playa o montaña y por qué?", "Contá algo que te dio vergüenza esta semana",
   "¿Cuál fue tu primer celular?", "¿Qué serie estás mirando?", "¿Mate dulce o amargo?", "¿Qué superpoder inútil te gustaría tener?", "¿Cuál es tu plan ideal de domingo?", "¿Le tenés miedo a algo raro?"];
 function startTuring(starter, mins = 3) {
-  if (!GEMINI_KEY) return gameSay("🤖 Este juego necesita la IA activada (GEMINI_API_KEY en Render).");
+  if (!AI_ON) return gameSay("🤖 Este juego necesita la IA activada (GROQ_API_KEY en Render).");
   inscription("turing", starter, "🤖 ¿QUIÉN ES LA IA?", "Todos reciben un apodo secreto de animal y la IA se mete como un jugador más. Charlen y descubran quién es la máquina.", 45, 3, 10, (players) => {
     const names = shuffle(ALIASES).slice(0, players.length + 1);
     game.alias = new Map(players.map((n, i) => [n, names[i]]));
@@ -1422,12 +1546,12 @@ async function fibRound() {
   g.timers.forEach(clearTimeout); g.timers = [];
   if (g.round >= g.total) {
     const res = [...g.scores].sort((a, b) => b[1] - a[1]);
-    gameSay(res.length ? `🏁 Fin de El Mentiroso. Ganó ${res[0][0]} con ${res[0][1]} pts 🃏\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin de El Mentiroso. ¡Nadie sumó!");
+    gameSay(res.length ? `🏁 Fin de El Mentiroso. Ganó ${res[0][0]} con ${res[0][1]} punto${res[0][1] === 1 ? "" : "s"} 🃏\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin de El Mentiroso. ¡Nadie sumó!");
     return endGame();
   }
   g.round++; g.phase = "cargando"; g.lies = new Map();
   let fact = null;
-  if (GEMINI_KEY) {
+  if (AI_ON) {
     const r = await aiCall(`Dame UN dato curioso REAL, verificable y sorprendente (animales, historia, cuerpo humano, países, inventos) escrito en español rioplatense, con UNA palabra o expresión clave reemplazada por "___". La respuesta oculta tiene que ser corta (1 a 3 palabras) y difícil de adivinar pero no imposible. No repitas: ${g.used.join(" | ")}. Devolvé SOLO JSON: {"dato":"... ___ ...","respuesta":"..."}`);
     if (r?.dato?.includes("___") && r.respuesta) fact = [String(r.dato).slice(0, 220), String(r.respuesta).slice(0, 40)];
   }
@@ -1487,7 +1611,7 @@ function startImpostor(starter, customPair) {
   inscription("impostor", starter, "🫣 EL IMPOSTOR", "Todos reciben la misma palabra secreta… menos uno, que recibe una parecida (¡y no sabe que es el impostor!). Den pistas y descubran quién es.", 40, 3, 10, async (players) => {
     const g = game;
     let pair = customPair;
-    if (!pair && GEMINI_KEY) {
+    if (!pair && AI_ON) {
       const r = await aiCall(`Juego "El Impostor" para argentinos. Dame DOS palabras comunes y concretas que sean parecidas pero distintas (ej: "playa" y "pileta", "mate" y "té"), fáciles de describir con una pista. Variá los temas. Devolvé SOLO JSON: {"palabra":"...","parecida":"..."}`);
       if (r?.palabra && r?.parecida) pair = [String(r.palabra).slice(0, 30), String(r.parecida).slice(0, 30)];
     }
@@ -1557,7 +1681,7 @@ function startAsesinato(starter, tema) {
     const g = game;
     gameSay("🕯️ Preparando el misterio…");
     let m = null;
-    if (GEMINI_KEY) {
+    if (AI_ON) {
       m = await aiCall(`Creá un misterio de asesinato corto y divertido (tono de comedia, nada gore ni violento explícito) para jugar en un chat argentino con ${players.length} jugadores${tema ? `, ambientado en: ${tema}` : ""}. Cada jugador interpreta un personaje sospechoso. Uno es el culpable.
 Devolvé SOLO JSON: {"titulo":"...","escenario":"1-2 oraciones","victima":"quién murió y cómo lo encontraron, 1 oración, sin sangre","arma":"...","personajes":[{"rol":"nombre del personaje y oficio","secreto":"algo que oculta (si es el culpable: cómo lo hizo y por qué)","pista":"una pista útil sobre OTRO personaje o el crimen"}],"culpable":índice (0 a ${players.length - 1}) del personaje culpable,"pista_publica":"una pista que se revela a mitad del juego","final":"revelación final en 2-3 oraciones"}
 Tienen que ser exactamente ${players.length} personajes.`);
@@ -1638,12 +1762,12 @@ io.on("connection", (socket) => {
   const ip = (socket.handshake.headers["x-forwarded-for"] || socket.handshake.address || "").split(",")[0].trim();
   const banUntil = bans.get(ip);
   if (banUntil && banUntil > now()) {
-    socket.emit("kicked", { reason: "Estás baneado/a temporalmente.", ban: true });
+    socket.emit("kicked", { reason: "Estás baneado/a temporalmente.", ban: true, mins: Math.ceil((banUntil - now()) / 60000) });
     return setTimeout(() => socket.disconnect(true), 300);
   }
 
   const c = {
-    nick: "", status: "disponible", admin: false, owner: false, ip, joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
+    nick: "", status: "disponible", admin: false, owner: false, ip, dev: String(socket.handshake.auth?.dev || "").slice(0, 40), joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
   };
   clients.set(socket.id, c);
@@ -1657,6 +1781,13 @@ io.on("connection", (socket) => {
     if (RESERVED.includes(norm(nick)) || norm(nick).includes("fastidio")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
     if (censor(nick).hits) return cb({ ok: false, error: "Elegí otro apodo." });
     if (users.has(nick.toLowerCase())) return cb({ ok: false, error: "Ese apodo ya está en uso." });
+    const pu = penUntil(chatPenalties, c, nick);
+    if (pu) {
+      const mins = Math.ceil((pu - now()) / 60000);
+      socket.emit("kicked", { reason: "Penalización de Verdad o reto.", ban: true, mins });
+      setTimeout(() => socket.disconnect(true), 300);
+      return cb({ ok: false, error: `Estás penalizado/a. Faltan ${mins} min.` });
+    }
 
     c.nick = nick; c.joinedAt = now();
     users.set(nick.toLowerCase(), socket.id);
@@ -1671,7 +1802,7 @@ io.on("connection", (socket) => {
     const room = ROOMS.includes(p.room) ? p.room : "general";
     if (room === "mods" && !c.admin) return;
     const raw = String(p.text || "").trim();
-    if (raw.startsWith("/") && !p.image && !p.gif && !p.audio) return runCommand(c, socket.id, raw, room);
+    if (raw.startsWith("/") && !p.image && !p.gif && !p.audio) { if (room === "juegos" && juegosBanNotice(c, socket.id)) return; return runCommand(c, socket.id, raw, room); }
     const hasMedia = !!(p.image || p.gif || p.audio);
     const text = checkMessage(c, socket.id, raw, room, hasMedia);
     if (text === null) return;
@@ -1784,7 +1915,8 @@ io.on("connection", (socket) => {
   });
   socket.on("poll-vote", ({ id, idx } = {}) => {
     const p = polls.get(id); if (!p || !c.nick) return;
-    if (p.exclude?.includes(c.nick)) return notice(socket.id, "No podés votar en tu propio juicio 😅");
+    if (p.exclude?.includes(c.nick)) return notice(socket.id, "En esta votación no podés votar vos 😅");
+    if (p.room === "juegos" && juegosBanNotice(c, socket.id)) return;
     idx = parseInt(idx); if (!(idx >= 0 && idx < p.options.length)) return;
     p.votes.set(c.nick, idx);
     const counts = pollCounts(p);
@@ -1805,6 +1937,7 @@ io.on("connection", (socket) => {
     if (!c.nick) return;
     if (c.mutedUntil > now() && !c.admin) return fail("Estás silenciado/a.");
     if (game) return fail("Ya hay un juego en curso. Esperá a que termine (o /rendirse).");
+    const ub = juegosBanUntil(c); if (ub) return fail(`Estás penalizado/a en Juegos. Faltan ${minsLeft(ub)}.`);
     const txt = (x, max) => censor(String(x || "").trim().replace(/\s+/g, " ").slice(0, max)).text;
     const secs = (v, min, max, def) => Math.min(max, Math.max(min, parseInt(v) || def));
     switch (o.type) {
@@ -1840,8 +1973,12 @@ io.on("connection", (socket) => {
         gameSay(`🔢 Pensé un número del 1 al ${max}. ¡Adivinen! Tienen ${sec >= 60 ? Math.round(sec / 60) + " min" : sec + " s"}.`); break;
       }
       case "eliminatorio": startBracket(c.nick, { secs: o.secs, bestOf: o.bestOf }); break;
-      case "vor": startVor(c.nick); break;
-      case "turing": if (!GEMINI_KEY) return fail("Este juego necesita la IA activada."); startTuring(c.nick, Math.min(6, Math.max(2, parseInt(o.mins) || 3))); break;
+      case "vor": {
+        const type = VOR_PEN_TYPES.includes(o.pen) ? o.pen : "juegos";
+        startVor(c.nick, { type, mins: secs(o.mins, 1, 60, 5), pts: secs(o.pts, 1, 20, 3), free: Math.min(5, Math.max(0, Number.isFinite(+o.free) && o.free !== "" ? +o.free : 1)), vote: o.vote !== false, doSecs: secs(o.doMins, 1, 10, 3) * 60 });
+        break;
+      }
+      case "turing": if (!AI_ON) return fail("Este juego necesita la IA activada."); startTuring(c.nick, Math.min(6, Math.max(2, parseInt(o.mins) || 3))); break;
       case "mentiroso": startMentiroso(c.nick, Math.min(8, Math.max(1, parseInt(o.rounds) || 3))); break;
       case "impostor": {
         const a = txt(o.word, 30), b = txt(o.fake, 30);
@@ -2124,6 +2261,9 @@ io.on("connection", (socket) => {
       if (d.tour) { gameSay(`🏟️ ${c.nick} se desconectó: pierde por abandono.`); finishDuel(d, d.a === c.nick ? d.b : d.a, c.nick); continue; }
       if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
       gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
+    }
+    if (game?.type === "vor" && game.current === c.nick && ["choose", "asking", "asking-open", "doing", "vote"].includes(game.phase)) {
+      vorPenalize(c.nick, "se fue en medio de su turno 🏃", c); vorClear(); game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
     }
     if (game?.type === "impostor" && game.impostor === c.nick) { gameSay(`🫣 ${c.nick} se fue… ¡y era el impostor! Fin del juego.`); endGame(); }
     if (game?.type === "asesinato" && game.culprit === c.nick) { gameSay(`🔪 ${c.nick} huyó de la escena… ¡era el asesino! Fin del juego.`); endGame(); }
