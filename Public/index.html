@@ -814,6 +814,12 @@ socket.on("disconnect", (reason) => {
   connTimer = setTimeout(() => { if (!socket.connected && !document.hidden) { connBar(`📡 Reconectando… (${WHY[reason] || reason})`); lostShown = true; } }, 4000);
 });
 socket.on("connect", () => { clearTimeout(connTimer); connBar(""); });
+// Cerrar la pestaña = irse del chat (si fue una recarga, vuelve solo en un segundo)
+window.addEventListener("pagehide", (e) => {
+  if (e.persisted || !me || wasKicked) return;
+  const ss = getSess();
+  if (ss?.token) try { navigator.sendBeacon("/bye", ss.token); } catch {}
+});
 // al volver a la pestaña, si se había cortado, reconectar ya (sin esperar el reintento)
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me && !socket.connected && !wasKicked) socket.connect(); });
 socket.on("kicked", ({ reason, ban, mins }) => {
