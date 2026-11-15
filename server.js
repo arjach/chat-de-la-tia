@@ -1826,6 +1826,15 @@ setInterval(() => {
 
 // ================== Conexiones ==================
 io.on("connection", (socket) => {
+  // Blindaje: si un mensaje raro (o un error nuestro) rompe un handler, se registra y el servidor sigue.
+  // Antes un solo error tiraba el servidor entero y TODOS veían "Conexión perdida".
+  const rawOn = socket.on.bind(socket);
+  socket.on = (ev, fn) => rawOn(ev, (...args) => {
+    try {
+      const r = fn(...args.map((x) => (x === null ? undefined : x)));
+      if (r && typeof r.catch === "function") r.catch((e) => console.error(`Error en "${ev}":`, e));
+    } catch (e) { console.error(`Error en "${ev}":`, e); }
+  });
   const ip = (socket.handshake.headers["x-forwarded-for"] || socket.handshake.address || "").split(",")[0].trim();
   const banUntil = bans.get(ip);
   if (banUntil && banUntil > now()) {
@@ -2431,6 +2440,8 @@ async function loadState() {
 // Un toque por día para que Upstash no archive la base por inactividad
 setInterval(() => { if (db.on) redis(["GET", DB_KEY]).catch(() => {}); }, 24 * 3600000);
 // Render avisa antes de apagar: guardamos lo pendiente
+process.on("uncaughtException", (e) => console.error("Error no capturado (el servidor sigue):", e));
+process.on("unhandledRejection", (e) => console.error("Promesa rechazada (el servidor sigue):", e));
 process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await saveNow().catch(() => {}); process.exit(0); });
 
 const PORT = process.env.PORT || 3000;
