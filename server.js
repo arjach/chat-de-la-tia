@@ -5,9 +5,98 @@ const { Server } = require("socket.io");
 
 const app = express();
 app.set("trust proxy", true);
+app.disable("x-powered-by");
 const server = http.createServer(app);
+
+// ================== Seguridad: que no tiren el servidor ni lo llenen de bots ==================
+// IP real de quien se conecta. Render tiene Cloudflare adelante, que manda True-Client-IP (no se puede falsificar).
+// X-Forwarded-For SÍ se puede falsificar (Render solo le agrega al final), así que de ahí se usa el último valor.
+function realIp(headers = {}, fallback = "") {
+  const h = (k) => String(headers[k] || "").trim();
+  const xff = h("x-forwarded-for").split(",").map((x) => x.trim()).filter(Boolean);
+  return (h("true-client-ip") || h("cf-connecting-ip") || xff[xff.length - 1] || fallback || "").slice(0, 64);
+}
+const SEC = {
+  maxConnPerIp: parseInt(process.env.MAX_CONN_PER_IP) || 20,   // conexiones abiertas a la vez desde una misma IP
+  maxNewConnPerMin: 40,                                          // conexiones nuevas por minuto por IP
+  maxJoinsPerMin: 8,                                             // apodos nuevos por minuto por IP
+  maxTotalConn: parseInt(process.env.MAX_CONN) || 400,           // tope total (para no quedarse sin memoria)
+  httpPerMin: 400,                                               // pedidos web por minuto por IP
+};
+const connCount = new Map();       // ip -> conexiones abiertas
+const hits = new Map();            // "tipo:ip" -> [tiempos]
+const floodBans = new Map();       // ip -> hasta cuándo (bloqueo automático por abuso)
+const secLog = new Map();          // para no llenar los registros con el mismo aviso
+function tooMany(kind, ip, max, windowMs = 60000) {
+  const k = kind + ":" + ip, t = Date.now();
+  const arr = (hits.get(k) || []).filter((x) => t - x < windowMs);
+  arr.push(t); hits.set(k, arr);
+  return arr.length > max;
+}
+function floodBan(ip, mins, why) {
+  if (!ip) return;
+  floodBans.set(ip, Date.now() + mins * 60000);
+  if (!secLog.has(ip + why)) { secLog.set(ip + why, 1); console.warn(`🛡️ Bloqueo automático ${mins} min a ${ip}: ${why}`); setTimeout(() => secLog.delete(ip + why), 600000); }
+  for (const s of io.sockets.sockets.values()) if (s.data.ip === ip) s.disconnect(true);
+}
+// Verificación anti-bots opcional con Cloudflare Turnstile (gratis). Se activa cargando las dos claves en Render.
+const TURNSTILE_SITE = (process.env.TURNSTILE_SITE_KEY || "").trim();
+const TURNSTILE_SECRET = TURNSTILE_SITE ? (process.env.TURNSTILE_SECRET_KEY || "").trim() : "";
+async function verifyHuman(token, ip) {
+  try {
+    const body = new URLSearchParams({ secret: TURNSTILE_SECRET, response: String(token || "").slice(0, 2048), remoteip: ip || "" });
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
+    const j = await r.json();
+    if (!j.success) console.warn("Turnstile rechazó:", (j["error-codes"] || []).join(","));
+    return !!j.success;
+  } catch (e) { console.error("Turnstile:", e.message); return true; } // si Cloudflare no responde, no dejamos a nadie afuera
+}
+const isFloodBanned = (ip) => (floodBans.get(ip) || 0) > Date.now();
+setInterval(() => { // limpieza para que estos mapas no crezcan sin fin
+  const t = Date.now();
+  for (const [k, arr] of hits) if (!arr.length || t - arr[arr.length - 1] > 120000) hits.delete(k);
+  for (const [ip, u] of floodBans) if (u < t) floodBans.delete(ip);
+}, 60000).unref();
+// Límite de pedidos web (páginas, fotos, avatares)
+app.use((req, res, next) => {
+  const ip = realIp(req.headers, req.socket.remoteAddress);
+  if (isFloodBanned(ip)) return res.status(429).send("Demasiados pedidos. Probá en unos minutos.");
+  if (tooMany("http", ip, SEC.httpPerMin)) { if (tooMany("http429", ip, 2000, 300000)) floodBan(ip, 15, "pedidos web sin parar"); return res.status(429).send("Demasiados pedidos. Probá en unos minutos."); }
+  res.set({ "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin", "X-Frame-Options": "SAMEORIGIN" });
+  next();
+});
+
 // pingTimeout largo: Chrome en el celu frena la página cuando la minimizás y así no se corta enseguida
-const io = new Server(server, { maxHttpBufferSize: 4e6, pingInterval: 25000, pingTimeout: 60000 }); // permite fotos de hasta ~2,5 MB
+const io = new Server(server, {
+  maxHttpBufferSize: 4e6, // permite fotos de hasta ~2,5 MB
+  pingInterval: 25000, pingTimeout: 60000,
+  // Se filtra antes de abrir la conexión: IP bloqueada, demasiadas conexiones o demasiado seguido
+  allowRequest: (req, cb) => {
+    const ip = realIp(req.headers, req.socket?.remoteAddress);
+    if (isFloodBanned(ip)) return cb("bloqueado", false);
+    if (io.engine.clientsCount >= SEC.maxTotalConn) return cb("lleno", false);
+    if ((connCount.get(ip) || 0) >= SEC.maxConnPerIp) return cb("demasiadas conexiones", false);
+    if (tooMany("conn", ip, SEC.maxNewConnPerMin)) { if (tooMany("connflood", ip, 200)) floodBan(ip, 15, "conexiones sin parar"); return cb("muy seguido", false); }
+    cb(null, true);
+  },
+});
+// Límite de eventos por conexión (cubeta de fichas): frena a quien manda miles de cosas por segundo
+const BUCKETS = {
+  draw: { cap: 400, per: 150 },  // trazos de pizarra y dibujo: muchos y chiquitos
+  rtc: { cap: 200, per: 60 },    // señales de voz/llamadas
+  normal: { cap: 40, per: 8 },   // todo lo demás: mensajes, votos, reacciones...
+};
+const bucketOf = (ev) => (/^(pic-draw|pic-clear|board-)/.test(ev) ? "draw" : /^(rtc|voice-sig|call-sig|ice|offer|answer)/.test(ev) ? "rtc" : "normal");
+function takeToken(socket, ev) {
+  const kind = bucketOf(ev), cfg = BUCKETS[kind], t = Date.now();
+  const b = (socket.data.buckets ||= {})[kind] ||= { n: cfg.cap, at: t };
+  b.n = Math.min(cfg.cap, b.n + ((t - b.at) / 1000) * cfg.per); b.at = t;
+  if (b.n >= 1) { b.n -= 1; return true; }
+  if (t - (socket.data.strikeAt || 0) > 60000) { socket.data.strikes = 0; socket.data.strikeAt = t; }
+  socket.data.strikes = (socket.data.strikes || 0) + 1;
+  if (socket.data.strikes > 300) floodBan(socket.data.ip, 10, `flood de eventos (${ev})`);
+  return false;
+}
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "Public")));
@@ -21,7 +110,7 @@ app.get("/avatar/:nick", (req, res) => {
 // Servidores para las llamadas de voz. STUN gratis de Google; TURN opcional (mejora la conexión en datos móviles)
 const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
 if (process.env.TURN_URL) ICE_SERVERS.push({ urls: process.env.TURN_URL.split(",").map((x) => x.trim()), username: process.env.TURN_USER || "", credential: process.env.TURN_PASS || "" });
-app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY), iceServers: ICE_SERVERS }));
+app.get("/config", (req, res) => res.json({ giphyKey: process.env.GIPHY_API_KEY || "", ai: !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY), iceServers: ICE_SERVERS, turnstile: TURNSTILE_SECRET ? TURNSTILE_SITE : "" }));
 
 // ================== Configuración ==================
 const BOT = "Fastidio";
@@ -118,7 +207,7 @@ adapter.broadcast = function (packet, opts) {
       if (opts?.rooms?.size && !opts.rooms.has(gid)) continue;
       const size = JSON.stringify(packet.data).length;
       ses.buf.push(packet.data); ses.bytes += size;
-      while (ses.buf.length > 400 || ses.bytes > 12e6) ses.bytes -= JSON.stringify(ses.buf.shift()).length;
+      while (ses.buf.length > 400 || ses.bytes > 4e6) ses.bytes -= JSON.stringify(ses.buf.shift()).length;
     }
   }
   return origBroadcast(packet, opts);
@@ -320,7 +409,7 @@ function runCommand(c, id, text, room = "general") {
     return notice(id, help);
   }
   if (cmd === "admin") {
-    if (c.adminTries >= 5) return notice(id, "Demasiados intentos. Recargá la página para probar de nuevo.");
+    if (c.adminTries >= 5 || tooMany("admin", c.ip, 8, 15 * 60000)) return notice(id, "Demasiados intentos. Esperá un rato para probar de nuevo.");
     c.adminTries++;
     if (!arg) return notice(id, "Escribí /admin seguido de tu clave.");
     if (!ADMIN_PASSWORD && !modKeys.size) return notice(id, "⚠️ El servidor no tiene ADMIN_PASSWORD cargada. Agregala en Render → Environment.", "warn");
@@ -1989,14 +2078,18 @@ setInterval(() => {
 io.on("connection", (socket) => {
   // Blindaje: si un mensaje raro (o un error nuestro) rompe un handler, se registra y el servidor sigue.
   // Antes un solo error tiraba el servidor entero y TODOS veían "Conexión perdida".
+  socket.data.ip = realIp(socket.handshake.headers, socket.handshake.address);
+  connCount.set(socket.data.ip, (connCount.get(socket.data.ip) || 0) + 1);
+  socket.conn.on("close", () => { const n = (connCount.get(socket.data.ip) || 1) - 1; if (n > 0) connCount.set(socket.data.ip, n); else connCount.delete(socket.data.ip); });
   const rawOn = socket.on.bind(socket);
   socket.on = (ev, fn) => rawOn(ev, (...args) => {
+    if (ev !== "disconnect" && !takeToken(socket, ev)) { const cb = args[args.length - 1]; if (typeof cb === "function" && /^(join|resume|muro-|private-message|public-message)/.test(ev)) cb({ ok: false, error: "Vas muy rápido. Esperá un momento." }); return; }
     try {
       const r = fn(...args.map((x) => (x === null ? undefined : x)));
       if (r && typeof r.catch === "function") r.catch((e) => console.error(`Error en "${ev}":`, e));
     } catch (e) { console.error(`Error en "${ev}":`, e); }
   });
-  const ip = (socket.handshake.headers["x-forwarded-for"] || socket.handshake.address || "").split(",")[0].trim();
+  const ip = realIp(socket.handshake.headers, socket.handshake.address);
   const banUntil = bans.get(ip);
   if (banUntil && banUntil > now()) {
     socket.emit("kicked", { reason: "Estás baneado/a temporalmente.", ban: true, mins: Math.ceil((banUntil - now()) / 60000) });
@@ -2040,9 +2133,19 @@ io.on("connection", (socket) => {
   // Salir a propósito (botón 🚪): se va en el momento, sin quedar 💤
   socket.on("leave", () => { if (!c.nick) return; c.gone = true; socket.disconnect(true); });
 
+  socket.on("verify", async (token, cb) => {
+    if (typeof cb !== "function") return;
+    if (!TURNSTILE_SECRET || c.human) return cb({ ok: true });
+    if (tooMany("verify", c.ip, 20)) return cb({ ok: false });
+    c.human = await verifyHuman(token, c.ip);
+    cb({ ok: c.human });
+  });
+
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
     if (c.nick) return cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
+    if (tooMany("join", c.ip, SEC.maxJoinsPerMin)) return cb({ ok: false, error: "Demasiadas entradas desde tu conexión. Esperá un minuto." });
+    if (TURNSTILE_SECRET && !c.human) return cb({ ok: false, error: "Falta la verificación anti-bots. Recargá la página.", captcha: true });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
@@ -2129,6 +2232,7 @@ io.on("connection", (socket) => {
 
   socket.on("reauth", (key) => {
     if (!c.nick || c.admin || typeof key !== "string" || c.adminTries >= 5) return;
+    if (tooMany("admin", c.ip, 8, 15 * 60000)) return;
     c.adminTries++;
     key = key.trim();
     if (ADMIN_PASSWORD && key === ADMIN_PASSWORD) { c.admin = true; c.owner = true; }
