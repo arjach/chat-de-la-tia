@@ -86,6 +86,7 @@
   #title { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 700; display: flex; align-items: center; gap: 10px; }
   #titleText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #titleSub { color: var(--muted); font-weight: 400; font-size: 13px; }
+  #connBar { background: var(--accent); color: var(--accent-text); font-size: 13px; font-weight: 700; padding: 6px 12px; text-align: center; }
   #sideBtn { position: relative; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 15px; }
   #sideBtn.on { border-color: var(--accent); }
   #sideBtn .sb-badge { position: absolute; top: -6px; right: -6px; background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 10.5px; font-weight: 800; padding: 1px 5px; min-width: 16px; text-align: center; }
@@ -753,7 +754,7 @@ function restoreSession() {
     for (const [ev, ...args] of items) { try { socket.listeners(ev).forEach((fn) => fn(...args)); } catch {} }
     replaying = false;
     const msgs = items.filter(([ev]) => ev === "public-message" || ev === "private-message").length;
-    if (lostShown || msgs) push(current, { type: "sys", text: msgs ? `✔ Volviste. Mientras no estabas ${msgs === 1 ? "llegó 1 mensaje" : `llegaron ${msgs} mensajes`} (ya está${msgs === 1 ? "" : "n"} acá).` : "✔ Reconectado" });
+    if (msgs) push(current, { type: "sys", text: msgs ? `✔ Volviste. Mientras no estabas ${msgs === 1 ? "llegó 1 mensaje" : `llegaron ${msgs} mensajes`} (ya está${msgs === 1 ? "" : "n"} acá).` : "✔ Reconectado" });
     lostShown = false;
   });
 }
@@ -761,7 +762,6 @@ function join(nick, onFail) {
   socket.emit("join", nick, (res) => {
     if (!res.ok) return onFail && onFail(res.error);
     enterChat(res);
-    if (lostShown) push(GENERAL, { type: "sys", text: "✔ Reconectado" });
     lostShown = false;
   });
 }
@@ -797,13 +797,23 @@ $("loginForm").addEventListener("submit", (e) => {
 
 let wasKicked = false, lostShown = false;
 socket.on("connect", () => { if (me || ($("login").hidden && $("rulesScreen").hidden && getSess())) restoreSession(); });
+// Aviso de conexión: una barrita arriba (no un mensaje en el chat) y solo si el corte dura más de 4 s
+let connTimer = null;
+function connBar(text) {
+  let b = $("connBar");
+  if (!text) { if (b) b.hidden = true; return; }
+  if (!b) { b = el("div"); b.id = "connBar"; $("main").prepend(b); }
+  b.textContent = text; b.hidden = false;
+}
+const WHY = { "transport close": "se cortó la conexión", "transport error": "falló la red", "ping timeout": "el servidor no respondió a tiempo", "io server disconnect": "el servidor cerró la conexión" };
 socket.on("disconnect", (reason) => {
   voiceCleanup(true); restoring = false;
   if (!me || wasKicked) return;
   if (reason === "io server disconnect") return push(current, { type: "sys", text: "📱 Abriste el chat en otra pestaña o dispositivo. Recargá la página para seguir acá." });
-  // si la página está minimizada no hace falta avisar: al volver se recupera sola
-  if (!document.hidden) { push(current, { type: "sys", text: "Conexión perdida… reconectando" }); lostShown = true; }
+  clearTimeout(connTimer);
+  connTimer = setTimeout(() => { if (!socket.connected && !document.hidden) { connBar(`📡 Reconectando… (${WHY[reason] || reason})`); lostShown = true; } }, 4000);
 });
+socket.on("connect", () => { clearTimeout(connTimer); connBar(""); });
 // al volver a la pestaña, si se había cortado, reconectar ya (sin esperar el reintento)
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me && !socket.connected && !wasKicked) socket.connect(); });
 socket.on("kicked", ({ reason, ban, mins }) => {
