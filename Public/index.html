@@ -86,6 +86,11 @@
   #title { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 700; display: flex; align-items: center; gap: 10px; }
   #titleText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #titleSub { color: var(--muted); font-weight: 400; font-size: 13px; }
+  #sideBtn { position: relative; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 15px; }
+  #sideBtn.on { border-color: var(--accent); }
+  #sideBtn .sb-badge { position: absolute; top: -6px; right: -6px; background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 10.5px; font-weight: 800; padding: 1px 5px; min-width: 16px; text-align: center; }
+  #app.side-off { grid-template-columns: 1fr !important; }
+  #app.side-off #sidebar { display: none; }
   #titleMore { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
   #pinned { background: var(--panel2); border-bottom: 1px solid var(--accent); padding: 8px 14px; font-size: 13.5px; }
   #pinned b { color: var(--ink); }
@@ -159,6 +164,8 @@
   #recCancel { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; width: 44px; height: 42px; font-size: 18px; }
   #recSend { width: 52px; height: 42px; padding: 0; font-size: 18px; }
   .voice { display: block; width: 240px; max-width: 100%; height: 40px; margin: 4px 0 2px; }
+  .voice-err { font-size: 12.5px; color: var(--muted); margin: 4px 0; }
+  .voice-err a { color: var(--ink); font-weight: 700; }
   #gifBg { position: fixed; inset: 0; background: #000a; z-index: 46; display: flex; align-items: flex-end; justify-content: center; }
   #gifSheet { background: var(--panel); border-top: 3px solid var(--accent); width: 100%; max-width: 560px; height: 75dvh; border-radius: 16px 16px 0 0; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .gif-top { display: flex; gap: 8px; }
@@ -439,7 +446,7 @@
     <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 👑 dueño · 🛡️ moderador</div>
   </aside>
   <section id="main">
-    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button></div>
+    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button><button id="sideBtn" type="button" title="Mostrar/ocultar la columna de salas y conectados">👥</button></div>
     <div id="voicePanel" hidden>
       <div class="vp-grid" id="vpGrid"></div>
       <div class="vp-actions" id="vpActions"></div>
@@ -696,7 +703,23 @@ const userInfo = (n) => online.find((u) => u.nick === n);
 function updateTitle() {
   const total = Object.values(unread).reduce((a, b) => a + (b || 0), 0);
   document.title = total ? `(${total}) Gente Rota` : "Gente Rota";
+  updateSideBtn();
 }
+
+// ---------- Ocultar / mostrar la columna de la derecha ----------
+let sideOff = store.get("gr-side", "on") === "off";
+function updateSideBtn() {
+  const b = $("sideBtn"); if (!b) return;
+  $("app").classList.toggle("side-off", sideOff);
+  b.classList.toggle("on", !sideOff);
+  b.title = sideOff ? "Mostrar salas y conectados" : "Ocultar la columna de la derecha";
+  b.replaceChildren(sideOff ? "👥" : "⇥");
+  // con la columna oculta, avisa cuántos mensajes nuevos hay en otras salas o privados
+  const otros = Object.entries(unread).reduce((a, [k, v]) => a + (k !== current ? v || 0 : 0), 0);
+  if (sideOff && otros) b.append(el("span", "sb-badge", otros > 99 ? "99+" : String(otros)));
+}
+$("sideBtn").onclick = () => { sideOff = !sideOff; store.set("gr-side", sideOff ? "off" : "on"); updateSideBtn(); };
+updateSideBtn();
 
 // ---------- Login ----------
 function join(nick, onFail) {
@@ -870,8 +893,7 @@ function renderMessage(m) {
   }
   else if (m.audio) {
     d.classList.add("has-media");
-    const au = el("audio", "voice"); au.controls = true; au.preload = "metadata"; au.src = m.audio;
-    b.append(au);
+    b.append(voiceEl(m));
     if (m.text) { const cap = el("div", "caption"); linkify(cap, m.text); b.append(cap); }
   }
   else if (m.image || m.gif) {
@@ -929,10 +951,48 @@ function renderTyping() {
     names.length === 1 ? `${names[0]} está escribiendo…` :
     names.length < 4 ? `${names.join(", ")} están escribiendo…` : "Varios están escribiendo…";
 }
+// ---------- Audios: se arman una sola vez y se reutilizan ----------
+// Antes cada mensaje nuevo volvía a crear todos los reproductores (se cortaba el que estabas
+// escuchando y el celu tenía que recargar todos los audios). Ahora cada audio se crea una vez.
+const voiceCache = new Map();
+function dataToBlob(data) {
+  const [head, b64] = data.split(",");
+  const type = (head.match(/^data:([^;,]+)/) || [])[1] || "audio/webm";
+  const bin = atob(b64); const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type });
+}
+function voiceEl(m) {
+  const key = m.id || m.audio.length + ":" + m.audio.slice(-48);
+  if (voiceCache.has(key)) return voiceCache.get(key);
+  const w = el("div", "voice-wrap");
+  const type = (m.audio.match(/^data:([^;,]+)/) || [])[1] || "";
+  const au = el("audio", "voice"); au.controls = true; au.preload = "metadata";
+  let url = "";
+  try { url = URL.createObjectURL(dataToBlob(m.audio)); } catch { url = m.audio; }
+  w.url = url;
+  const fail = () => {
+    if (w.querySelector(".voice-err")) return;
+    au.hidden = true;
+    const err = el("div", "voice-err", "⚠️ Tu celu no puede reproducir este audio acá. ");
+    const a = el("a", null, "Descargarlo"); a.href = url; a.download = "audio-gente-rota." + (type.split("/")[1] || "webm").replace("x-m4a", "m4a").replace("mpeg", "mp3");
+    err.append(a); w.append(err);
+  };
+  au.onerror = fail;
+  if (type && au.canPlayType(type) === "") fail(); else au.src = url;
+  w.append(au);
+  voiceCache.set(key, w);
+  return w;
+}
+function forgetVoice(m) {
+  const key = m?.id; const w = key && voiceCache.get(key);
+  if (w) { if (w.url?.startsWith("blob:")) URL.revokeObjectURL(w.url); voiceCache.delete(key); }
+}
+
 function push(chat, m) {
   (history[chat] ||= []).push(m);
   if (m.id) byId.set(m.id, m);
-  if (history[chat].length > 300) { const old = history[chat].shift(); if (old.id) byId.delete(old.id); }
+  if (history[chat].length > 300) { const old = history[chat].shift(); if (old.id) byId.delete(old.id); if (old.audio) forgetVoice(old); }
   if (chat !== current || document.hidden) if (!["sys"].includes(m.type) && !isBlocked(m.from)) unread[chat] = (unread[chat] || 0) + 1;
   if (chat === current) renderMessages();
   renderUsers();
@@ -1936,20 +1996,26 @@ function openEventsSheet() {
 // ---------- Notas de voz ----------
 function updateSendBtn() { $("sendBtn").classList.toggle("mic", !$("text").value.trim() && !pendingMedia && !!navigator.mediaDevices?.getUserMedia); }
 $("text").addEventListener("input", updateSendBtn);
-let rec = null, recChunks = [], recStream = null, recStart = 0, recTimer = null, recDiscard = false;
+// Una sola grabación a la vez: cada grabación guarda sus propios pedazos (antes, dos toques rápidos
+// podían abrir dos micrófonos y mezclar los pedazos → el audio sonaba repetido/entrecortado)
+let rec = null, recBusy = false, recStart = 0, recTimer = null;
 const pickMime = () => ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || "";
 async function startRecording() {
-  if (rec) return;
+  if (rec || recBusy) return;
   if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) return push(current, { type: "notice", kind: "warn", text: "🎤 Tu navegador no permite grabar audio." });
-  try { recStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch { return push(current, { type: "notice", kind: "warn", text: "🎤 No tengo permiso para usar el micrófono. Habilitalo en el candado 🔒 de la barra de direcciones." }); }
+  recBusy = true;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch { recBusy = false; return push(current, { type: "notice", kind: "warn", text: "🎤 No tengo permiso para usar el micrófono. Habilitalo en el candado 🔒 de la barra de direcciones." }); }
   const mime = pickMime();
-  try { rec = new MediaRecorder(recStream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 }); }
-  catch { rec = new MediaRecorder(recStream); }
-  recChunks = []; recDiscard = false; recStart = Date.now();
-  rec.ondataavailable = (ev) => { if (ev.data.size) recChunks.push(ev.data); };
-  rec.onstop = finishRecording;
-  rec.start(250);
+  let r;
+  try { r = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 }); }
+  catch { r = new MediaRecorder(stream); }
+  const session = { r, stream, chunks: [], discard: false };
+  rec = session; recBusy = false; recStart = Date.now();
+  r.ondataavailable = (ev) => { if (ev.data.size) session.chunks.push(ev.data); };
+  r.onstop = () => finishRecording(session);
+  r.start(); // un solo pedazo al final: el archivo queda prolijo
   $("msgForm").hidden = true; $("recBar").hidden = false;
   socket.emit("typing", { to: isRoom(current) ? null : current, room: isRoom(current) ? current.slice(1) : null, on: true });
   const tick = () => {
@@ -1957,19 +2023,20 @@ async function startRecording() {
     $("recTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
     if (s >= 60) stopRecording(false);
   };
-  tick(); recTimer = setInterval(tick, 250);
+  clearInterval(recTimer); tick(); recTimer = setInterval(tick, 250);
 }
-function stopRecording(discard) { if (!rec) return; recDiscard = discard; if (rec.state !== "inactive") rec.stop(); }
-async function finishRecording() {
+function stopRecording(discard) { if (!rec) return; rec.discard = discard; if (rec.r.state !== "inactive") rec.r.stop(); }
+async function finishRecording(session) {
+  session.stream.getTracks().forEach((t) => t.stop());
+  if (rec !== session) return; // grabación vieja: se descarta
   clearInterval(recTimer);
-  recStream?.getTracks().forEach((t) => t.stop());
-  const type = rec?.mimeType || "audio/webm";
-  rec = null; recStream = null;
+  const type = session.r.mimeType || "audio/webm";
+  rec = null;
   $("recBar").hidden = true; $("msgForm").hidden = false;
   socket.emit("typing", { to: isRoom(current) ? null : current, room: isRoom(current) ? current.slice(1) : null, on: false });
   updateSendBtn();
-  if (recDiscard || Date.now() - recStart < 700 || !recChunks.length) return;
-  const blob = new Blob(recChunks, { type: type.split(";")[0] });
+  if (session.discard || Date.now() - recStart < 700 || !session.chunks.length) return;
+  const blob = new Blob(session.chunks, { type: type.split(";")[0] });
   if (blob.size > 1.3 * 1024 * 1024) return push(current, { type: "notice", kind: "warn", text: "🎤 El audio quedó muy pesado. Probá con uno más corto." });
   const data = await readAsDataURL(blob);
   sendText($("text").value.trim(), { audio: data });
