@@ -7,7 +7,9 @@
 <title>Gente Rota</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Special+Elite&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&family=Special+Elite&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="/icono.png">
+<link rel="apple-touch-icon" href="/icono.png">
 <style>
   :root {
     --bg: #0b0b0b; --panel: #151515; --panel2: #1f1f1f; --border: #2c2c2c;
@@ -28,8 +30,13 @@
   /* ---------- Banner ---------- */
   header { position: relative; background: #0b0b0b; border-bottom: 3px solid var(--accent); padding: 12px 100px; text-align: center; flex-shrink: 0;
     background-image: repeating-linear-gradient(-45deg, transparent 0 22px, #ffd40008 22px 24px); }
-  header h1 { margin: 0; font-family: "Permanent Marker", cursive; font-weight: 400; font-size: 34px; color: var(--accent); letter-spacing: .03em; line-height: 1.05;
-    text-shadow: 3px 3px 0 #000, 0 0 18px #ffd40033; transform: rotate(-1.5deg); }
+  /* Logo "Fisura": GENTE en blanco y ROTA en amarillo, partida en diagonal */
+  header h1 { margin: 0; font-family: "Anton", Impact, sans-serif; font-weight: 400; font-size: 40px; line-height: 1; letter-spacing: .02em;
+    display: flex; justify-content: center; align-items: baseline; gap: .26em; padding-bottom: .1em; }
+  header h1 .lg-g { color: #f2f2f2; }
+  header h1 .lg-r { position: relative; color: var(--accent); }
+  header h1 .lg-r .a { display: block; clip-path: polygon(0 0, 100% 0, 100% 34%, 0 66%); }
+  header h1 .lg-r .b { position: absolute; inset: 0; clip-path: polygon(0 66%, 100% 34%, 100% 100%, 0 100%); transform: translate(.06em, .075em) rotate(1.2deg); }
   header p { margin: 4px 0 0; font-family: "Special Elite", monospace; font-size: 14px; color: #d8d8d8; }
   header small { display: block; font-family: "Special Elite", monospace; color: #777; font-size: 11px; margin-top: 2px; letter-spacing: .1em; }
   .hgroup { position: absolute; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; }
@@ -394,7 +401,7 @@
 
   @media (max-width: 640px) {
     header { padding: 8px 52px; }
-    header h1 { font-size: 26px; }
+    header h1 { font-size: 30px; }
     header p { font-size: 11.5px; }
     header small { display: none; }
     .hgroup { flex-direction: column; gap: 4px; }
@@ -437,9 +444,9 @@
     <button class="hbtn" id="rulesBtn" title="Reglas">📜</button>
     <button class="hbtn" id="fontBtn" title="Tamaño de letra" style="font-weight:800;font-size:15px">Aa</button>
   </div>
-  <h1>Gente Rota</h1>
+  <h1 aria-label="Gente Rota"><span class="lg-g">GENTE</span><span class="lg-r"><span class="a">ROTA</span><span class="b" aria-hidden="true">ROTA</span></span></h1>
   <p>Lo que quedó después del trauma</p>
-  <small>GENTEROTA.COM.AR</small>
+  <small>GENTEROTACHAT.COM.AR</small>
   <div class="hgroup right">
     <button class="hbtn" id="soundBtn" title="Sonido">🔔</button>
     <button class="hbtn" id="themeBtn" title="Modo claro / oscuro">☀️</button>
@@ -457,6 +464,7 @@
     <h2>Entrar</h2>
     <p class="sub">Sin registro. Elegí un apodo y listo.</p>
     <input class="field" id="nick" maxlength="20" placeholder="Tu apodo" autocomplete="off">
+    <div id="captcha" style="display:flex;justify-content:center;margin:10px 0 0"></div>
     <div id="err"></div>
     <button class="primary" style="width:100%">Entrar al chat</button>
   </form>
@@ -739,6 +747,7 @@ function showLogin(force) {
     return;
   }
   $("login").hidden = false; $("nick").focus();
+  mountCaptcha();
 }
 setTimeout(() => { // espera a que cargue todo el script
   if (store.get("gr-rules", "") === "v2") showLogin();
@@ -862,11 +871,30 @@ function enterChat(res) {
     muroLoaded = false; if (current === MURO) loadMuro(); // al volver, trae el muro actualizado
   }
 }
+// Verificación anti-bots (Cloudflare Turnstile): solo si el dueño la activó en Render
+let tsSite = "", tsToken = "", tsWidget = null;
+function mountCaptcha() {
+  if (!tsSite || tsWidget !== null) return;
+  tsWidget = "loading";
+  const go = () => { tsWidget = window.turnstile.render("#captcha", { sitekey: tsSite, theme: "dark", language: "es", callback: (t) => { tsToken = t; $("err").textContent = ""; }, "expired-callback": () => { tsToken = ""; } }); };
+  if (window.turnstile) return go();
+  const sc = document.createElement("script"); sc.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"; sc.async = true; sc.onload = go;
+  sc.onerror = () => { tsWidget = null; $("err").textContent = "No se pudo cargar la verificación. Revisá tu conexión y recargá."; };
+  document.head.append(sc);
+}
+fetch("/config").then((r) => r.json()).then((c) => { tsSite = c.turnstile || ""; if (tsSite && !$("login").hidden) mountCaptcha(); }).catch(() => {});
 $("loginForm").addEventListener("submit", (e) => {
   e.preventDefault();
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   beep(0);
-  join($("nick").value, (err) => $("err").textContent = err);
+  const go = () => join($("nick").value, (err) => $("err").textContent = err);
+  if (!tsSite) return go();
+  if (!tsToken) { mountCaptcha(); return ($("err").textContent = "Completá la verificación de abajo (es para frenar bots) 🤖"); }
+  socket.emit("verify", tsToken, (r) => {
+    tsToken = "";
+    if (!r?.ok) { try { window.turnstile?.reset(tsWidget); } catch {} return ($("err").textContent = "La verificación falló. Probá de nuevo."); }
+    go();
+  });
 });
 
 let wasKicked = false, lostShown = false;
