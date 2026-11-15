@@ -565,7 +565,9 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket = io();
+// id de este dispositivo (sirve para que las penalizaciones de juegos no le caigan a otros con la misma conexión)
+const DEV = (() => { try { let d = localStorage.getItem("gr-dev"); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("gr-dev", d); } return d; } catch { return ""; } })();
+const socket = io({ auth: { dev: DEV } });
 const GENERAL = "#general", JUEGOS = "#juegos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz";
 const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
@@ -733,12 +735,12 @@ socket.on("connect", () => {
   push(GENERAL, { type: "sys", text: "Reconectado ✔" });
 });
 socket.on("disconnect", () => { voiceCleanup(true); isAdmin = false; isOwner = false; $("modPanelBtn").hidden = true; $("meAdmin").hidden = true; if (me && !wasKicked) push(GENERAL, { type: "sys", text: "Conexión perdida… reconectando" }); });
-socket.on("kicked", ({ reason, ban }) => {
+socket.on("kicked", ({ reason, ban, mins }) => {
   wasKicked = true;
   socket.io.opts.reconnection = false;
   $("app").style.display = "none"; ["login", "rulesScreen"].forEach((i) => $(i).hidden = true);
   $("kicked").hidden = false;
-  $("kickTitle").textContent = ban ? "Fuiste baneado/a por 24 horas" : "Fuiste expulsado/a del chat";
+  $("kickTitle").textContent = ban ? (mins ? `Quedaste afuera del chat por ${mins >= 60 ? Math.round(mins / 60) + " h" : mins + " min"}` : "Fuiste baneado/a temporalmente") : "Fuiste expulsado/a del chat";
   $("kickReason").textContent = "Motivo: " + reason;
   $("kickBtn").hidden = !!ban;
 });
@@ -797,6 +799,12 @@ $("sidebar").addEventListener("click", (e) => {
   openChat(item.dataset.chat);
 });
 function openChat(chat) {
+  if (chat === JUEGOS && juegosBanned()) {
+    const m = Math.ceil((juegosBanUntil - Date.now()) / 60000);
+    push(current, { type: "notice", kind: "warn", text: `⛔ Estás penalizado/a en 🎮 Juegos. Faltan ${m} min.` });
+    if (current !== JUEGOS) return;
+    chat = GENERAL;
+  }
   stopTyping();
   current = chat; unread[current] = 0;
   history[chat] ||= [];
@@ -1198,15 +1206,28 @@ $("avatarInput").onchange = async () => {
 };
 
 // ---------- Verdad o reto: elegir con botones ----------
-socket.on("vor-choose", () => {
+socket.on("vor-choose", ({ free = 0, pen = "" } = {}) => {
   beep(990); if (current !== JUEGOS) openChat(JUEGOS);
-  const sh = sheetOpen("vor", "🎭 ¡Te toca!", "¿Verdad o reto? Tenés 45 segundos.");
+  const sh = sheetOpen("vor", "🎭 ¡Te toca!", "¿Verdad o reto? Tenés 45 segundos." + (pen ? `\n⚖️ Si no cumplís: ${pen}.` : ""));
   const row = el("div", "ppt-row");
   [["verdad", "🗣️"], ["reto", "🔥"]].forEach(([k, e]) => { const b = el("button", null, `${e}`); b.type = "button"; b.title = k;
     const lab = el("div", null, k.toUpperCase()); lab.style.fontSize = "13px"; lab.style.fontWeight = "800"; b.append(lab);
     b.onclick = () => { socket.emit("vor-pick", k); closeSheet(); }; row.append(b); });
   sh.append(row);
-  sbtn(sh, "🙅 Paso", () => { socket.emit("public-message", { room: "juegos", text: "paso" }); closeSheet(); });
+  sbtn(sh, !pen ? "🙅 Paso" : free ? `🃏 Paso (usa comodín, te queda${free === 1 ? "" : "n"} ${free})` : "🙅 Paso (te comés el castigo)", () => { socket.emit("public-message", { room: "juegos", text: "paso" }); closeSheet(); });
+});
+
+// ---------- Penalización: afuera de la sala Juegos por un rato ----------
+let juegosBanUntil = +store.get("gr-jban", 0) || 0;
+const juegosBanned = () => juegosBanUntil > Date.now();
+socket.on("juegos-ban", ({ until = 0 } = {}) => {
+  juegosBanUntil = until; store.set("gr-jban", String(until));
+  if (!until) return push(current, { type: "notice", text: "🎮 Ya podés volver a la sala de Juegos." });
+  closeSheet();
+  const mins = Math.ceil((until - Date.now()) / 60000);
+  if (current === JUEGOS) openChat(GENERAL);
+  push(GENERAL, { type: "notice", kind: "warn", text: `⛔ Te penalizaron en Verdad o reto: no podés entrar a 🎮 Juegos por ${mins} min.` });
+  setTimeout(() => { if (!juegosBanned()) push(current, { type: "notice", text: "🎮 Se terminó tu penalización. ¡Ya podés volver a Juegos!" }); }, until - Date.now() + 500);
 });
 
 socket.on("vor-ask", ({ target, kind }) => {
@@ -1361,8 +1382,18 @@ function openCustomGame(type = "rotos") {
     hint("La IA inventa la historia, los personajes y quién fue. Son 4 minutos de interrogatorio + votación.");
     collect = () => ({ type, tema: t.value });
   } else if (type === "vor") {
-    hint("En Verdad o reto las consignas ya las inventan los jugadores en cada turno ✍️");
-    collect = () => ({ type });
+    hint("Las verdades y los retos los inventan los jugadores en cada turno ✍️");
+    label("⚖️ Castigo por no cumplir, pasar o irse en su turno");
+    const pen = selectEl([["juegos", "⛔ Ban de la sala Juegos"], ["silencio", "🔇 Silencio en todo el chat"], ["chat", "🚪 Ban de TODO el chat"], ["puntos", "📉 Restar puntos del ranking"], ["nada", "🫶 Sin castigo"]], "juegos"); body.append(pen);
+    const minsLab = el("div", "modsep", "¿Cuántos minutos?"); const mins = selectEl([[1, "1 min"], [3, "3 min"], [5, "5 min"], [10, "10 min"], [15, "15 min"], [30, "30 min"], [60, "1 hora"]], 5); body.append(minsLab, mins);
+    const ptsLab = el("div", "modsep", "¿Cuántos puntos?"); const pts = selectEl([[1, "1"], [3, "3"], [5, "5"], [10, "10"]], 3); body.append(ptsLab, pts);
+    const extraLab = el("div", "modsep", "🃏 Comodines (\"paso\" gratis por persona)"); const free = selectEl([[0, "Ninguno"], [1, "1"], [2, "2"], [3, "3"]], 1); body.append(extraLab, free);
+    const doLab = el("div", "modsep", "⏱️ Tiempo para cumplir"); const doM = selectEl([[1, "1 min"], [2, "2 min"], [3, "3 min"], [5, "5 min"], [10, "10 min"]], 3); body.append(doLab, doM);
+    const voteLab = el("div", "modsep", "🗳️ Al decir \"listo\", ¿el grupo vota si cumplió?"); const vote = selectEl([["si", "Sí, si votan \"trucho\" hay castigo"], ["no", "No, alcanza con decir listo"]], "si"); body.append(voteLab, vote);
+    const sync = () => { const v = pen.value; minsLab.hidden = mins.hidden = !["juegos", "silencio", "chat"].includes(v); ptsLab.hidden = pts.hidden = v !== "puntos";
+      [extraLab, free, voteLab, vote].forEach((x) => x.hidden = v === "nada"); };
+    pen.onchange = sync; sync();
+    collect = () => ({ type, pen: pen.value, mins: +mins.value, pts: +pts.value, free: +free.value, doMins: +doM.value, vote: vote.value === "si" });
   }
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "▶️ Empezar", () => {
