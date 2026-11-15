@@ -361,6 +361,9 @@
   /* Barra de juegos */
   #gameBar { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--border); scrollbar-width: none; }
   #gameBar::-webkit-scrollbar { display: none; }
+  #roomList .item.sub { padding-left: 22px; font-size: 14px; }
+  #roomList .item.jhead { font-weight: 800; cursor: pointer; }
+  #roomList .item.jhead.in { color: var(--ink); }
   #gameBar button { flex-shrink: 0; background: var(--panel2); border: 1px solid var(--border); border-radius: 16px; padding: 5px 11px; font-size: 13px; white-space: nowrap; }
   #gameBar button:hover { border-color: var(--accent); }
   #gameBar .gb-custom { border-color: var(--accent); color: var(--ink); font-weight: 800; }
@@ -555,23 +558,20 @@
     <div id="typing"></div>
     <div id="gameBar" hidden>
       <button type="button" data-cmd="custom" class="gb-custom">⚙️ Personalizar</button>
-      <button type="button" data-cmd="/quienesia">🤖 ¿Quién es la IA?</button>
-      <button type="button" data-cmd="/impostor">🫣 Impostor</button>
-      <button type="button" data-cmd="/mentiroso">🃏 Mentiroso</button>
-      <button type="button" data-cmd="/asesinato">🔪 Asesinato</button>
-      <button type="button" data-cmd="/vor">🎭 Verdad o reto</button>
-      <button type="button" data-cmd="/dibujo">🖍️ Dibujo</button>
-      <button type="button" data-cmd="/100rotos">📊 100 rotos</button>
-      <button type="button" data-cmd="juicio">⚖️ Juicio</button>
-      <button type="button" data-cmd="/eliminatorio">🏟️ Eliminatorio</button>
-      <button type="button" data-cmd="/trivia">❓ Trivia</button>
-      <button type="button" data-cmd="ronda">🏁 Ronda</button>
-      <button type="button" data-cmd="/numero">🔢 Número</button>
-      <button type="button" data-cmd="/ahorcado">🪢 Ahorcado</button>
-      <button type="button" data-cmd="ppt">✊ PPT</button>
-      <button type="button" data-cmd="/dado">🎲 Dado</button>
-      <button type="button" data-cmd="/moneda">🪙 Moneda</button>
-      <button type="button" data-cmd="bola">🎱 Bola 8</button>
+      <button type="button" data-cmd="/trivia" data-r="j-trivia">❓ Trivia</button>
+      <button type="button" data-cmd="ronda" data-r="j-trivia">🏁 Ronda</button>
+      <button type="button" data-cmd="/ahorcado" data-r="j-trivia">🪢 Ahorcado</button>
+      <button type="button" data-cmd="/quienesia" data-r="j-ia">🤖 ¿Quién es la IA?</button>
+      <button type="button" data-cmd="/impostor" data-r="j-ia">🫣 Impostor</button>
+      <button type="button" data-cmd="/mentiroso" data-r="j-ia">🃏 Mentiroso</button>
+      <button type="button" data-cmd="/asesinato" data-r="j-ia">🔪 Asesinato</button>
+      <button type="button" data-cmd="/vor" data-r="j-fiesta">🎭 Verdad o reto</button>
+      <button type="button" data-cmd="/dibujo" data-r="j-fiesta">🖍️ Dibujo</button>
+      <button type="button" data-cmd="/100rotos" data-r="j-fiesta">📊 100 rotos</button>
+      <button type="button" data-cmd="juicio" data-r="j-fiesta">⚖️ Juicio</button>
+      <button type="button" data-cmd="duelo" data-r="j-duelos">⚔️ Desafiar a alguien</button>
+      <button type="button" data-cmd="/eliminatorio" data-r="j-duelos">🏟️ Eliminatorio</button>
+      <button type="button" data-cmd="/llaves" data-r="j-duelos">🗂️ Llaves</button>
       <button type="button" data-cmd="/torneo">🏆 Torneo</button>
       <button type="button" data-cmd="/ranking">📊 Ranking</button>
       <button type="button" data-cmd="/rendirse">🏳️ Rendirse</button>
@@ -637,10 +637,21 @@
 // id de este dispositivo (sirve para que las penalizaciones de juegos no le caigan a otros con la misma conexión)
 const DEV = (() => { try { let d = localStorage.getItem("gr-dev"); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("gr-dev", d); } return d; } catch { return ""; } })();
 const socket = io({ auth: { dev: DEV } });
-const GENERAL = "#general", JUEGOS = "#juegos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz", MURO = "#comunidad";
-const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JUEGOS]: ["🎮", "Juegos", "Escribí /juegos o usá los botones"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
+const GENERAL = "#general", JT = "#j-trivia", JI = "#j-ia", JF = "#j-fiesta", JD = "#j-duelos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz", MURO = "#comunidad";
+const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JT]: ["🧠", "Trivia", "Trivia, rondas, número y ahorcado"], [JI]: ["🕵️", "Engaño", "¿Quién es la IA?, Impostor, Mentiroso y Asesinato"], [JF]: ["🎉", "Fiesta", "Verdad o reto, Dibujo, 100 rotos y Juicio"], [JD]: ["⚔️", "Duelos", "Duelos 1 contra 1, eliminatorio y torneo semanal"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
 const isRoom = (c) => c.startsWith("#");
+// Sub-salas de 🎮 Juegos (cada una con sus juegos)
+const GAME_ROOMS = [JT, JI, JF, JD];
+const isGameRoom = (c) => GAME_ROOMS.includes(c);
+const GAME_ROOM_OF = { rotos: JF, dibujo: JF, juicio: JF, vor: JF, trivia: JT, ahorcado: JT, turing: JI, impostor: JI, mentiroso: JI, asesinato: JI, eliminatorio: JD };
+const GAME_WELCOME = {
+  [JT]: "🧠 Sala de TRIVIA. Tocá ❓ Trivia para una pregunta o 🏁 Ronda para varias seguidas. También 🪢 Ahorcado.\nLas respuestas se escriben normal en el chat.",
+  [JI]: "🕵️ Sala de ENGAÑO E IA: ¿Quién es la IA?, Impostor, Mentiroso y Asesinato. Se juegan de a 3 o más. Te llegan cartas secretas 🤫",
+  [JF]: "🎉 Sala de FIESTA: Verdad o reto, Dibujá y adiviná, 100 rotos dicen y Juicio popular.",
+  [JD]: "⚔️ Sala de DUELOS: tocá el nombre de alguien → ⚔️ Desafiar. Acá también se juega el 🏟️ Eliminatorio y se ve el 🏆 Torneo de la semana.",
+};
+let juegosOpen = (() => { try { return localStorage.getItem("gr-jopen") !== "0"; } catch { return true; } })();
 const BOT = "Fastidio", CRUPIER = "Crupier";
 const REACTIONS = ["❤️", "🫂", "👍", "😂", "😢", "🔥", "💛"];
 const STATUS = { disponible: ["🟢", "Disponible"], hablar: ["🫂", "Necesita hablar"], escucho: ["👂", "Solo escucha"], ausente: ["🌙", "Ausente"], nomolestar: ["🔕", "No molestar"] };
@@ -649,7 +660,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 let me = "", isAdmin = false, isOwner = false, current = GENERAL;
 let online = [];                // [{nick, status, admin}]
-const history = { [GENERAL]: [], [MURO]: [], [JUEGOS]: [], [VOZ]: [], [CONF]: [], [BOARD]: [], [MODS]: [] };
+const history = { [GENERAL]: [], [MURO]: [], [JT]: [], [JI]: [], [JF]: [], [JD]: [], [VOZ]: [], [CONF]: [], [BOARD]: [], [MODS]: [] };
 let editing = null; // id del mensaje que se está editando
 let replyTo = null;
 const unread = {};
@@ -928,8 +939,22 @@ function sideItem(chat, label, opts = {}) {
 }
 function renderUsers() {
   renderEventsItem(); renderRandomItem();
-  $("roomList").replaceChildren(...Object.entries(ROOMS).filter(([id]) => id !== MODS || isAdmin)
-    .map(([id, [ico, name]]) => { const it = sideItem(id, `${ico} ${name}${lockedRooms.has(id) ? " 🔒" : ""}`); const n = (voiceCounts[id.slice(1)] || []).length; if (n) it.insertBefore(el("span", "vcount", "🎙️" + n), it.querySelector(".badge")); return it; }));
+  const roomItem = ([id, [ico, name]]) => { const it = sideItem(id, `${ico} ${name}${lockedRooms.has(id) ? " 🔒" : ""}`); const n = (voiceCounts[id.slice(1)] || []).length; if (n) it.insertBefore(el("span", "vcount", "🎙️" + n), it.querySelector(".badge")); if (isGameRoom(id)) it.classList.add("sub"); return it; };
+  const entries = Object.entries(ROOMS).filter(([id]) => id !== MODS || isAdmin);
+  const items = [];
+  for (const e of entries) {
+    if (e[0] === JT) { // cabecera plegable "🎮 Juegos"
+      const head = el("div", "item jhead" + (GAME_ROOMS.includes(current) ? " in" : ""));
+      const tot = GAME_ROOMS.reduce((a, r) => a + (unread[r] || 0), 0);
+      head.append(el("span", "name", `🎮 Juegos ${juegosOpen ? "▾" : "▸"}`));
+      if (!juegosOpen && tot) head.append(el("span", "badge", tot));
+      head.onclick = () => { juegosOpen = !juegosOpen; store.set("gr-jopen", juegosOpen ? "1" : "0"); renderUsers(); };
+      items.push(head);
+    }
+    if (isGameRoom(e[0]) && !juegosOpen && current !== e[0]) continue;
+    items.push(roomItem(e));
+  }
+  $("roomList").replaceChildren(...items);
   const others = online.filter((u) => u.nick !== me);
   $("count").textContent = online.length;
   $("userList").replaceChildren(...others.map((u) => sideItem(u.nick, u.nick, u)));
@@ -944,25 +969,25 @@ function renderUsers() {
   updateTitle();
 }
 $("sidebar").addEventListener("click", (e) => {
-  const item = e.target.closest(".item"); if (!item) return;
+  const item = e.target.closest(".item"); if (!item || !item.dataset.chat) return;
   openChat(item.dataset.chat);
 });
 function openChat(chat) {
-  if (chat === JUEGOS && juegosBanned()) {
+  if (isGameRoom(chat) && juegosBanned()) {
     const m = Math.ceil((juegosBanUntil - Date.now()) / 60000);
     push(current, { type: "notice", kind: "warn", text: `⛔ Estás penalizado/a en 🎮 Juegos. Faltan ${m} min.` });
-    if (current !== JUEGOS) return;
+    if (!isGameRoom(current)) return;
     chat = GENERAL;
   }
   stopTyping();
   current = chat; unread[current] = 0;
   history[chat] ||= [];
   renderUsers(); renderMessages();
-  $("text").placeholder = isRoom(current) ? (current === JUEGOS ? "Jugá o escribí…" : "Escribí un mensaje…") : `Mensaje privado a ${current}…`;
+  $("text").placeholder = isRoom(current) ? (isGameRoom(current) ? "Jugá o escribí…" : "Escribí un mensaje…") : `Mensaje privado a ${current}…`;
   cancelReply();
-  if (chat === JUEGOS) socket.emit("pic-get");
+  if (chat === JF) socket.emit("pic-get");
   if (chat === MURO) { if (!muroLoaded) loadMuro(); return; }
-  if (chat === JUEGOS && !history[JUEGOS].some((m) => m.type === "notice")) push(JUEGOS, { type: "notice", kind: "help", text: "🎮 ¡Bienvenido/a! Usá los botones de abajo (deslizá para ver todos) o escribí /juegos.\nLas respuestas se escriben normal en el chat." });
+  if (isGameRoom(chat) && !history[chat].some((m) => m.type === "notice")) push(chat, { type: "notice", kind: "help", text: GAME_WELCOME[chat] + "\nUsá los botones de abajo (deslizá para ver todos) o escribí /juegos." });
   $("text").focus();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me) { unread[current] = 0; renderUsers(); } });
@@ -1059,14 +1084,15 @@ function renderMessages() {
   $("callBtn").hidden = !priv || !info;
 
   $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
-  $("gameBar").hidden = current !== JUEGOS;
+  $("gameBar").hidden = !isGameRoom(current);
+  $("gameBar").querySelectorAll("button[data-r]").forEach((b) => (b.hidden = "#" + b.dataset.r !== current));
   applyView();
   renderTyping();
 }
 function applyView() {
-  $("rotosBar").hidden = !(current === JUEGOS && rotosQ);
+  $("rotosBar").hidden = !(current === JF && rotosQ);
   renderVoiceBar();
-  $("picPanel").hidden = !(current === JUEGOS && picState.active);
+  $("picPanel").hidden = !(current === JF && picState.active);
   const isBoard = current === BOARD, isMuro = current === MURO;
   $("boardView").hidden = !isBoard;
   $("muroView").hidden = !isMuro;
@@ -1400,14 +1426,14 @@ $("avatarInput").onchange = async () => {
 
 // ---------- Verdad o reto: elegir con botones ----------
 socket.on("vor-choose", ({ free = 0, pen = "" } = {}) => {
-  beep(990); if (current !== JUEGOS) openChat(JUEGOS);
+  beep(990); if (current !== JF) openChat(JF);
   const sh = sheetOpen("vor", "🎭 ¡Te toca!", "¿Verdad o reto? Tenés 45 segundos." + (pen ? `\n⚖️ Si no cumplís: ${pen}.` : ""));
   const row = el("div", "ppt-row");
   [["verdad", "🗣️"], ["reto", "🔥"]].forEach(([k, e]) => { const b = el("button", null, `${e}`); b.type = "button"; b.title = k;
     const lab = el("div", null, k.toUpperCase()); lab.style.fontSize = "13px"; lab.style.fontWeight = "800"; b.append(lab);
     b.onclick = () => { socket.emit("vor-pick", k); closeSheet(); }; row.append(b); });
   sh.append(row);
-  sbtn(sh, !pen ? "🙅 Paso" : free ? `🃏 Paso (usa comodín, te queda${free === 1 ? "" : "n"} ${free})` : "🙅 Paso (te comés el castigo)", () => { socket.emit("public-message", { room: "juegos", text: "paso" }); closeSheet(); });
+  sbtn(sh, !pen ? "🙅 Paso" : free ? `🃏 Paso (usa comodín, te queda${free === 1 ? "" : "n"} ${free})` : "🙅 Paso (te comés el castigo)", () => { socket.emit("public-message", { room: "j-fiesta", text: "paso" }); closeSheet(); });
 });
 
 // ---------- Penalización: afuera de la sala Juegos por un rato ----------
@@ -1418,18 +1444,18 @@ socket.on("juegos-ban", ({ until = 0 } = {}) => {
   if (!until) return push(current, { type: "notice", text: "🎮 Ya podés volver a la sala de Juegos." });
   closeSheet();
   const mins = Math.ceil((until - Date.now()) / 60000);
-  if (current === JUEGOS) openChat(GENERAL);
+  if (isGameRoom(current)) openChat(GENERAL);
   push(GENERAL, { type: "notice", kind: "warn", text: `⛔ Te penalizaron en Verdad o reto: no podés entrar a 🎮 Juegos por ${mins} min.` });
   setTimeout(() => { if (!juegosBanned()) push(current, { type: "notice", text: "🎮 Se terminó tu penalización. ¡Ya podés volver a Juegos!" }); }, until - Date.now() + 500);
 });
 
 socket.on("vor-ask", ({ target, kind }) => {
-  beep(990); setTimeout(() => beep(1200), 160); if (current !== JUEGOS) openChat(JUEGOS);
+  beep(990); setTimeout(() => beep(1200), 160); if (current !== JF) openChat(JF);
   const sh = sheetOpen("vor", `✍️ Inventá ${kind === "verdad" ? "la VERDAD 🗣️" : "el RETO 🔥"}`, `Para ${target}. Tenés 60 segundos. Con respeto 🫶`);
   const inp = el("textarea", "field"); inp.rows = 3; inp.maxLength = 300;
   inp.placeholder = kind === "verdad" ? "Ej: ¿Cuál fue tu peor cita?" : "Ej: Mandá un audio cantando el feliz cumpleaños";
   inp.style.resize = "none"; sh.append(inp);
-  const send = () => { const t = inp.value.trim(); if (t.length < 4) return inp.focus(); socket.emit("public-message", { room: "juegos", text: t }); closeSheet(); };
+  const send = () => { const t = inp.value.trim(); if (t.length < 4) return inp.focus(); socket.emit("public-message", { room: "j-fiesta", text: t }); closeSheet(); };
   sbtn(sh, "Enviar", send, "primary");
   sbtn(sh, "Cerrar (lo escribo en el chat)", closeSheet);
   setTimeout(() => inp.focus(), 50);
@@ -1470,8 +1496,8 @@ function renderPic() {
   } else $("picTime").textContent = "";
   applyView();
 }
-socket.on("pic-state", (st) => { const was = picState.active; picState = st || { active: false }; if (!picState.active) picWord = ""; renderPic(); if (picState.active && !was && current !== JUEGOS) push(JUEGOS, { type: "sys", text: "🖍️ Empezó Dibujá y adiviná" }); });
-socket.on("pic-word", (w) => { picWord = w; renderPic(); if (current !== JUEGOS) openChat(JUEGOS); beep(990); });
+socket.on("pic-state", (st) => { const was = picState.active; picState = st || { active: false }; if (!picState.active) picWord = ""; renderPic(); if (picState.active && !was && current !== JF) push(JF, { type: "sys", text: "🖍️ Empezó Dibujá y adiviná" }); });
+socket.on("pic-word", (w) => { picWord = w; renderPic(); if (current !== JF) openChat(JF); beep(990); });
 socket.on("pic-board", (list) => { picPieces = list || []; picRedraw(); });
 socket.on("pic-draw", (pc) => { picPieces.push(pc); picPaint(pc); });
 const toPic = (e) => { const r = pcv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) * PW / r.width), Math.round((e.clientY - r.top) * PH / r.height)]; };
@@ -1491,11 +1517,12 @@ pcv.addEventListener("pointerup", picEnd); pcv.addEventListener("pointercancel",
 picRedraw();
 
 // ---------- Tarjetas secretas (impostor, asesinato, apodos) ----------
-socket.on("secret-card", ({ title, text }) => {
+socket.on("secret-card", ({ title, text, room }) => {
   beep(900); setTimeout(() => beep(1200), 150);
-  if (current !== JUEGOS) openChat(JUEGOS);
-  push(JUEGOS, { type: "notice", kind: "help", text: `${title} (solo lo ves vos)\n${text}` });
-  const sh = sheetOpen("secret", title, "🤫 Solo lo ves vos. También te quedó guardado en el chat de Juegos.");
+  const gr = room && history["#" + room] ? "#" + room : JI;
+  if (current !== gr) openChat(gr);
+  push(gr, { type: "notice", kind: "help", text: `${title} (solo lo ves vos)\n${text}` });
+  const sh = sheetOpen("secret", title, "🤫 Solo lo ves vos. También te quedó guardado en el chat de esta sala.");
   const box = el("div", "notice help", text); box.style.whiteSpace = "pre-wrap"; box.style.marginBottom = "10px"; box.style.fontSize = "15px";
   sh.append(box);
   sbtn(sh, "Entendido 🤐", closeSheet, "primary");
@@ -1504,7 +1531,7 @@ socket.on("secret-card", ({ title, text }) => {
 // ---------- Juegos personalizados ----------
 const CUSTOM_GAMES = [
   ["rotos", "📊 100 rotos dicen"], ["trivia", "❓ Trivia propia"], ["dibujo", "🖍️ Dibujo"], ["ahorcado", "🪢 Ahorcado"],
-  ["numero", "🔢 Número"], ["juicio", "⚖️ Juicio"], ["eliminatorio", "🏟️ Eliminatorio"], ["vor", "🎭 Verdad o reto"],
+  ["juicio", "⚖️ Juicio"], ["eliminatorio", "🏟️ Eliminatorio"], ["vor", "🎭 Verdad o reto"],
   ["turing", "🤖 ¿Quién es la IA?"], ["impostor", "🫣 Impostor"], ["mentiroso", "🃏 Mentiroso"], ["asesinato", "🔪 Asesinato"],
 ];
 function selectEl(opts, def) { const sel = el("select", "field"); opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; if (String(v) === String(def)) o.selected = true; sel.append(o); }); return sel; }
@@ -1513,7 +1540,7 @@ function openCustomGame(type = "rotos") {
   if (type === "juicio") return openJuicioSheet();
   const sh = sheetOpen("custom", "⚙️ Juego personalizado", "Elegí el juego y poné tus propias consignas.");
   const grid = el("div", "gtype");
-  CUSTOM_GAMES.forEach(([k, t]) => { const b = el("button", k === type ? "on" : null, t); b.type = "button"; b.onclick = () => openCustomGame(k); grid.append(b); });
+  CUSTOM_GAMES.filter(([k]) => !isGameRoom(current) || GAME_ROOM_OF[k] === current).forEach(([k, t]) => { const b = el("button", k === type ? "on" : null, t); b.type = "button"; b.onclick = () => openCustomGame(k); grid.append(b); });
   sh.append(grid);
   const body = el("div"); sh.append(body);
   const label = (t) => body.append(el("div", "modsep", t));
@@ -1549,10 +1576,6 @@ function openCustomGame(type = "rotos") {
     const show = el("label", "chk"); const cb = el("input"); cb.type = "checkbox"; cb.onchange = () => w.type = cb.checked ? "text" : "password"; show.append(cb, "Mostrar"); body.append(show);
     label("Vidas"); const l = selectEl([[3, "3 (difícil)"], [6, "6 (normal)"], [8, "8"], [10, "10 (fácil)"]], 6); body.append(l);
     collect = () => ({ type, word: w.value, lives: +l.value });
-  } else if (type === "numero") {
-    label("Rango"); const m = selectEl([[10, "1 a 10"], [50, "1 a 50"], [100, "1 a 100"], [500, "1 a 500"], [1000, "1 a 1000"], [9999, "1 a 9999"]], 100); body.append(m);
-    label("Tiempo"); const t = selectEl([[60, "1 min"], [180, "3 min"], [300, "5 min"]], 180); body.append(t);
-    collect = () => ({ type, max: +m.value, secs: +t.value });
   } else if (type === "eliminatorio") {
     label("Cada cruce de piedra, papel o tijera"); const b = selectEl([[1, "A una sola mano"], [3, "Al mejor de 3"], [5, "Al mejor de 5"]], 3); body.append(b);
     label("Tiempo de inscripción"); const t = selectEl([[30, "30 s"], [60, "1 min"], [120, "2 min"]], 60); body.append(t);
@@ -1590,7 +1613,7 @@ function openCustomGame(type = "rotos") {
   }
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "▶️ Empezar", () => {
-    socket.emit("game-custom", collect(), (r) => { if (r?.ok) { closeSheet(); if (current !== JUEGOS) openChat(JUEGOS); } else err.textContent = r?.error || "No se pudo empezar."; });
+    socket.emit("game-custom", collect(), (r) => { if (r?.ok) { closeSheet(); const gr = GAME_ROOM_OF[o.type]; if (gr && current !== gr) openChat(gr); } else err.textContent = r?.error || "No se pudo empezar."; });
   }, "primary");
   sbtn(sh, "Cancelar", closeSheet);
 }
@@ -1600,7 +1623,7 @@ let rotosQ = null, rotosTick = null, rotosN = 0;
 socket.on("rotos-count", (n) => { rotosN = n; });
 socket.on("rotos-q", (q) => {
   rotosQ = q; clearInterval(rotosTick); rotosN = 0;
-  if (q) { if (current !== JUEGOS) push(JUEGOS, { type: "sys", text: "📊 Nueva pregunta de 100 rotos dicen" }); beep(880);
+  if (q) { if (current !== JF) push(JF, { type: "sys", text: "📊 Nueva pregunta de 100 rotos dicen" }); beep(880);
     const tick = () => { const s = Math.max(0, Math.ceil((q.endsAt - Date.now()) / 1000)); $("rotosHint").textContent = `${q.hint || "🤫 Escribí tu respuesta secreta en el chat"} · ⏱️ ${s}s · ✍️ ${rotosN}`; };
     tick(); rotosTick = setInterval(tick, 500); $("rotosQ").textContent = (q.q.startsWith("🃏") ? "" : "📊 ") + q.q; }
   applyView();
@@ -1618,14 +1641,14 @@ function openJuicioSheet() {
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "🔨 Iniciar juicio", () => {
     if (cargo.value.trim().length < 4) return (err.textContent = "Escribí el cargo.");
-    socket.emit("juicio-start", { to: who.value, cargo: cargo.value.trim(), condena: condena.value.trim() }); closeSheet(); if (current !== JUEGOS) openChat(JUEGOS);
+    socket.emit("juicio-start", { to: who.value, cargo: cargo.value.trim(), condena: condena.value.trim() }); closeSheet(); if (current !== JF) openChat(JF);
   }, "primary");
   sbtn(sh, "Cancelar", closeSheet);
 }
 socket.on("juicio-request", ({ fiscal, cargo }) => {
   beep(700); setTimeout(() => beep(500), 200); notify("⚖️ Juicio", `${fiscal} te quiere llevar a juicio`);
   const sh = sheetOpen("juicio", "⚖️ ¡Te quieren enjuiciar!", `${fiscal} te acusa de: «${cargo}». Es un juego: te defendés, vota el jurado y si perdés hay una condena divertida.`);
-  sbtn(sh, "🔨 Acepto, que me juzguen", () => { socket.emit("juicio-answer", true); closeSheet(); openChat(JUEGOS); }, "primary");
+  sbtn(sh, "🔨 Acepto, que me juzguen", () => { socket.emit("juicio-answer", true); closeSheet(); openChat(JF); }, "primary");
   sbtn(sh, "🙅 No, gracias", () => { socket.emit("juicio-answer", false); closeSheet(); });
 });
 
@@ -1691,9 +1714,19 @@ socket.on("duel-ppt", ({ id, opp, round, me: mine, them, tour }) => {
     b.onclick = () => { socket.emit("duel-pick", { id, pick: k }); sh.replaceChildren(el("h4", null, `⚔️ vs ${opp}`), el("div", "big-res", e), el("div", "stline", "Elegiste. Esperando a " + opp + "… 🤐")); };
     row.append(b); });
   sh.append(row);
-  if (current !== JUEGOS) openChat(JUEGOS);
+  if (current !== JD) openChat(JD);
 });
-socket.on("duel-go", () => { closeSheet(); openChat(JUEGOS); });
+// Botón "Desafiar a alguien" de la sala Duelos: elegir con quién
+function openDuelPicker() {
+  const sh = sheetOpen("duelpick", "⚔️ ¿A quién desafiás?", "Elegí a alguien conectado/a:");
+  const others = online.filter((u) => u.nick !== me && !u.away && !isBlocked(u.nick));
+  if (!others.length) sh.append(el("div", "stline", "No hay nadie más conectado ahora 😢"));
+  const list = el("div", "gtype");
+  others.forEach((u) => { const b = el("button", null, u.nick); b.type = "button"; b.onclick = () => openDuelPick(u.nick); list.append(b); });
+  sh.append(list);
+  sbtn(sh, "Cerrar", closeSheet);
+}
+socket.on("duel-go", (d) => { closeSheet(); openChat(d?.room ? "#" + d.room : JD); });
 socket.on("duel-end", ({ opp, kind, won, tour }) => {
   beep(won ? 1200 : 500);
   if (tour) {
@@ -2346,10 +2379,9 @@ updateSendBtn();
 $("gameBar").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   const c = b.dataset.cmd;
-  if (c === "ppt") { $("text").value = "/ppt "; $("text").focus(); return push(JUEGOS, { type: "notice", kind: "help", text: "✊ Completá con piedra, papel o tijera y mandá." }); }
-  if (c === "bola") { $("text").value = "/bola "; $("text").focus(); return; }
+  if (c === "duelo") return openDuelPicker();
   if (c === "juicio") return openJuicioSheet();
-  if (c === "custom") return openCustomGame();
+  if (c === "custom") return openCustomGame(Object.keys(GAME_ROOM_OF).find((k) => GAME_ROOM_OF[k] === current && k !== "juicio") || "rotos");
   if (c === "ronda") return openRoundSheet();
   sendText(c);
 });
