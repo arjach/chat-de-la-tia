@@ -6,7 +6,8 @@ const { Server } = require("socket.io");
 const app = express();
 app.set("trust proxy", true);
 const server = http.createServer(app);
-const io = new Server(server, { maxHttpBufferSize: 4e6 }); // permite fotos de hasta ~2,5 MB
+// pingTimeout largo: Chrome en el celu frena la página cuando la minimizás y así no se corta enseguida
+const io = new Server(server, { maxHttpBufferSize: 4e6, pingInterval: 25000, pingTimeout: 60000 }); // permite fotos de hasta ~2,5 MB
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "Public")));
@@ -78,7 +79,7 @@ const blockedPair = (a, b) => a !== b && a.nick && b.nick && !a.admin && !b.admi
 const role = (c) => c.owner ? "owner" : c.admin ? "mod" : null;
 const userList = (viewer) =>
   [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "" }))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "", ...(c.away ? { away: true } : {}) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
@@ -93,6 +94,65 @@ function emitFrom(sender, event, payload, skipSelf = false) {
 function remember(id, data) {
   messages.set(id, { ...data, text: String(data.text || "").slice(0, 160), reactions: {} });
   if (messages.size > 3000) messages.delete(messages.keys().next().value);
+}
+
+// ---------- Sesiones: minimizar Chrome no te saca del chat ----------
+// Cuando el celu pausa la página se corta la conexión, pero la persona sigue figurando
+// (con 💤) durante GRACE_MS. Si vuelve en ese tiempo, recupera todo y recibe lo que se perdió.
+const GRACE_MS = (parseFloat(process.env.GRACE_MIN) || 15) * 60000;
+const sessions = new Map(); // token -> { c, id, timer, buf, bytes }
+const ghostIds = new Map(); // id de la conexión cortada -> sesión
+const newToken = () => require("crypto").randomBytes(18).toString("base64url");
+const REPLAY = new Set(["public-message", "private-message", "edited", "deleted", "reactions", "poll-update", "poll-end", "notice", "announce", "clear",
+  "pinned", "room-lock", "renamed", "secret-card", "rotos-q", "rotos-count", "user-joined", "user-left", "events", "juegos-ban"]);
+// Guarda lo que le iba a llegar a cada persona en segundo plano (engancha todos los envíos del servidor)
+const adapter = io.of("/").adapter;
+const origBroadcast = adapter.broadcast.bind(adapter);
+adapter.broadcast = function (packet, opts) {
+  if (ghostIds.size && Array.isArray(packet?.data) && REPLAY.has(packet.data[0])) {
+    for (const [gid, ses] of ghostIds) {
+      if (opts?.except?.has?.(gid)) continue;
+      if (opts?.rooms?.size && !opts.rooms.has(gid)) continue;
+      const size = JSON.stringify(packet.data).length;
+      ses.buf.push(packet.data); ses.bytes += size;
+      while (ses.buf.length > 400 || ses.bytes > 12e6) ses.bytes -= JSON.stringify(ses.buf.shift()).length;
+    }
+  }
+  return origBroadcast(packet, opts);
+};
+function goAway(c, sid) {
+  const ses = sessions.get(c.token);
+  if (!ses || c.gone) return finalLeave(c, sid);
+  c.away = true; c.awayAt = now();
+  ses.buf = []; ses.bytes = 0;
+  ghostIds.set(sid, ses);
+  clearTimeout(ses.timer);
+  ses.timer = setTimeout(() => finalLeave(c, sid), GRACE_MS);
+  pushUsers();
+}
+// Se va de verdad: lo que antes pasaba apenas se cortaba la conexión
+function finalLeave(c, sid) {
+  const ses = sessions.get(c.token);
+  if (ses) { clearTimeout(ses.timer); if (ses.c === c) sessions.delete(c.token); }
+  ghostIds.delete(sid);
+  if (clients.get(sid) !== c) return; // ya volvió con otra conexión
+  clients.delete(sid);
+  if (!c.nick) return;
+  for (const d of [...duels.values()]) if (d.a === c.nick || d.b === c.nick) {
+    if (d.tour) { gameSay(`🏟️ ${c.nick} se desconectó: pierde por abandono.`); finishDuel(d, d.a === c.nick ? d.b : d.a, c.nick); continue; }
+    if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
+    gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
+  }
+  if (game?.type === "vor" && game.current === c.nick && ["choose", "asking", "asking-open", "doing", "vote"].includes(game.phase)) {
+    vorPenalize(c.nick, "se fue en medio de su turno 🏃", c); vorClear(); game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
+  }
+  if (game?.type === "impostor" && game.impostor === c.nick) { gameSay(`🫣 ${c.nick} se fue… ¡y era el impostor! Fin del juego.`); endGame(); }
+  if (game?.type === "asesinato" && game.culprit === c.nick) { gameSay(`🔪 ${c.nick} huyó de la escena… ¡era el asesino! Fin del juego.`); endGame(); }
+  if (game?.type === "juicio" && game.acusado === c.nick) { gameSay(`⚖️ ${c.nick} se fugó del tribunal 🏃 Juicio suspendido.`); endGame(); }
+  if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`🖍️ ${c.nick} se desconectó mientras dibujaba.`); endPicRound(null); }
+  if (users.get(c.nick.toLowerCase()) === sid) users.delete(c.nick.toLowerCase());
+  emitFrom(c, "user-left", c.nick);
+  pushUsers();
 }
 
 // ---------- Mensajes del bot ----------
@@ -155,6 +215,8 @@ function mute(c, id, minutes, reason, by = BOT) {
 function kick(id, reason, ban = false, by = BOT) {
   const c = clients.get(id);
   if (!c) return;
+  c.gone = true; // no queda "en segundo plano": se va de verdad
+  if (c.away) setTimeout(() => finalLeave(c, id), 400);
   if (ban) { bans.set(c.ip, now() + 24 * 3600000); dirty(); }
   io.to(id).emit("kicked", { reason, ban, mins: ban ? 24 * 60 : 0 });
   botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? "baneado/a por 24 h" : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
@@ -1063,6 +1125,7 @@ function vorPenalize(nick, why, cRef) {
     const until = now() + p.mins * 60000;
     penKeys(c, nick).forEach((k) => chatPenalties.set(k, until));
     game.players.delete(nick);
+    if (c) { c.gone = true; if (c.away && t) setTimeout(() => finalLeave(c, t.id), 400); }
     if (t) { io.to(t.id).emit("kicked", { reason: `Penalización de Verdad o reto: ${p.mins} min afuera del chat.`, ban: true, mins: p.mins }); setTimeout(() => io.sockets.sockets.get(t.id)?.disconnect(true), 400); }
     return;
   }
@@ -1079,7 +1142,9 @@ function vorNext() {
   if (game.players.size < 2) { gameSay("🎭 Quedan menos de 2 jugadores. ¡Fin de Verdad o reto!"); return endGame(); }
   if (game.turns >= 30) { gameSay("🎭 ¡Fin de la partida de Verdad o reto! Gracias por jugar 🫶"); return endGame(); }
   game.turns++;
-  const options = [...game.players].filter((n) => n !== game.last);
+  const here = (n) => !byNick(n)?.c?.away; // los que tienen el chat minimizado no reciben turno
+  const all = [...game.players].filter((n) => n !== game.last);
+  const options = all.filter(here).length ? all.filter(here) : all;
   game.current = pick(options); game.last = game.current; game.phase = "choose"; game.kind = ""; game.asker = "";
   const t = byNick(game.current);
   if (t) io.to(t.id).emit("vor-choose", { free: vorFreeLeft(game.current), pen: game.pen.type === "nada" ? "" : vorPenDesc(game.pen) });
@@ -1090,7 +1155,8 @@ function vorPick(kind, auto) {
   if (!game || game.type !== "vor" || game.phase !== "choose") return;
   vorClear();
   game.kind = kind; game.phase = "asking";
-  const others = [...game.players].filter((n) => n !== game.current && byNick(n));
+  const others0 = [...game.players].filter((n) => n !== game.current && byNick(n));
+  const others = others0.filter((n) => !byNick(n).c.away).length ? others0.filter((n) => !byNick(n).c.away) : others0;
   const fresh = others.filter((n) => n !== game.lastAsker);
   game.asker = pick(fresh.length ? fresh : others); game.lastAsker = game.asker;
   const que = kind === "verdad" ? "la pregunta 🗣️" : "el reto 🔥";
@@ -1772,9 +1838,34 @@ io.on("connection", (socket) => {
   };
   clients.set(socket.id, c);
 
+  // Volver después de minimizar: recupera la misma sesión (apodo, rango, juegos) y lo que se perdió
+  socket.on("resume", (token, cb) => {
+    if (typeof cb !== "function") return;
+    if (c.nick) return cb({ ok: false });
+    const ses = sessions.get(String(token || ""));
+    if (!ses || ses.c.gone) return cb({ ok: false });
+    const old = ses.c, oldId = ses.id;
+    const pu = penUntil(chatPenalties, c, old.nick);
+    if (pu) return cb({ ok: false });
+    clearTimeout(ses.timer); ses.timer = null;
+    ghostIds.delete(oldId);
+    // si la conexión vieja seguía abierta (volvió antes de que el servidor notara el corte), la cerramos sin despedirlo
+    const oldSock = io.sockets.sockets.get(oldId);
+    if (oldSock && oldSock.id !== socket.id) { old.replaced = true; oldSock.disconnect(true); }
+    const keep = { ip: c.ip, dev: c.dev || old.dev };
+    Object.assign(c, old, keep, { away: false, replaced: false, msgTimes: [] });
+    clients.delete(oldId); clients.set(socket.id, c);
+    users.set(c.nick.toLowerCase(), socket.id);
+    ses.c = c; ses.id = socket.id;
+    const replay = ses.buf; ses.buf = []; ses.bytes = 0;
+    cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents(), replay, away: Math.round((now() - (old.awayAt || now())) / 1000) });
+    if (c.admin) socket.emit("admin", { mod: true, owner: !!c.owner });
+    pushUsers();
+  });
+
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
-    if (c.nick) return cb({ ok: true, nick: c.nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
+    if (c.nick) return cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
@@ -1790,8 +1881,10 @@ io.on("connection", (socket) => {
     }
 
     c.nick = nick; c.joinedAt = now();
+    c.token = newToken();
+    sessions.set(c.token, { c, id: socket.id, timer: null, buf: [], bytes: 0 });
     users.set(nick.toLowerCase(), socket.id);
-    cb({ ok: true, nick, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
+    cb({ ok: true, nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
     emitFrom(c, "user-joined", nick, true);
     pushUsers();
   });
@@ -2252,26 +2345,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    clients.delete(socket.id);
     randomQueue = randomQueue.filter((x) => x !== socket.id);
     voiceLeave(socket.id);
-    if (!c.nick) return;
+    if (c.replaced) return; // volvió con otra conexión
+    if (!c.nick) { clients.delete(socket.id); return; }
     if (c.inCall || c.callWith) hangup(c.inCall || c.callWith);
-    for (const d of [...duels.values()]) if (d.a === c.nick || d.b === c.nick) {
-      if (d.tour) { gameSay(`🏟️ ${c.nick} se desconectó: pierde por abandono.`); finishDuel(d, d.a === c.nick ? d.b : d.a, c.nick); continue; }
-      if (d.kind === "trivia" && d.state === "on" && triviaRound?.duel?.id === d.id) { triviaRound = null; endGame(); }
-      gameSay(`⚔️ Duelo ${d.a} vs ${d.b} cancelado: ${c.nick} se desconectó.`); duelExpire(d);
-    }
-    if (game?.type === "vor" && game.current === c.nick && ["choose", "asking", "asking-open", "doing", "vote"].includes(game.phase)) {
-      vorPenalize(c.nick, "se fue en medio de su turno 🏃", c); vorClear(); game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
-    }
-    if (game?.type === "impostor" && game.impostor === c.nick) { gameSay(`🫣 ${c.nick} se fue… ¡y era el impostor! Fin del juego.`); endGame(); }
-    if (game?.type === "asesinato" && game.culprit === c.nick) { gameSay(`🔪 ${c.nick} huyó de la escena… ¡era el asesino! Fin del juego.`); endGame(); }
-    if (game?.type === "juicio" && game.acusado === c.nick) { gameSay(`⚖️ ${c.nick} se fugó del tribunal 🏃 Juicio suspendido.`); endGame(); }
-    if (game?.type === "dibujo" && game.drawer === c.nick) { gameSay(`🖍️ ${c.nick} se desconectó mientras dibujaba.`); endPicRound(null); }
-    users.delete(c.nick.toLowerCase());
-    emitFrom(c, "user-left", c.nick);
-    pushUsers();
+    goAway(c, socket.id);
   });
 });
 
