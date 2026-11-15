@@ -121,6 +121,22 @@ adapter.broadcast = function (packet, opts) {
   }
   return origBroadcast(packet, opts);
 };
+// Cerró la pestaña: el navegador avisa con /bye. Esperamos 5 s por si fue una recarga (en ese caso vuelve solo).
+app.post("/bye", express.text({ type: "*/*", limit: "1kb" }), (req, res) => {
+  res.status(204).end();
+  const token = String(req.body || "").trim();
+  const ses = sessions.get(token);
+  if (!ses) return;
+  const c = ses.c;
+  clearTimeout(ses.byeTimer);
+  ses.byeTimer = setTimeout(() => {
+    if (sessions.get(token)?.c !== c) return; // volvió (era una recarga)
+    const sock = io.sockets.sockets.get(ses.id);
+    if (sock?.connected && !c.away) return; // sigue con la pestaña abierta
+    c.gone = true;
+    if (sock) sock.disconnect(true); else finalLeave(c, ses.id);
+  }, 5000);
+});
 function goAway(c, sid) {
   const ses = sessions.get(c.token);
   if (!ses || c.gone) return finalLeave(c, sid);
@@ -1857,7 +1873,7 @@ io.on("connection", (socket) => {
     const old = ses.c, oldId = ses.id;
     const pu = penUntil(chatPenalties, c, old.nick);
     if (pu) return cb({ ok: false });
-    clearTimeout(ses.timer); ses.timer = null;
+    clearTimeout(ses.timer); ses.timer = null; clearTimeout(ses.byeTimer);
     ghostIds.delete(oldId);
     // si la conexión vieja seguía abierta (volvió antes de que el servidor notara el corte), la cerramos sin despedirlo
     const oldSock = io.sockets.sockets.get(oldId);
