@@ -252,8 +252,8 @@ function strike(c, id, n, reason) {
 }
 
 // ---------- Validación de cada mensaje ----------
-function checkMessage(c, id, raw, room = "general", allowEmpty = false) {
-  let text = String(raw || "").trim().slice(0, MAX_MSG);
+function checkMessage(c, id, raw, room = "general", allowEmpty = false, maxLen = MAX_MSG) {
+  let text = String(raw || "").trim().slice(0, maxLen);
   if (!text && !allowEmpty) return null;
   const t = now();
   if (lockedRooms.has(room) && !c.admin) {
@@ -1863,6 +1863,7 @@ io.on("connection", (socket) => {
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
   };
   clients.set(socket.id, c);
+  muroHandlers(socket, c);
 
   // Volver después de minimizar: recupera la misma sesión (apodo, rango, juegos) y lo que se perdió
   socket.on("resume", (token, cb) => {
@@ -2383,6 +2384,179 @@ io.on("connection", (socket) => {
   });
 });
 
+// ================== 📰 Comunidad (muro) ==================
+// Publicaciones que quedan guardadas (en Upstash si está configurado). Cada publicación se guarda
+// en su propia clave y la foto aparte, así la base no se vuelve un solo archivo gigante.
+const MURO_MAX = 300;              // publicaciones guardadas como máximo (se borran las más viejas)
+const MURO_TEXT = 2000;            // largo máximo de una publicación
+const MURO_COMMENTS = 200;         // comentarios por publicación
+const MURO_KEY = "genterota:muro"; // lista de ids (la más nueva primero)
+const postKey = (id) => `genterota:post:${id}`;
+const imgKey = (id) => `genterota:img:${id}`;
+const muro = [];                   // en memoria, la más nueva primero
+const muroById = new Map();
+const imgCache = new Map();        // id -> { buf, type }  (si no hay base de datos, quedan solo acá)
+let imgCacheBytes = 0;
+const IMG_DATA_RE = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
+
+async function redisPipe(cmds) {
+  const r = await fetch(DB_URL + "/pipeline", { method: "POST", headers: { Authorization: `Bearer ${DB_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(cmds) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !Array.isArray(j)) throw new Error(`HTTP ${r.status}`);
+  const bad = j.find((x) => x && x.error); if (bad) throw new Error(bad.error);
+  return j.map((x) => x?.result);
+}
+const muroDb = (cmds) => { if (!db.on) return; redisPipe(cmds).catch((e) => console.error("Muro DB:", e.message)); };
+const savePost = (p) => muroDb([["SET", postKey(p.id), JSON.stringify(p)]]);
+function cacheImg(id, buf, type) {
+  if (imgCache.has(id)) imgCacheBytes -= imgCache.get(id).buf.length;
+  imgCache.set(id, { buf, type }); imgCacheBytes += buf.length;
+  // con base de datos, en memoria guardamos solo las últimas (~40 MB); sin base, todas
+  while (db.on && imgCacheBytes > 40e6 && imgCache.size > 1) { const [k, v] = imgCache.entries().next().value; imgCache.delete(k); imgCacheBytes -= v.buf.length; }
+}
+async function loadMuro() {
+  if (!db.on) return;
+  try {
+    const ids = (await redis(["LRANGE", MURO_KEY, 0, MURO_MAX - 1])) || [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const raws = (await redis(["MGET", ...ids.slice(i, i + 100).map(postKey)])) || [];
+      raws.forEach((raw) => { try { const p = JSON.parse(raw); if (p?.id) { muro.push(p); muroById.set(p.id, p); } } catch {} });
+    }
+    console.log(`Comunidad: ${muro.length} publicaciones cargadas`);
+  } catch (e) { console.error("Muro cargar:", e.message); }
+}
+app.get("/muro/img/:id", async (req, res) => {
+  const id = String(req.params.id).slice(0, 40);
+  if (!muroById.get(id)?.img) return res.status(404).end();
+  let it = imgCache.get(id);
+  if (!it && db.on) {
+    try {
+      const raw = await redis(["GET", imgKey(id)]);
+      const m = raw && String(raw).match(IMG_DATA_RE);
+      if (m) { it = { buf: Buffer.from(m[2], "base64"), type: m[1] }; cacheImg(id, it.buf, it.type); }
+    } catch (e) { console.error("Muro foto:", e.message); }
+  }
+  if (!it) return res.status(404).end();
+  res.set("Cache-Control", "public, max-age=31536000, immutable").type(it.type).send(it.buf);
+});
+// ¿El que mira tiene bloqueado al autor (o al revés)? Los mods ven todo.
+function muroHidden(viewer, nick, authorAdmin) {
+  if (!viewer || viewer.admin || authorAdmin || nick === viewer.nick) return false;
+  if (viewer.blocked.has(nick.toLowerCase())) return true;
+  const a = byNick(nick)?.c;
+  return !!(a && a.blocked.has(viewer.nick.toLowerCase()) && !a.admin);
+}
+const ownsPost = (c, x) => c.admin || (x.by === c.nick && (!x.dev || !c.dev || x.dev === c.dev));
+function postView(p, viewer) {
+  if (muroHidden(viewer, p.by, p.admin)) return null;
+  const likes = p.likes || [];
+  return {
+    id: p.id, by: p.by, role: p.role || null, at: p.at, text: p.text, edited: !!p.edited,
+    img: p.img ? `/muro/img/${p.id}` : "",
+    likes: likes.length, liked: likes.includes(viewer.nick), likers: likes.slice(-5).reverse(),
+    comments: (p.comments || []).filter((k) => !muroHidden(viewer, k.by, k.admin))
+      .map((k) => ({ id: k.id, by: k.by, role: k.role || null, at: k.at, text: k.text, mine: ownsPost(viewer, k) })),
+    mine: ownsPost(viewer, p),
+  };
+}
+// Manda a cada persona su versión (respeta bloqueos)
+function muroBroadcast(ev, p) {
+  for (const [sid, rc] of clients) {
+    if (!rc.nick || rc.away) continue;
+    const v = postView(p, rc);
+    if (v) io.to(sid).emit(ev, v);
+  }
+}
+function muroNotify(nick, text) {
+  const t = byNick(nick); if (!t) return;
+  io.to(t.id).emit("muro-notif", { text });
+}
+function muroHandlers(socket, c) {
+  socket.on("muro-get", ({ before } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    let start = 0;
+    if (before) { const i = muro.findIndex((p) => p.id === before); start = i < 0 ? muro.length : i + 1; }
+    const out = []; let i = start;
+    for (; i < muro.length && out.length < 15; i++) { const v = postView(muro[i], c); if (v) out.push(v); }
+    cb({ posts: out, more: i < muro.length, db: db.on });
+  });
+  socket.on("muro-post", ({ text, image } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const t = now();
+    if (!c.admin && t - (c.lastPostAt || 0) < 60000) return cb({ ok: false, error: `Esperá ${Math.ceil((60000 - (t - c.lastPostAt)) / 1000)} s para publicar de nuevo.` });
+    let img = null;
+    if (image) {
+      if (c.noMedia && !c.admin) return cb({ ok: false, error: "Un moderador te sacó el permiso de subir fotos." });
+      if (!c.admin && t - c.joinedAt < 60000) return cb({ ok: false, error: "Podés subir fotos después de tu primer minuto en el chat." });
+      const m = typeof image === "string" && image.length < 1.4e6 && image.match(IMG_DATA_RE);
+      if (!m) return cb({ ok: false, error: "La foto no es válida o es muy pesada." });
+      img = { buf: Buffer.from(m[2], "base64"), type: m[1], data: image };
+    }
+    const clean = checkMessage(c, socket.id, text, "comunidad", !!img, MURO_TEXT);
+    if (clean === null) return cb({ ok: false, silent: true });
+    if (!clean && !img) return cb({ ok: false, error: "Escribí algo o subí una foto." });
+    c.lastPostAt = t;
+    const p = { id: newId() + t.toString(36), by: c.nick, dev: c.dev || "", role: role(c), admin: !!c.admin, at: t, text: clean, img: !!img, likes: [], comments: [] };
+    muro.unshift(p); muroById.set(p.id, p);
+    if (img) cacheImg(p.id, img.buf, img.type);
+    const cmds = [["SET", postKey(p.id), JSON.stringify(p)], ...(img ? [["SET", imgKey(p.id), img.data]] : []), ["LPUSH", MURO_KEY, p.id], ["LTRIM", MURO_KEY, 0, MURO_MAX - 1]];
+    while (muro.length > MURO_MAX) { const old = muro.pop(); muroById.delete(old.id); imgCache.delete(old.id); cmds.push(["DEL", postKey(old.id), imgKey(old.id)]); }
+    muroDb(cmds);
+    muroBroadcast("muro-new", p);
+    cb({ ok: true });
+  });
+  socket.on("muro-like", (id) => {
+    const p = muroById.get(String(id)); if (!p || !c.nick || muroHidden(c, p.by, p.admin)) return;
+    const i = p.likes.indexOf(c.nick);
+    if (i >= 0) p.likes.splice(i, 1); else {
+      p.likes.push(c.nick);
+      if (p.by !== c.nick && !(p.notified ||= []).includes(c.nick)) { p.notified.push(c.nick); muroNotify(p.by, `❤️ A ${c.nick} le gustó tu publicación`); }
+    }
+    savePost(p); muroBroadcast("muro-upd", p);
+  });
+  socket.on("muro-comment", ({ id, text } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const p = muroById.get(String(id));
+    if (!p || muroHidden(c, p.by, p.admin)) return cb({ ok: false, error: "Esa publicación ya no está." });
+    if ((p.comments || []).length >= MURO_COMMENTS) return cb({ ok: false, error: "Esta publicación ya tiene demasiados comentarios." });
+    const clean = checkMessage(c, socket.id, text, "comunidad");
+    if (!clean) return cb({ ok: false, silent: true });
+    (p.comments ||= []).push({ id: newId(), by: c.nick, dev: c.dev || "", role: role(c), admin: !!c.admin, at: now(), text: clean });
+    savePost(p); muroBroadcast("muro-upd", p);
+    if (p.by !== c.nick) muroNotify(p.by, `💬 ${c.nick} comentó tu publicación: «${clean.slice(0, 60)}${clean.length > 60 ? "…" : ""}»`);
+    // también a quienes comentaron antes (sin repetir)
+    [...new Set(p.comments.map((k) => k.by))].filter((n) => n !== c.nick && n !== p.by)
+      .forEach((n) => muroNotify(n, `💬 ${c.nick} también comentó en la publicación de ${p.by}`));
+    cb({ ok: true });
+  });
+  socket.on("muro-edit", ({ id, text } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const p = muroById.get(String(id));
+    if (!p || p.by !== c.nick || !ownsPost(c, p)) return cb({ ok: false, error: "Solo podés editar tus publicaciones." });
+    const clean = checkMessage(c, socket.id, text, "comunidad", p.img, MURO_TEXT);
+    if (clean === null) return cb({ ok: false, silent: true });
+    if (!clean && !p.img) return cb({ ok: false, error: "La publicación no puede quedar vacía." });
+    p.text = clean; p.edited = true;
+    savePost(p); muroBroadcast("muro-upd", p);
+    cb({ ok: true });
+  });
+  socket.on("muro-del", ({ id, cid } = {}) => {
+    const p = muroById.get(String(id)); if (!p || !c.nick) return;
+    if (cid) {
+      const k = (p.comments || []).find((x) => x.id === cid);
+      if (!k || !(ownsPost(c, k) || ownsPost(c, p))) return; // el autor del post también puede borrar comentarios en su post
+      p.comments = p.comments.filter((x) => x !== k);
+      savePost(p); muroBroadcast("muro-upd", p);
+      return;
+    }
+    if (!ownsPost(c, p)) return;
+    muro.splice(muro.indexOf(p), 1); muroById.delete(p.id); imgCache.delete(p.id);
+    muroDb([["DEL", postKey(p.id), imgKey(p.id)], ["LREM", MURO_KEY, 0, p.id]]);
+    io.emit("muro-del", p.id);
+    if (c.admin && p.by !== c.nick) notifyAdmins(`🗑️ ${c.nick} borró una publicación de ${p.by} en Comunidad.`);
+  });
+}
+
 // Mantener despierto en Render (plan gratis)
 const SELF_URL = process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL && typeof fetch === "function") {
@@ -2461,5 +2635,5 @@ process.on("unhandledRejection", (e) => console.error("Promesa rechazada (el ser
 process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await saveNow().catch(() => {}); process.exit(0); });
 
 const PORT = process.env.PORT || 3000;
-Promise.race([loadState(), new Promise((ok) => setTimeout(ok, 6000))]).finally(() =>
+Promise.race([Promise.all([loadState(), loadMuro()]), new Promise((ok) => setTimeout(ok, 8000))]).finally(() =>
   server.listen(PORT, () => console.log(`Gente Rota en http://localhost:${PORT}`)));
