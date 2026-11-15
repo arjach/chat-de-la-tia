@@ -1305,6 +1305,10 @@ function openProfile() {
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "Guardar", () => { myBio = bio.value.trim(); store.set("gr-bio", myBio); sendProfile((r) => { if (r && !r.ok) err.textContent = r.error; else closeSheet(); }); }, "primary");
   sbtn(sh, "Cerrar", closeSheet);
+  sbtn(sh, "🚪 Salir del chat (para cambiar de apodo o irte del todo)", () => {
+    if (!confirm("¿Salir del chat? Vas a dejar de figurar como conectado/a.")) return;
+    wasKicked = true; setSess(null); socket.emit("leave"); setTimeout(() => location.reload(), 400);
+  }, "danger");
 }
 $("meTop").onclick = openProfile;
 $("avatarInput").onchange = async () => {
