@@ -820,12 +820,15 @@ async function aiQuestion(tema) {
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
 La respuesta tiene que ser corta (1 a 3 palabras o un número), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
 No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
-Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula"],"dato":"un dato curioso breve sobre la respuesta"}`;
+Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ella","dato":"un dato curioso breve sobre la respuesta"}`;
   const q = await aiCall(prompt, true, 1);
   if (!q) return null;
   if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
   const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
-  return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), ai: true };
+  // la pista no puede contener la respuesta
+  let pista = String(q.pista || "").slice(0, 160);
+  if (answers.some((a) => a.length >= 2 && (" " + plain(pista) + " ").includes(" " + a + " "))) pista = "";
+  return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), pista, ai: true };
 }
 function bankQuestion() {
   const pool = TRIVIA.filter(([q]) => !recentQs.includes(q));
@@ -839,14 +842,50 @@ function lev(a, b) {
     d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return d[a.length][b.length];
 }
+// ---- Números escritos en letras → cifras ("nueve" = "9", "mil novecientos ochenta y seis" = "1986") ----
+const NUM_WORDS = (() => {
+  const m = { cero: 0, uno: 1, un: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13,
+    catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiuno: 21, veintiun: 21, veintiuna: 21, veintidos: 22,
+    veintitres: 23, veinticuatro: 24, veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, treinta: 30, cuarenta: 40, cincuenta: 50,
+    sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100, quinientos: 500, quinientas: 500 };
+  ["dos", "tres", "cuatro", "seis", "siete", "ocho", "nove"].forEach((w, i) => { const v = [2, 3, 4, 6, 7, 8, 9][i] * 100; m[w + "cientos"] = v; m[w + "cientas"] = v; });
+  return m;
+})();
+function numify(text) {
+  const toks = String(text).split(" "), out = [];
+  for (let i = 0; i < toks.length; i++) {
+    const w = toks[i];
+    if (!(w in NUM_WORDS) && w !== "mil" && !/^millon(es)?$/.test(w)) { out.push(w); continue; }
+    let total = 0, cur = 0, j = i;
+    for (; j < toks.length; j++) {
+      const t = toks[j];
+      if (t === "y" && j > i && toks[j + 1] in NUM_WORDS && NUM_WORDS[toks[j + 1]] < 10) continue;
+      if (t in NUM_WORDS) cur += NUM_WORDS[t];
+      else if (t === "mil") { total += (cur || 1) * 1000; cur = 0; }
+      else if (/^millon(es)?$/.test(t)) { total = (total + (cur || 1)) * 1e6; cur = 0; }
+      else break;
+    }
+    out.push(String(total + cur)); i = j - 1;
+  }
+  return out.join(" ");
+}
+const stripArt = (s) => s.replace(/^(el|la|los|las|lo) /, "");
+function matches(guess, ans) {
+  if (!guess || !ans) return false;
+  if (guess === ans) return true;
+  if (/^\d+$/.test(ans)) return guess.split(" ").includes(ans);
+  if (ans.length >= 4 && (" " + guess + " ").includes(" " + ans + " ")) return true;
+  const tol = ans.length >= 9 ? 2 : ans.length >= 5 ? 1 : 0;
+  return tol > 0 && lev(guess, ans) <= tol;
+}
+// Acepta la respuesta escrita distinto: "9" o "nueve", con o sin artículo, con algún error de tipeo
 function isCorrect(guess, answers) {
-  return answers.some((ans) => {
-    if (guess === ans) return true;
-    if (/^\d+$/.test(ans)) return guess.split(" ").includes(ans);
-    if (ans.length >= 4 && (" " + guess + " ").includes(" " + ans + " ")) return true;
-    const tol = ans.length >= 9 ? 2 : ans.length >= 5 ? 1 : 0;
-    return tol > 0 && lev(guess, ans) <= tol;
-  });
+  const g = stripArt(guess), gn = numify(g);
+  return answers.some((ans) => { const a = stripArt(ans); return matches(guess, ans) || matches(g, a) || matches(gn, numify(a)); });
+}
+// Pistas: muestra la respuesta con huecos ("C _ _ _ _ _ R _ A"), revelando más letras de a poco
+function hintMask(ans, reveal) {
+  return [...ans].map((ch, i) => (/[\p{L}\p{N}]/u.test(ch) ? (reveal.has(i) ? ch.toUpperCase() : "_") : ch === " " ? "  " : ch)).join(" ");
 }
 function rankingText() {
   const top = [...points].sort((a, b) => b[1] - a[1]).slice(0, 10);
@@ -943,17 +982,45 @@ function makeEngine(ROOM, KIND) {
     const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
     const secs = triviaRound?.secs || 40;
     game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null, excl: triviaRound?.creator || null,
-      timer: setTimeout(() => finishTrivia(null), secs * 1000) };
+      timer: setTimeout(() => finishTrivia(null), secs * 1000), hints: 0, hintTimers: [], cleanup() { this.hintTimers.forEach(clearTimeout); } };
+    if (triviaRound?.hints !== false) scheduleHints(game, q, secs);
     gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.custom ? `✍️ de ${triviaRound.creator} ` : ""}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}${secs} s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : q.custom ? `Escribí la respuesta en el chat (${triviaRound.creator} no juega: la sabe 😉).` : "Escribí la respuesta en el chat."}`);
+  }
+  // El Crupier tira 2 pistas: a un tercio y a dos tercios del tiempo. Cada pista baja 1 punto el premio.
+  function scheduleHints(g, q, secs) {
+    const ans = String(q.shown || "").trim();
+    const isNum = /^\d{1,9}$/.test(ans.replace(/[.,\s]/g, ""));
+    const idx = [...ans].map((ch, i) => (/[\p{L}\p{N}]/u.test(ch) ? i : -1)).filter((i) => i >= 0);
+    const reveal = new Set();
+    [...ans].forEach((ch, i) => { if (/[\p{L}\p{N}]/u.test(ch) && (i === 0 || /\s/.test(ans[i - 1]))) reveal.add(i); });
+    const pistas = [];
+    if (isNum) {
+      const n = parseInt(ans.replace(/[.,\s]/g, "")), digits = String(n).length;
+      pistas.push(q.pista ? `${q.pista} (es un número de ${digits} cifra${digits === 1 ? "" : "s"})` : `Es un número de ${digits} cifra${digits === 1 ? "" : "s"}.`);
+      const span = Math.max(3, Math.round(n * 0.15)), lo = Math.max(0, n - Math.floor(Math.random() * span) - 1);
+      pistas.push(`Está entre ${lo} y ${lo + span + 1}.`);
+    } else {
+      const letras = idx.length, palabras = ans.split(/\s+/).length;
+      pistas.push(`${q.pista ? q.pista + "\n" : ""}${palabras > 1 ? `Son ${palabras} palabras` : `Tiene ${letras} letras`}: ${hintMask(ans, reveal)}`);
+      const rest = shuffle(idx.filter((i) => !reveal.has(i)));
+      const more = new Set([...reveal, ...rest.slice(0, Math.max(1, Math.floor(rest.length * 0.4)))]);
+      if (letras > 3) pistas.push(hintMask(ans, more));
+    }
+    pistas.forEach((p, k) => g.hintTimers.push(setTimeout(() => {
+      if (game !== g) return;
+      g.hints = k + 1;
+      gameSay(`💡 Pista ${k + 1}: ${p}\n(ahora vale ${Math.max(1, 3 - g.hints)} punto${3 - g.hints === 1 ? "" : "s"})`);
+    }, secs * 1000 * (k === 0 ? 0.35 : 0.65))));
   }
   function finishTrivia(winner) {
     const g = game; endGame();
     const extra = g.dato ? `\n💡 ${g.dato}` : "";
     if (winner) {
-      addPoints(winner, 3);
+      const pts = Math.max(1, 3 - (g.hints || 0));
+      addPoints(winner, pts);
       if (triviaRound) triviaRound.scores.set(winner, (triviaRound.scores.get(winner) || 0) + 1);
       if (triviaRound?.duel) triviaRound.duel.scores[winner] = (triviaRound.duel.scores[winner] || 0) + 1;
-      gameSay(`✅ ¡${winner} acertó! Era: ${g.shown}. +3 pts (total: ${points.get(winner)})${extra}`);
+      gameSay(`✅ ¡${winner} acertó! Era: ${g.shown}. +${pts} pt${pts === 1 ? "" : "s"}${g.hints ? ` (con ${g.hints} pista${g.hints === 1 ? "" : "s"})` : ""} (total: ${points.get(winner)})${extra}`);
     } else gameSay(`⏰ ¡Tiempo! Nadie acertó. Era: ${g.shown}${extra}`);
     if (triviaRound) {
       triviaRound.left--;
@@ -1885,7 +1952,7 @@ function makeEngine(ROOM, KIND) {
           const qs = (Array.isArray(o.questions) ? o.questions : []).map((x) => ({ q: txt(x?.q, 200), a: String(x?.a || "").split(/\s*[\/|]\s*/).map((y) => txt(y, 60)).filter(Boolean) }))
             .filter((x) => x.q.length >= 3 && x.a.length).slice(0, 15);
           if (!qs.length) return fail("Cargá al menos una pregunta con su respuesta.");
-          triviaRound = { left: qs.length, total: qs.length, temas: [], scores: new Map(), custom: qs, creator: c.nick, secs: secs(o.secs, 15, 120, 40) };
+          triviaRound = { left: qs.length, total: qs.length, temas: [], scores: new Map(), custom: qs, creator: c.nick, secs: secs(o.secs, 15, 120, 40), hints: o.hints !== false };
           gameSay(`❓ TRIVIA PERSONALIZADA de ${c.nick}: ${qs.length} pregunta${qs.length === 1 ? "" : "s"}. ¡Atentos!`);
           startTrivia(""); break;
         }
