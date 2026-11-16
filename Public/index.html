@@ -107,6 +107,18 @@
   #sideBtn .sb-badge { position: absolute; top: -6px; right: -6px; background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 10.5px; font-weight: 800; padding: 1px 5px; min-width: 16px; text-align: center; }
   #app.side-off { grid-template-columns: 1fr !important; }
   #app.side-off #sidebar { display: none; }
+  .news-pref { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; margin: 10px 0; line-height: 1.35; cursor: pointer; }
+  .news-pref input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; margin-top: 1px; }
+  #newsWrap { position: relative; height: 0; z-index: 6; }
+  #newsBar { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; align-items: center; gap: 8px; background: #0b0b0b; color: #f2f2f2; border: 1px solid var(--accent); border-radius: 12px; padding: 7px 10px; font-size: 13.5px; text-align: left; box-shadow: 0 6px 20px #0008; animation: newsIn .35s cubic-bezier(.2,1.3,.4,1); }
+  #newsBar.out { animation: newsOut .3s ease forwards; }
+  #newsBar .ni { font-size: 20px; flex: none; }
+  #newsBar .nt { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+  #newsBar .nt b { color: var(--accent); }
+  @keyframes newsIn { from { transform: translateY(-140%); opacity: 0; } }
+  @keyframes newsOut { to { transform: translateY(-140%); opacity: 0; } }
+  .news-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .news-row .ni { font-size: 20px; } .news-row small { color: var(--muted); display: block; margin-top: 2px; }
   #pzChip { flex: none; background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 20px; padding: 3px 9px; font-size: 13px; font-weight: 800; white-space: nowrap; }
   #pzChip b { font-weight: 900; }
   #pzChip.bump { animation: pzbump .6s ease; }
@@ -621,6 +633,7 @@
       <button type="button" id="selFwd" aria-label="Reenviar" title="Reenviar">↪️</button>
       <button type="button" id="selDel" aria-label="Eliminar" title="Eliminar">🗑️</button>
     </div>
+    <div id="newsWrap"><button type="button" id="newsBar" hidden></button></div>
     <div id="voicePanel" hidden>
       <div class="vp-grid" id="vpGrid"></div>
       <div class="vp-actions" id="vpActions"></div>
@@ -1376,13 +1389,15 @@ function push(chat, m) {
 // ---------- Mensajes estilo WhatsApp: mantener apretado = seleccionar · deslizar a la derecha = responder ----------
 let selMsg = null;
 const canAct = (m) => m && m.id && !m.deleted && !m.poll;
-function clearSel() {
+function clearSel(fromBack) {
+  if (selMsg && !fromBack && window.history.state?.sel) { try { window.history.back(); } catch {} }
   selMsg = null; $("msgMenu").hidden = true; $("selBar").hidden = true; $("title").hidden = false;
   $("messages").querySelectorAll(".msg.sel").forEach((n) => n.classList.remove("sel"));
 }
 function selectMsg(m, msgEl) {
   if (!canAct(m)) return;
-  clearSel(); selMsg = m; msgEl.classList.add("sel");
+  clearSel(true); selMsg = m; msgEl.classList.add("sel");
+  try { if (!window.history.state?.sel) window.history.pushState({ sel: 1 }, ""); } catch {} // el botón "atrás" del celu cancela la selección
   try { navigator.vibrate?.(25); } catch {}
   const recent = Date.now() - (m.ts || 0) < 30 * 60000;
   $("selEdit").hidden = !(isMine(m) && !m.image && !m.gif && !m.audio && recent);
@@ -1402,7 +1417,8 @@ function selectMsg(m, msgEl) {
   menu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, left)) + "px";
   menu.style.top = (r.top - menu.offsetHeight - 8 < 60 ? r.bottom + 8 : r.top - menu.offsetHeight - 8) + "px";
 }
-$("selX").onclick = clearSel;
+$("selX").onclick = () => clearSel();
+window.addEventListener("popstate", () => { if (selMsg) clearSel(true); });
 $("selReply").onclick = () => { const m = selMsg; clearSel(); if (m) startReply(m); };
 $("selEdit").onclick = () => { const m = selMsg; clearSel(); if (m) startEdit(m); };
 $("selDel").onclick = () => { const m = selMsg; clearSel(); if (m && confirm(isMine(m) ? "¿Eliminar tu mensaje para todos?" : `¿Eliminar el mensaje de ${m.from}?`)) socket.emit("delete-message", m.id); };
@@ -1505,6 +1521,7 @@ function openForward(m) {
     reset();
   });
   box.addEventListener("touchcancel", reset);
+  box.addEventListener("scroll", () => { if (t) { clearTimeout(t); t = null; } }, { passive: true }); // si estás scrolleando, no es "mantener apretado"
   // compu: clic derecho = seleccionar
   box.addEventListener("contextmenu", (e) => {
     const n = e.target.closest(".msg"); if (!n || e.target.closest("a")) return;
@@ -1783,6 +1800,13 @@ function openProfile() {
   const bMsg = el("div", "stline", "Ese día lo anunciamos, te arman una tarjeta con saludos y te regalamos 🧩 100."); sh.append(bMsg);
   socket.emit("bday-get", null, (r) => { if (r?.bday) { const [mm, dd] = r.bday.split("-"); dSel.value = String(+dd); mSel.value = String(+mm); bMsg.textContent = `🎂 Tu cumple: ${+dd} de ${MESES[+mm - 1]}. Ese día te llega una sorpresa 🎉`; } });
   bOk.onclick = () => socket.emit("bday-set", { day: dSel.value, month: mSel.value }, (r) => { bMsg.textContent = r?.ok ? (r.bday ? "✅ ¡Guardado! Ese día te llega una sorpresa 🎉" : "Listo, lo borraste.") : "⚠️ " + (r?.error || "No se pudo."); });
+  // 📣 anunciar mis logros
+  const nRow = el("label", "news-pref"); const nChk = el("input"); nChk.type = "checkbox"; nChk.checked = true;
+  nRow.append(nChk, el("span", null, "📣 Que los demás vean mis logros (subidas de nivel, insignias y compras) en las novedades"));
+  sh.append(nRow);
+  socket.emit("news-pref", null, (r) => { if (r) nChk.checked = r.on; });
+  nChk.onchange = () => socket.emit("news-pref", nChk.checked, () => {});
+  sbtn(sh, "📣 Ver novedades", () => { closeSheet(); openNews(); });
   sbtn(sh, `🛒 Tienda · tenés 🧩 ${myPz}`, () => { closeSheet(); openShop(); }, "primary");
   sbtn(sh, "🏅 Mis logros e insignias", () => { closeSheet(); openLogros(); });
   sbtn(sh, "🚪 Salir del chat (para cambiar de apodo o irte del todo)", () => {
@@ -2715,6 +2739,37 @@ function openLogros(nick) {
   });
 }
 
+
+// ================== 📣 Novedades (logros de la gente, sin llenar el chat) ==================
+const newsQ = []; let newsBusy = false;
+socket.on("news", (n) => {
+  if (!n || isBlocked(n.nick) || replaying) return;
+  if (newsQ.length >= 4) newsQ.shift();
+  newsQ.push(n); if (!newsBusy) nextNews();
+});
+function nextNews() {
+  const n = newsQ.shift(), bar = $("newsBar");
+  if (!n) { newsBusy = false; bar.hidden = true; return; }
+  newsBusy = true;
+  const t = el("span", "nt"); const i = n.text.indexOf(n.nick);
+  if (n.nick && i >= 0) t.append(n.text.slice(0, i), el("b", null, n.nick), n.text.slice(i + n.nick.length)); else t.append(n.text);
+  bar.replaceChildren(el("span", "ni", n.ico), t);
+  bar.classList.remove("out"); bar.hidden = false; void bar.offsetWidth;
+  bar.style.animation = "none"; void bar.offsetWidth; bar.style.animation = "";
+  setTimeout(() => { bar.classList.add("out"); setTimeout(nextNews, 320); }, newsQ.length ? 3200 : 4800);
+}
+$("newsBar").onclick = openNews;
+function openNews() {
+  socket.emit("news-get", null, (list) => {
+    const sh = sheetOpen("news", "📣 Novedades", "Lo último que lograron en Gente Rota.");
+    if (!list?.length) sh.append(el("div", "stline", "Todavía no hay novedades. ¡Andá a ganar la primera!"));
+    for (const n of list || []) {
+      const r = el("div", "news-row"); const tx = el("div", null, n.text); tx.append(el("small", null, ago(n.at)));
+      r.append(el("span", "ni", n.ico), tx); sh.append(r);
+    }
+    sbtn(sh, "Cerrar", closeSheet);
+  });
+}
 
 // ================== 🎂 Tarjeta de cumpleaños ==================
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
