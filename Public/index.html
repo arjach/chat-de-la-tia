@@ -1595,7 +1595,8 @@ function openCustomGame(type = "rotos") {
     add(); add();
     const more = el("button", null, "➕ Otra pregunta"); more.type = "button"; more.onclick = add; body.append(more);
     label("Tiempo por pregunta"); const t = selectEl([[20, "20 s"], [30, "30 s"], [40, "40 s"], [60, "1 min"]], 40); body.append(t);
-    collect = () => ({ type, questions: [...list.children].map((b) => ({ q: b.children[0].value, a: b.children[1].value })).filter((x) => x.q.trim() && x.a.trim()), secs: +t.value });
+    label("💡 Pistas del Crupier (cada pista baja 1 punto)"); const hp = selectEl([["si", "Sí, dar 2 pistas"], ["no", "No, sin pistas"]], "si"); body.append(hp);
+    collect = () => ({ type, questions: [...list.children].map((b) => ({ q: b.children[0].value, a: b.children[1].value })).filter((x) => x.q.trim() && x.a.trim()), secs: +t.value, hints: hp.value === "si" });
   } else if (type === "dibujo") {
     label("Palabras para dibujar (separadas por coma o renglón)");
     hint("Si las dejás vacías, uso las de siempre. Si ponés las tuyas, vos no adivinás 😉");
