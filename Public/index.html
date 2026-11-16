@@ -361,7 +361,7 @@
   #sheet .apr-row button { width: auto; flex: 1 1 28%; margin: 0; padding: 9px 6px; font-size: 13px; }
   .mp-btn.danger { border-color: #c0392b; color: #ff7b6b; }
   /* Logros */
-  .ach-tag { display: inline-block; font-size: 10.5px; font-weight: 800; line-height: 1; padding: 2px 4px; border-radius: 6px; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); vertical-align: 1px; margin-left: 2px; white-space: nowrap; }
+  .ach-tag { display: inline-block; font-size: 13px; line-height: 1; vertical-align: 0; margin-left: 2px; }
   #sidebar .item .ach-tag { flex: none; }
   #achToast { position: fixed; left: 50%; top: 12px; transform: translate(-50%, -140%); z-index: 99; background: #0b0b0b; color: #f2f2f2; border: 2px solid var(--accent); border-radius: 16px; padding: 12px 18px; text-align: center; box-shadow: 0 10px 30px #000a; transition: transform .35s cubic-bezier(.2,1.4,.4,1); max-width: 90vw; cursor: pointer; }
   #achToast.show { transform: translate(-50%, 0); }
@@ -2675,10 +2675,11 @@ setInterval(() => { if (current !== MURO) return; for (const [id, w] of muroCard
 // ================== 🏅 Logros ==================
 const TIER_ICO = ["🥉", "🥈", "🥇"], TIER_NAME = ["bronce", "plata", "oro"];
 // insignia destacada o nivel, chiquito al lado del nombre
+// Al lado del nombre solo va la insignia destacada (el nivel se ve en el perfil y en 🏅 Logros)
 function achTag(info) {
-  if (!info?.lv) return null;
-  const t = el("span", "ach-tag", (info.bd || "") + "Nv" + info.lv);
-  t.title = `Nivel ${info.lv}${info.bd ? " · insignia destacada" : ""}`;
+  if (!info?.bd) return null;
+  const t = el("span", "ach-tag", info.bd);
+  t.title = "Insignia destacada";
   return t;
 }
 function achToast(html) {
