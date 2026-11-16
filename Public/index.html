@@ -107,6 +107,12 @@
   #sideBtn .sb-badge { position: absolute; top: -6px; right: -6px; background: var(--accent); color: var(--accent-text); border-radius: 10px; font-size: 10.5px; font-weight: 800; padding: 1px 5px; min-width: 16px; text-align: center; }
   #app.side-off { grid-template-columns: 1fr !important; }
   #app.side-off #sidebar { display: none; }
+  #pzChip { flex: none; background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 20px; padding: 3px 9px; font-size: 13px; font-weight: 800; white-space: nowrap; }
+  #pzChip b { font-weight: 900; }
+  #pzChip.bump { animation: pzbump .6s ease; }
+  @keyframes pzbump { 30% { transform: scale(1.25); background: var(--accent); color: var(--accent-text); } }
+  #shopChip { display: block; width: 100%; margin-top: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--accent); color: var(--ink); border-radius: 10px; padding: 5px 6px; font-size: 12.5px; font-weight: 700; text-align: center; line-height: 1.35; }
+  #shopChip b { color: var(--accent); font-weight: 900; }
   #titleMore { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
   #pinned { background: var(--panel2); border-bottom: 1px solid var(--accent); padding: 8px 14px; font-size: 13.5px; }
   #pinned b { color: var(--ink); }
@@ -516,7 +522,7 @@
     .msg { max-width: 90%; }
     #messages { padding: 10px; }
     #titleSub { display: none; }
-    #emojiPanel { grid-template-columns: repeat(7, 1fr); left: 6px; right: 6px; }
+    #emojiPanel { grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); left: 6px; right: 6px; max-height: 46vh; overflow-y: auto; }
     #msgForm { gap: 5px; padding: 8px; }
     .fbtn { width: 36px; font-size: 17px; }
     #sendBtn { padding: 10px 12px; }
@@ -582,7 +588,8 @@
 <div id="app">
   <aside id="sidebar">
     <div class="me-row">
-      <div class="me-top" id="meTop" title="Mi perfil"><span id="meAv"></span><span class="me-txt"><span class="sos">Sos </span><b id="meName"></b><span id="meAdmin" hidden> 🛡️</span><small>✏️ Mi perfil · <span id="mePz">🧩 0</span></small></span></div>
+      <div class="me-top" id="meTop" title="Mi perfil"><span id="meAv"></span><span class="me-txt"><span class="sos">Sos </span><b id="meName"></b><span id="meAdmin" hidden> 🛡️</span><small>✏️ Mi perfil</small></span></div>
+      <button type="button" id="shopChip">🧩 <b id="mePz">0</b> piezas<br>🛒 Tienda</button>
       <button id="modPanelBtn" class="modbtn" hidden>🛡️ Panel de moderación</button>
       <select id="statusSel" title="Tu estado">
         <option value="disponible">🟢 Disponible</option>
@@ -604,7 +611,7 @@
     <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 👑 dueño · 🛡️ moderador</div>
   </aside>
   <section id="main">
-    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button><button id="focusBtn" type="button" title="Pantalla completa (solo el chat)" aria-label="Pantalla completa">⛶</button><button id="sideBtn" type="button" title="Mostrar/ocultar la columna de salas y conectados">👥</button></div>
+    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="pzChip" type="button" title="Tus piezas · tocá para ir a la tienda">🧩 <b>0</b></button><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button><button id="focusBtn" type="button" title="Pantalla completa (solo el chat)" aria-label="Pantalla completa">⛶</button><button id="sideBtn" type="button" title="Mostrar/ocultar la columna de salas y conectados">👥</button></div>
     <div id="selBar" hidden>
       <button type="button" id="selX" aria-label="Cancelar">←</button><span id="selN">1</span>
       <button type="button" id="selReply" aria-label="Responder" title="Responder">↩️</button>
@@ -755,7 +762,7 @@
 <script>
 // id de este dispositivo (sirve para que las penalizaciones de juegos no le caigan a otros con la misma conexión)
 const DEV = (() => { try { let d = localStorage.getItem("gr-dev"); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("gr-dev", d); } return d; } catch { return ""; } })();
-const socket = io({ auth: { dev: DEV } });
+const socket = io({ auth: (cb) => { let pass = ""; try { pass = localStorage.getItem("gr-pass") || ""; } catch {} cb({ dev: DEV, pass }); } });
 const GENERAL = "#general", JT = "#j-trivia", JI = "#j-ia", JF = "#j-fiesta", JD = "#j-duelos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz", MURO = "#comunidad";
 const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JT]: ["🧠", "Trivia", "Trivia, ahorcado y ¿Quién dijo esto?"], [JI]: ["🕵️", "Engaño", "¿Quién es la IA?, Impostor, Mentiroso y Asesinato"], [JF]: ["🎉", "Fiesta", "Verdad o reto, Dibujo, 100 rotos y Juicio"], [JD]: ["⚔️", "Duelos", "Duelos 1 contra 1, eliminatorio y torneo semanal"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
@@ -961,7 +968,11 @@ function restoreSession() {
   if (restoring || wasKicked || (!me && !ss)) return;
   restoring = true;
   const nick = me || ss.nick;
-  const fallback = () => join(nick, (err) => { restoring = false; me = ""; setSess(null); $("app").style.display = "none"; showLogin(true); $("nick").value = nick; $("err").textContent = err; });
+  const fallback = () => join(nick, (err, res) => {
+    restoring = false; me = ""; setSess(null); $("app").style.display = "none"; showLogin(true); $("nick").value = nick;
+    if (res?.captcha) { try { localStorage.removeItem("gr-pass"); } catch {} configReady.then(() => { mountCaptcha(); joinWaiting = true; setJoinBusy(true, "Verificando…"); }); return waitMsg("🤖 Un segundo: estamos verificando que no seas un bot…"); }
+    $("err").textContent = err;
+  });
   if (!ss?.token) return fallback();
   socket.emit("resume", ss.token, (res) => {
     if (!res?.ok) return fallback();
@@ -977,13 +988,14 @@ function restoreSession() {
 }
 function join(nick, onFail) {
   socket.emit("join", nick, (res) => {
-    if (!res.ok) return onFail && onFail(res.error);
+    if (!res.ok) return onFail && onFail(res.error, res);
     enterChat(res);
     lostShown = false;
   });
 }
 function enterChat(res) {
   {
+    setJoinBusy(false); joinWaiting = false; $("err").textContent = "";
     restoring = false;
     if (res.token) setSess({ nick: res.nick, token: res.token });
     me = res.nick; online = res.users;
@@ -1007,30 +1019,56 @@ function enterChat(res) {
     socket.emit("shop-get", null, (v) => { if (v) { setPz(v.pz); applyBg(v.eq.bg || ""); } });
   }
 }
-// Verificación anti-bots (Cloudflare Turnstile): solo si el dueño la activó en Render
-let tsSite = "", tsToken = "", tsWidget = null;
+// Verificación anti-bots (Cloudflare Turnstile): solo si el dueño la activó en Render.
+// Si todavía no terminó de cargar, no tiramos error: esperamos y entramos solos cuando está lista.
+let tsSite = "", tsToken = "", tsWidget = null, joinWaiting = false;
+const hasPass = () => { try { const p = localStorage.getItem("gr-pass") || ""; return +p.split(".")[0] > Date.now() + 60000; } catch { return false; } };
+function waitMsg(t) { $("err").textContent = t; $("err").style.color = "var(--muted)"; }
+function setJoinBusy(on, txt) {
+  if (!on) $("err").style.color = "";
+  const b = $("loginForm").querySelector("button[type=submit], button:not([type])");
+  if (!b) return;
+  if (!b.dataset.txt) b.dataset.txt = b.textContent;
+  b.disabled = on; b.textContent = on ? txt || "Verificando…" : b.dataset.txt;
+}
 function mountCaptcha() {
   if (!tsSite || tsWidget !== null) return;
   tsWidget = "loading";
-  const go = () => { tsWidget = window.turnstile.render("#captcha", { sitekey: tsSite, theme: "dark", language: "es", callback: (t) => { tsToken = t; $("err").textContent = ""; }, "expired-callback": () => { tsToken = ""; } }); };
+  const go = () => { tsWidget = window.turnstile.render("#captcha", { sitekey: tsSite, theme: "dark", language: "es", callback: (t) => { tsToken = t; $("err").textContent = ""; if (joinWaiting) { joinWaiting = false; doLogin(); } }, "expired-callback": () => { tsToken = ""; }, "error-callback": () => { setJoinBusy(false); joinWaiting = false; $("err").textContent = "La verificación no cargó bien. Tocá Entrar de nuevo."; try { window.turnstile.reset(tsWidget); } catch {} } }); };
   if (window.turnstile) return go();
   const sc = document.createElement("script"); sc.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"; sc.async = true; sc.onload = go;
-  sc.onerror = () => { tsWidget = null; $("err").textContent = "No se pudo cargar la verificación. Revisá tu conexión y recargá."; };
+  sc.onerror = () => { tsWidget = null; joinWaiting = false; setJoinBusy(false); $("err").textContent = "No se pudo cargar la verificación. Revisá tu conexión y tocá Entrar de nuevo."; };
   document.head.append(sc);
 }
-fetch("/config").then((r) => r.json()).then((c) => { tsSite = c.turnstile || ""; if (tsSite && !$("login").hidden) mountCaptcha(); }).catch(() => {});
-$("loginForm").addEventListener("submit", (e) => {
+const configReady = fetch("/config").then((r) => r.json()).then((c) => { tsSite = c.turnstile || ""; if (tsSite && !$("login").hidden && !hasPass()) mountCaptcha(); }).catch(() => {});
+function doLogin() {
+  const go = () => join($("nick").value, (err, res) => {
+    setJoinBusy(false);
+    if (res?.captcha) { try { localStorage.removeItem("gr-pass"); } catch {} tsToken = ""; mountCaptcha(); try { window.turnstile?.reset(tsWidget); } catch {} joinWaiting = true; setJoinBusy(true, "Verificando…"); return waitMsg("🤖 Un segundo: estamos verificando que no seas un bot…"); }
+    $("err").textContent = err;
+  });
+  if (!tsSite || hasPass()) { setJoinBusy(true, "Entrando…"); return go(); }
+  if (!tsToken) {
+    mountCaptcha(); joinWaiting = true; setJoinBusy(true, "Verificando…");
+    setTimeout(() => { if (joinWaiting) { joinWaiting = false; setJoinBusy(false); $("err").textContent = "La verificación está tardando. Si ves una casilla abajo, tocala; si no, tocá Entrar de nuevo."; } }, 25000);
+    return waitMsg("🤖 Un segundo: estamos verificando que no seas un bot… (si aparece una casilla abajo, tocala)");
+  }
+  setJoinBusy(true, "Entrando…");
+  socket.emit("verify", tsToken, (r) => {
+    tsToken = "";
+    if (!r?.ok) { setJoinBusy(false); try { window.turnstile?.reset(tsWidget); } catch {} return ($("err").textContent = "La verificación falló. Probá de nuevo."); }
+    if (r.pass) try { localStorage.setItem("gr-pass", r.pass); } catch {}
+    go();
+  });
+}
+$("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   beep(0);
-  const go = () => join($("nick").value, (err) => $("err").textContent = err);
-  if (!tsSite) return go();
-  if (!tsToken) { mountCaptcha(); return ($("err").textContent = "Completá la verificación de abajo (es para frenar bots) 🤖"); }
-  socket.emit("verify", tsToken, (r) => {
-    tsToken = "";
-    if (!r?.ok) { try { window.turnstile?.reset(tsWidget); } catch {} return ($("err").textContent = "La verificación falló. Probá de nuevo."); }
-    go();
-  });
+  if (!$("nick").value.trim()) return ($("err").textContent = "Escribí un apodo.");
+  setJoinBusy(true, "Cargando…");
+  await Promise.race([configReady, new Promise((r) => setTimeout(r, 8000))]); // en Render a veces tarda en despertar
+  doLogin();
 });
 
 let wasKicked = false, lostShown = false;
@@ -1262,6 +1300,7 @@ function renderMessages() {
   $("titleText").textContent = priv ? `🔒 ${current}` : ROOMS[current].slice(0, 2).join(" ");
   $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : (lockedRooms.has(current) ? "🔒 Cerrada por moderación" : ROOMS[current][2]);
   $("titleMore").hidden = !priv;
+  $("pzChip").hidden = priv;
   $("callBtn").hidden = !priv || !info;
 
   $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
@@ -1568,7 +1607,7 @@ const EMOJIS = "😀 😂 🤣 😊 😍 😘 😎 🤔 😐 😴 😢 😭 😡
 $("emojiPanel").append(...EMOJIS.map((em) => {
   const b = el("button", null, em); b.type = "button";
   b.onclick = () => { const i = $("text"); const p = i.selectionStart ?? i.value.length;
-    i.value = i.value.slice(0, p) + em + i.value.slice(p); i.focus(); i.setSelectionRange(p + em.length, p + em.length); };
+    i.value = i.value.slice(0, p) + em + i.value.slice(p); i.focus(); i.setSelectionRange(p + em.length, p + em.length); updateSendBtn(); };
   return b;
 }));
 $("emojiBtn").onclick = () => $("emojiPanel").classList.toggle("open");
@@ -2699,10 +2738,19 @@ socket.on("card-new", ({ by, text }) => { beep(880); push(current, { type: "noti
 
 // ================== 🧩 Piezas y 🛒 Tienda ==================
 let myPz = 0;
-function setPz(n) { myPz = n; const e = $("mePz"); if (e) e.textContent = `🧩 ${n}`; }
+function setPz(n) {
+  const up = n > myPz && myPz !== 0; myPz = n;
+  const e = $("mePz"); if (e) e.textContent = n;
+  const c = $("pzChip"); c.querySelector("b").textContent = n;
+  if (up) { c.classList.remove("bump"); void c.offsetWidth; c.classList.add("bump"); }
+}
+$("pzChip").onclick = () => openShop();
+$("shopChip").onclick = (e) => { e.stopPropagation(); openShop(); };
 // cartelito flotante "+10 🧩"
 socket.on("pz", ({ n, total, why }) => {
   setPz(total);
+  // la primera vez que gana piezas, le contamos para qué sirven
+  try { if (!localStorage.getItem("gr-tip-pz")) { localStorage.setItem("gr-tip-pz", "1"); setTimeout(() => push(current, { type: "notice", kind: "help", text: "🧩 ¡Ganaste tus primeras piezas! Se juntan participando (entrando cada día, publicando, jugando, con insignias…) y se gastan en la 🛒 Tienda: colores de nombre, marcos para tu foto, títulos, fondos y más. Tocá el 🧩 de arriba para verla." }), 2800); } } catch {}
   const f = el("div", "pz-float", `+${n} 🧩${why ? " · " + why : ""}`);
   document.body.append(f); setTimeout(() => f.remove(), 2600);
 });
