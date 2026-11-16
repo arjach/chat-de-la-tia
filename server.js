@@ -168,9 +168,66 @@ const byNick = (n) => { const id = users.get(String(n || "").toLowerCase()); ret
 const blockedPair = (a, b) => a !== b && a.nick && b.nick && !a.admin && !b.admin &&
   (a.blocked.has(b.nick.toLowerCase()) || b.blocked.has(a.nick.toLowerCase()));
 const role = (c) => c.owner ? "owner" : c.admin ? "mod" : null;
+
+// ---------- Baneos por celu + apodo (la IP sola no sirve: en los celus muchos comparten IP) ----------
+// bans: "dev:<celu>" / "nick:<apodo>" / "ip:<ip>" -> { until, nick, by, reason, at }
+const BAN_IP_MAX = 2 * 3600e3;  // por IP solo 2 h, para no dejar afuera a otros de la misma compañía de celular
+const FOREVER = 8.64e15;
+function banFind(ip, dev, nick) {
+  const t = now();
+  for (const k of [ip && "ip:" + ip, dev && "dev:" + dev, nick && "nick:" + String(nick).toLowerCase()]) {
+    if (!k) continue;
+    const b = bans.get(k);
+    if (b && b.until > t) return b;
+    if (b) bans.delete(k);
+  }
+  return null;
+}
+function banAdd(c, ms, reason, by) {
+  const at = now(), until = ms === Infinity ? FOREVER : at + ms;
+  const info = { until, nick: c.nick || "", by, reason, at };
+  if (c.dev) bans.set("dev:" + c.dev, info);
+  if (c.nick) bans.set("nick:" + c.nick.toLowerCase(), info);
+  if (c.ip) bans.set("ip:" + c.ip, { ...info, until: Math.min(until, at + BAN_IP_MAX) });
+  dirty();
+}
+function banRemove(nick) {
+  const n = String(nick || "").toLowerCase().replace(/^@/, "");
+  let k = 0; for (const [key, b] of bans) if ((b.nick || "").toLowerCase() === n) { bans.delete(key); k++; }
+  if (k) dirty(); return k;
+}
+const fmtDur = (ms) => ms === Infinity || ms >= FOREVER / 2 ? "para siempre" : ms >= 86400e3 ? `${Math.round(ms / 86400e3)} día${Math.round(ms / 86400e3) === 1 ? "" : "s"}` : ms >= 3600e3 ? `${Math.round(ms / 3600e3)} h` : `${Math.max(1, Math.round(ms / 60000))} min`;
+function parseDur(w) {
+  w = String(w || "").toLowerCase();
+  if (/^(perma|permanente|siempre|infinito)$/.test(w)) return Infinity;
+  const m = w.match(/^(\d+)(m|min|h|hs|d|dias?|días?|sem|semanas?)$/); if (!m) return null;
+  const n = Math.max(1, parseInt(m[1])), u = m[2][0];
+  return n * (u === "m" ? 60000 : u === "h" ? 3600e3 : u === "s" ? 7 * 86400e3 : 86400e3);
+}
+
+// ---------- 📋 Registro de moderación (lo ve el dueño) ----------
+let modLog = [];   // { at, by, text }
+function logMod(by, text) {
+  modLog.push({ at: now(), by: String(by || "?").slice(0, 30), text: String(text || "").slice(0, 200) });
+  if (modLog.length > 200) modLog = modLog.slice(-200);
+  dirty();
+}
+
+// ---------- 🛡️ Modo refugio (contra invasiones de bots o grupos) ----------
+// Mientras está activo, los recién llegados pueden leer pero no escribir.
+let refugioUntil = 0, refugioTimer = null;
+const newJoins = [];
+function setRefugio(min, by) {
+  clearTimeout(refugioTimer);
+  if (!min) { refugioUntil = 0; botSay("🛡️ Se terminó el modo refugio. Todos pueden escribir de nuevo."); return; }
+  refugioUntil = now() + min * 60000;
+  botSay(`🛡️ Modo refugio activado por ${min} min${by === BOT ? " (entró mucha gente nueva de golpe)" : ""}. Los recién llegados pueden leer, pero todavía no escribir. 💛`);
+  refugioTimer = setTimeout(() => { if (refugioUntil && refugioUntil <= now() + 1000) setRefugio(0); }, min * 60000);
+  refugioTimer.unref?.();
+}
 const userList = (viewer) =>
   [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "", ...(c.away ? { away: true } : {}) }))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "", ...achInfo(c), ...(canPhoto(c) ? { ph: true } : {}), ...(c.away ? { away: true } : {}) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
@@ -182,8 +239,10 @@ function emitFrom(sender, event, payload, skipSelf = false) {
   }
 }
 
+// huella de una foto/GIF/audio, para que al reenviar no se pueda cambiar el contenido
+const mediaHash = (media) => { const d = media?.image || media?.gif || media?.audio; return d ? require("crypto").createHash("sha1").update(d).digest("base64") : ""; };
 function remember(id, data) {
-  messages.set(id, { ...data, text: String(data.text || "").slice(0, 160), reactions: {} });
+  messages.set(id, { ...data, text: String(data.text || "").slice(0, 160), fullText: String(data.text || "").slice(0, MAX_MSG), reactions: {} });
   if (messages.size > 3000) messages.delete(messages.keys().next().value);
 }
 
@@ -307,16 +366,18 @@ function mute(c, id, minutes, reason, by = BOT) {
   voiceLeave(id);
   c.mutes++;
   notice(id, `🔇 Fuiste silenciado/a por ${minutes} min. Motivo: ${reason}`, "warn");
+  logMod(by === BOT ? "🤖 automático" : by, `🔇 silenció a ${c.nick} ${minutes} min — ${reason}`);
   botSay(`🔇 ${c.nick} fue silenciado/a ${minutes} min${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
 }
-function kick(id, reason, ban = false, by = BOT) {
+function kick(id, reason, ban = false, by = BOT, ms = 24 * 3600e3) {
   const c = clients.get(id);
   if (!c) return;
   c.gone = true; // no queda "en segundo plano": se va de verdad
   if (c.away) setTimeout(() => finalLeave(c, id), 400);
-  if (ban) { bans.set(c.ip, now() + 24 * 3600000); dirty(); }
-  io.to(id).emit("kicked", { reason, ban, mins: ban ? 24 * 60 : 0 });
-  botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? "baneado/a por 24 h" : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
+  if (ban) banAdd(c, ms, reason, by);
+  io.to(id).emit("kicked", { reason, ban, mins: ban ? (ms === Infinity ? -1 : Math.round(ms / 60000)) : 0 });
+  botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? `baneado/a ${ms === Infinity ? "para siempre" : "por " + fmtDur(ms)}` : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
+  logMod(by === BOT ? "🤖 automático" : by, `${ban ? `⛔ baneó (${fmtDur(ms)})` : "👢 expulsó"} a ${c.nick || "?"} — ${reason}`);
   setTimeout(() => io.sockets.sockets.get(id)?.disconnect(true), 300);
 }
 function strike(c, id, n, reason) {
@@ -343,6 +404,10 @@ function checkMessage(c, id, raw, room = "general", allowEmpty = false, maxLen =
   if (isGameRoom(room) && juegosBanNotice(c, id)) return null;
   if (c.mutedUntil > t) {
     notice(id, `🔇 Estás silenciado/a. Faltan ${Math.ceil((c.mutedUntil - t) / 60000)} min.`, "warn");
+    return null;
+  }
+  if (refugioUntil > t && !c.admin && !c.veteran && !profiles.get(c.pkey)?.trusted) {
+    notice(id, `🛡️ El chat está en modo refugio por un rato (faltan ${Math.ceil((refugioUntil - t) / 60000)} min): los recién llegados pueden leer pero todavía no escribir. ¡Gracias por la paciencia! 💛`, "warn");
     return null;
   }
   if (!c.admin) {
@@ -397,11 +462,37 @@ function runCommand(c, id, text, room = "general") {
     return GE.command(c, id, cmd, arg);
   }
 
+  if (cmd === "logros" || cmd === "niveles") return notice(id, logrosTop(), "help");
+  if (cmd === "piezas") { const p = profiles.get(c.pkey); return notice(id, `🧩 Tenés ${p?.pz || 0} piezas. Gastalas en ✏️ Mi perfil → 🛒 Tienda.`, "help"); }
+  if (cmd === "sintitulo") {
+    if (!c.admin) return notice(id, "No tenés permiso para usar ese comando.", "warn");
+    const t = byNick(arg); const p = t?.c?.pkey && profiles.get(t.c.pkey);
+    if (!p?.eq?.title) return notice(id, "Esa persona no está conectada o no tiene título.", "warn");
+    p.eq.title = ""; profDirty.add(t.c.pkey); usersSoon();
+    notice(t.id, "🏷️ Un moderador te sacó el título. Podés poner otro desde la 🛒 Tienda (sin volver a pagar).", "warn");
+    return notifyAdmins(`${c.nick} le sacó el título a ${t.c.nick}.`);
+  }
+  if (["permisofotos", "permitirfotos", "darfotos", "confiable", "quitarpermiso", "desconfiable", "aprobacion"].includes(cmd)) {
+    if (!c.admin) return notice(id, "No tenés permiso para usar ese comando.", "warn");
+    if (cmd === "permisofotos" || cmd === "aprobacion") {
+      const v = plain(arg);
+      if (!v) return notice(id, `📷 Permiso de fotos: ${approvalMode === "no" ? "DESACTIVADO (cualquiera puede mandar fotos)" : "ACTIVADO (hace falta que un mod lo dé)"}. Pedidos esperando: ${photoRequests.size}.\nDar: /permitirfotos <apodo> · Quitar: /quitarpermiso <apodo>\nDueño: /permisofotos si · /permisofotos no`, "mod");
+      if (!c.owner) return notice(id, "Solo el dueño puede activar o desactivar el permiso de fotos.", "warn");
+      if (!["si", "no", "nuevos"].includes(v)) return notice(id, "Usá: /permisofotos si (hace falta permiso) · /permisofotos no (cualquiera puede)", "warn");
+      approvalMode = v === "no" ? "no" : "nuevos"; dirty();
+      for (const [sid, rc] of clients) if (rc.nick) sendPerm(rc, sid);
+      return notifyAdmins(`📷 ${c.nick} ${approvalMode === "no" ? "desactivó el permiso de fotos: ahora cualquiera puede mandar" : "activó el permiso de fotos: hace falta que un mod lo dé"}.`);
+    }
+    if (!arg) return notice(id, `Usá: /${cmd} <apodo>`, "warn");
+    if (!setTrust(arg, ["permitirfotos", "darfotos", "confiable"].includes(cmd), c.nick)) return notice(id, "No encontré a esa persona conectada.", "warn");
+    return;
+  }
   if (cmd === "ayuda") {
-    let help = "Comandos: /ayuda · /reglas · /admin <clave> · /juegos (en las salas de Juegos)";
+    let help = "Comandos: /ayuda · /reglas · /logros (los de más nivel) · /admin <clave> · /juegos (en las salas de Juegos)";
     if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
-      "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [motivo] · /desbanear-todo" +
+      "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
+      "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué)" +
       "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinavatar <apodo> (quitar foto de perfil) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
       "\n• Salas: /cerrar · /abrir (en la sala actual) · /lento <seg> · /limpiar · /fijar <texto> · /desfijar · /anuncio <texto>" +
       "\n• Listas: /silenciados · /reportes · /filtro +palabra | -palabra | lista" +
@@ -426,7 +517,7 @@ function runCommand(c, id, text, room = "general") {
     io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  const MOD_ONLY = ["sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  const MOD_ONLY = ["desbanear", "baneados", "registro", "refugio", "sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
   if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
     ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
     : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
@@ -434,6 +525,8 @@ function runCommand(c, id, text, room = "general") {
   const [targetNick, ...why] = arg.split(" ");
   const reason = why.join(" ") || "Decisión de moderación";
   const target = byNick(targetNick);
+  if (["desilenciar", "unmute", "desbanear", "desbanear-todo", "mod", "desmod", "crearclave", "quitarclave", "fijar", "desfijar", "anuncio", "lento", "limpiar", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "refugio", "sintitulo", "advertir", "warn", "sinavatar"].includes(cmd) || (cmd === "filtro" && arg && arg !== "lista"))
+    logMod(c.nick, `/${cmd}${arg ? " " + arg.slice(0, 120) : ""}${room && room !== "general" ? ` (en ${ROOM_LABEL?.[room] || room})` : ""}`);
 
   // Gestión de moderadores (solo el dueño)
   if (cmd === "db") {
@@ -513,9 +606,35 @@ function runCommand(c, id, text, room = "general") {
     case "expulsar": case "kick":
       if (!target) return notice(id, "No encuentro a ese usuario.");
       return kick(target.id, reason, false, c.nick);
-    case "banear": case "ban":
-      if (!target) return notice(id, "No encuentro a ese usuario.");
-      return kick(target.id, reason, true, c.nick);
+    case "banear": case "ban": {
+      if (!target) return notice(id, "No encuentro a ese usuario (tiene que estar conectado/a). Uso: /banear Apodo [30m | 2h | 3d | 1sem | perma] motivo");
+      let ms = parseDur(why[0]), rsn = reason;
+      if (ms !== null) rsn = why.slice(1).join(" ") || "Decisión de moderación"; else ms = 24 * 3600e3;
+      if (!c.owner && (ms === Infinity || ms > 7 * 86400e3)) return notice(id, "Los moderadores pueden banear hasta 1 semana. Para más (o para siempre), hablalo con el dueño.", "warn");
+      return kick(target.id, rsn, true, c.nick, ms);
+    }
+    case "desbanear": {
+      if (!arg) return notice(id, "Uso: /desbanear Apodo. Mirá la lista con /baneados.");
+      const n = banRemove(targetNick);
+      return notice(id, n ? `✅ ${targetNick} ya puede volver a entrar.` : `No encuentro un baneo activo de «${targetNick}». Mirá /baneados.`, "mod");
+    }
+    case "baneados": {
+      const t = now(), seen = new Map();
+      for (const [k, b] of bans) if (b.until > t && !k.startsWith("ip:") && b.nick) seen.set(b.nick.toLowerCase(), b);
+      if (!seen.size) return notice(id, "No hay nadie baneado ahora. 🌿", "mod");
+      return notice(id, "⛔ Baneados:\n" + [...seen.values()].map((b) => `• ${b.nick} — ${b.until >= FOREVER / 2 ? "para siempre" : "faltan " + fmtDur(b.until - t)} · por ${b.by === BOT ? "el bot" : b.by} · ${b.reason}`).join("\n") + "\n\nPara levantar uno: /desbanear Apodo", "mod");
+    }
+    case "registro": {
+      if (!c.owner) return notice(id, "El registro de moderación lo ve solo el dueño.", "warn");
+      const n = Math.min(60, Math.max(5, parseInt(arg) || 25));
+      const fmt = (t) => new Date(t).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      return notice(id, modLog.length ? `📋 Últimas ${Math.min(n, modLog.length)} acciones de moderación:\n` + modLog.slice(-n).reverse().map((x) => `${fmt(x.at)} · ${x.by}: ${x.text}`).join("\n") : "📋 Todavía no hay acciones registradas.", "mod");
+    }
+    case "refugio": {
+      const a = arg.toLowerCase();
+      if (/^(off|no|apagar|fin|terminar|0)$/.test(a)) { if (!refugioUntil) return notice(id, "El modo refugio no está activo.", "mod"); return setRefugio(0, c.nick); }
+      return setRefugio(Math.min(240, Math.max(5, parseInt(a) || 30)), c.nick);
+    }
     case "desbanear-todo":
       bans.clear(); dirty(); return notice(id, "Se levantaron todos los baneos.", "mod");
     case "fijar":
@@ -639,6 +758,23 @@ function checkMedia(c, id, p) {
 }
 const mediaLabel = (m) => m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : m.audio ? "🎤 Audio" : "";
 
+// Publica un mensaje en una sala (también se usa al aprobar una foto que estaba esperando)
+function publishPublic(c, room, text, media, replyTo) {
+  const id = newId();
+  const reply = buildReply(replyTo, room);
+  remember(id, { chat: room, from: c.nick, pkey: c.pkey, text: text || mediaLabel(media), cap: text || "", mh: mediaHash(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
+  const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
+  if (room === "mods") emitToMods("public-message", out);
+  else if (room === "confesiones") {
+    // Nadie ve el nombre; los moderadores sí (para poder moderar); el autor lo ve como propio
+    const anon = { id, room, from: "Anónimo", anon: true, text, ...media, reply, ts: out.ts };
+    for (const [sid, rc] of clients) {
+      if (!rc.nick || blockedPair(rc, c)) continue;
+      io.to(sid).emit("public-message", rc.pkey && rc.pkey === c.pkey ? { ...anon, mine: true } : rc.admin ? { ...anon, realFrom: c.nick } : anon);
+    }
+  } else emitFrom(c, "public-message", out);
+}
+
 // ---------- Responder mensajes ----------
 function buildReply(replyTo, room, me, other) {
   const m = messages.get(String(replyTo || ""));
@@ -649,16 +785,16 @@ function buildReply(replyTo, room, me, other) {
 }
 
 // ================== Juegos ==================
-const GAME_CMDS = ["quienesia", "turing", "mentiroso", "impostor", "asesinato", "100rotos", "rotos", "juicio", "eliminatorio", "llaves", "vor", "verdadoreto", "dibujo", "torneo", "ia", "juegos", "trivia", "ahorcado", "ranking", "rendirse"];
+const GAME_CMDS = ["quiendijo", "quienesia", "turing", "mentiroso", "impostor", "asesinato", "100rotos", "rotos", "juicio", "eliminatorio", "llaves", "vor", "verdadoreto", "dibujo", "torneo", "ia", "juegos", "trivia", "ahorcado", "ranking", "rendirse"];
 // En qué sub-sala se juega cada cosa
 const ROOM_LABEL = { trivia: "🧠 Trivia", ia: "🕵️ Engaño e IA", fiesta: "🎉 Fiesta", duelos: "⚔️ Duelos" };
-const CMD_KIND = { trivia: "trivia", ahorcado: "trivia",
+const CMD_KIND = { trivia: "trivia", ahorcado: "trivia", quiendijo: "trivia",
   quienesia: "ia", turing: "ia", mentiroso: "ia", impostor: "ia", asesinato: "ia",
   vor: "fiesta", verdadoreto: "fiesta", dibujo: "fiesta", "100rotos": "fiesta", rotos: "fiesta", juicio: "fiesta",
   eliminatorio: "duelos", llaves: "duelos" };
 const CUSTOM_OF = { trivia: ["trivia", "ahorcado"], ia: ["turing", "mentiroso", "impostor", "asesinato"], fiesta: ["vor", "dibujo", "rotos"], duelos: ["eliminatorio"] };
 const GAME_HELP = {
-  trivia: "❓ /trivia [tema] — una pregunta\n🏁 /trivia ronda 10 cine, música — varias seguidas\n🪢 /ahorcado",
+  trivia: "❓ /trivia [tema] — una pregunta\n🏁 /trivia ronda 10 cine, música — varias seguidas\n🪢 /ahorcado\n🗣️ /quiendijo [rondas] — ¿Quién dijo esto? con frases célebres del chat",
   ia: "🤖 /quienesia — ¿Quién es la IA?\n🃏 /mentiroso — inventá mentiras creíbles\n🫣 /impostor [palabra / parecida]\n🔪 /asesinato [tema] — misterio",
   fiesta: "🎭 /vor — Verdad o reto (castigo: /vor ban 10 · /vor silencio 5 · /vor chat 5 · /vor puntos 3 · /vor sin)\n🖍️ /dibujo [rondas] — Dibujá y adiviná\n📊 /100rotos — pensá como la mayoría\n⚖️ /juicio Nombre cargo — Juicio popular en broma",
   duelos: "⚔️ Duelos 1 contra 1: tocá el nombre de alguien → Desafiar\n🏟️ /eliminatorio — torneo con llaves (/llaves para verlas)\n🏆 /torneo — torneo de la semana",
@@ -915,6 +1051,7 @@ setInterval(() => {
   const top = [...weekly.points].sort((a, b) => b[1] - a[1]);
   if (top.length) {
     champions.push({ nick: top[0][0], pts: top[0][1], week: weekly.start }); champions = champions.slice(-20);
+    { const t = byNick(top[0][0]); if (t?.c?.pkey) achChamp(t.c); }
     io.emit("announce", { text: `🏆 ¡${top[0][0]} ganó el torneo de la semana con ${top[0][1]} puntos! Se lleva la copa 🏆 hasta el próximo lunes.`, ts: Date.now() });
     gameSay("🏁 Terminó el torneo semanal.\n" + top.slice(0, 5).map(([n, p], i) => `${["🥇", "🥈", "🥉"][i] || (i + 1) + "."} ${n} — ${p} pts`).join("\n") + "\n¡Arranca uno nuevo!");
   }
@@ -982,7 +1119,7 @@ function makeEngine(ROOM, KIND) {
     const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
     const secs = triviaRound?.secs || 40;
     game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null, excl: triviaRound?.creator || null,
-      timer: setTimeout(() => finishTrivia(null), secs * 1000), hints: 0, hintTimers: [], cleanup() { this.hintTimers.forEach(clearTimeout); } };
+      timer: setTimeout(() => finishTrivia(null), secs * 1000), hints: 0, hintTimers: [], startAt: now(), cleanup() { this.hintTimers.forEach(clearTimeout); } };
     if (triviaRound?.hints !== false) scheduleHints(game, q, secs);
     gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.custom ? `✍️ de ${triviaRound.creator} ` : ""}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}${secs} s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : q.custom ? `Escribí la respuesta en el chat (${triviaRound.creator} no juega: la sabe 😉).` : "Escribí la respuesta en el chat."}`);
   }
@@ -1018,6 +1155,8 @@ function makeEngine(ROOM, KIND) {
     if (winner) {
       const pts = Math.max(1, 3 - (g.hints || 0));
       addPoints(winner, pts);
+      bumpNick(winner, "trivia", 1, { xp: 5, capKey: "game", cap: 200 });
+      if (!g.hints && now() - g.startAt < 6000) bumpNick(winner, "fast", 1);
       if (triviaRound) triviaRound.scores.set(winner, (triviaRound.scores.get(winner) || 0) + 1);
       if (triviaRound?.duel) triviaRound.duel.scores[winner] = (triviaRound.duel.scores[winner] || 0) + 1;
       gameSay(`✅ ¡${winner} acertó! Era: ${g.shown}. +${pts} pt${pts === 1 ? "" : "s"}${g.hints ? ` (con ${g.hints} pista${g.hints === 1 ? "" : "s"})` : ""} (total: ${points.get(winner)})${extra}`);
@@ -1108,11 +1247,16 @@ function makeEngine(ROOM, KIND) {
         { const g = game; endGame(); triviaRound = null;
           if (["turing", "mentiroso", "impostor", "asesinato"].includes(g.type)) return gameSay(`🏳️ ${c.nick} cortó el juego.${g.type === "turing" && g.aiAlias ? ` (La IA era ${g.aiAlias} 🤖)` : g.type === "impostor" && g.impostor ? ` (El impostor era ${g.impostor})` : g.type === "asesinato" && g.culprit ? ` (El asesino era ${g.culprit})` : ""}`);
           if (g.type === "rotos") return gameSay(`🏳️ ${c.nick} cortó 100 rotos dicen.`);
+          if (g.type === "quiendijo") return gameSay(`🏳️ ${c.nick} cortó ¿Quién dijo esto?${g.cur ? ` (Esa la dijo ${g.cur.by})` : ""}`);
           if (g.type === "juicio") return gameSay(`🏳️ ${c.nick} suspendió el juicio. ¡Se levanta la sesión!`);
           if (g.type === "llaves") return gameSay(`🏳️ ${c.nick} canceló el torneo eliminatorio.`);
           if (g.type === "vor") return gameSay(`🏳️ ${c.nick} terminó Verdad o reto. ¡Gracias por jugar!`);
           if (g.type === "dibujo") return gameSay(`🏳️ ${c.nick} cortó el juego. La palabra era: ${g.word.toUpperCase()}`);
           return gameSay(`🏳️ ${c.nick} cortó el juego. ${g.type === "trivia" ? `La respuesta era: ${g.shown}` : `La palabra era: ${g.word.toUpperCase()}`}`); }
+      case "quiendijo": {
+        if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
+        return startQuienDijo(c.nick, Math.max(1, parseInt(arg) || 5));
+      }
       case "trivia": case "ahorcado":
         if (game) return notice(id, "Ya hay un juego en curso. Terminalo o escribí /rendirse.");
         if (cmd === "trivia") {
@@ -1139,6 +1283,7 @@ function makeEngine(ROOM, KIND) {
     if (!game) return;
     const t = plain(text);
     if (!t) return;
+    if (game.type === "quiendijo") return qdGuess(nick, t);
     if (game.type === "trivia") {
       if (game.only && !game.only.includes(nick)) return;
       if (game.excl === nick) return;
@@ -1157,13 +1302,13 @@ function makeEngine(ROOM, KIND) {
     if (game.type === "ahorcado") {
       if (game.excl === nick) return;
       const word = plain(game.word);
-      if (t === word) { const w = game.word; endGame(); addPoints(nick, 3); return gameSay(`🎉 ¡${nick} adivinó la palabra: ${w.toUpperCase()}! +3 pts`); }
+      if (t === word) { const w = game.word; endGame(); addPoints(nick, 3); bumpNick(nick, "trivia", 1, { xp: 5, capKey: "game", cap: 200 }); return gameSay(`🎉 ¡${nick} adivinó la palabra: ${w.toUpperCase()}! +3 pts`); }
       if (!/^[a-zñ]$/.test(t)) return;
       if (game.found.has(t) || game.wrong.includes(t)) return gameSay(`La "${t.toUpperCase()}" ya se dijo.`);
       const lives = game.lives || 6, face = () => GALLOWS[Math.min(6, Math.round(game.wrong.length * 6 / lives))];
       if (word.includes(t)) {
         game.found.add(t);
-        if (word.replace(/ /g, "").split("").every((ch) => game.found.has(ch))) { const w = game.word; endGame(); addPoints(nick, 2); return gameSay(`🎉 ¡Completaron la palabra: ${w.toUpperCase()}! ${nick} puso la última letra (+2 pts)`); }
+        if (word.replace(/ /g, "").split("").every((ch) => game.found.has(ch))) { const w = game.word; endGame(); addPoints(nick, 2); bumpNick(nick, "trivia", 1, { xp: 5, capKey: "game", cap: 200 }); return gameSay(`🎉 ¡Completaron la palabra: ${w.toUpperCase()}! ${nick} puso la última letra (+2 pts)`); }
         return gameSay(`✔️ ¡Está la ${t.toUpperCase()}!\n${hangView()}\n${face()} Vidas: ${lives - game.wrong.length}${game.wrong.length ? " · Erradas: " + game.wrong.join(" ").toUpperCase() : ""}`);
       }
       game.wrong.push(t);
@@ -1220,6 +1365,7 @@ function makeEngine(ROOM, KIND) {
     const word = game.word.toUpperCase(), drawer = game.drawer;
     if (winner) {
       addPoints(winner, 2); addPoints(drawer, 1);
+      bumpNick(drawer, "drawn", 1, { xp: 5, capKey: "game", cap: 200 }); bumpNick(winner, "guessed", 1, { xp: 3, capKey: "game", cap: 200 });
       game.scores.set(winner, (game.scores.get(winner) || 0) + 2); game.scores.set(drawer, (game.scores.get(drawer) || 0) + 1);
       gameSay(`✅ ¡${winner} adivinó! Era ${word}. +2 para ${winner} y +1 para ${drawer} 🎨`);
     } else gameSay(`⏰ ¡Tiempo! Nadie adivinó. Era ${word}.`);
@@ -1378,13 +1524,13 @@ function makeEngine(ROOM, KIND) {
   function vorDone(nick) {
     vorClear();
     const others = [...game.players].filter((n) => n !== nick && byNick(n));
-    if (!game.pen.vote || game.pen.type === "nada" || !others.length) { gameSay(`👏 ¡Bien ${nick}!`); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2500)); }
+    if (!game.pen.vote || game.pen.type === "nada" || !others.length) { gameSay(`👏 ¡Bien ${nick}!`); bumpNick(nick, "retos", 1, { xp: 6, capKey: "game", cap: 200 }); game.phase = "next"; return game.timers.push(setTimeout(vorNext, 2500)); }
     game.phase = "vote";
     const que = game.kind === "verdad" ? "respondió la verdad" : "cumplió el reto";
     gamePoll(`🗳️ ¿${nick} ${que} de verdad?`, ["✅ Cumplió", "❌ Trucho"], 20, (counts) => {
       if (game?.type !== "vor" || game.phase !== "vote" || game.current !== nick) return;
       if (counts[1] > counts[0]) vorPenalize(nick, `no convenció al grupo (${counts[1]} a ${counts[0]})`);
-      else gameSay(`👏 ¡Aprobado/a! ${nick} cumplió${counts[0] ? ` (${counts[0]} a ${counts[1]})` : ""}.`);
+      else { gameSay(`👏 ¡Aprobado/a! ${nick} cumplió${counts[0] ? ` (${counts[0]} a ${counts[1]})` : ""}.`); bumpNick(nick, "retos", 1, { xp: 6, capKey: "game", cap: 200 }); }
       game.phase = "next"; game.timers.push(setTimeout(vorNext, 2500));
     }, [nick]);
   }
@@ -1435,6 +1581,7 @@ function makeEngine(ROOM, KIND) {
   }
   function finishDuel(d, winner, loser) {
     clearTimeout(d.timer); duels.delete(d.id);
+    bumpNick(winner, "duels", 1, { xp: 8, capKey: "game", cap: 200 });
     if (d.tour) {
       addPoints(winner, 2);
       const isFinal = game?.type === "llaves" && game.rounds[game.rounds.length - 1]?.length === 1;
@@ -1510,6 +1657,7 @@ function makeEngine(ROOM, KIND) {
     if (winners.length === 1) {
       const champ = winners[0];
       addPoints(champ, 10);
+      bumpNick(champ, "champ", 1, { xp: 60 });
       io.emit("announce", { text: `🏆 ¡${champ} es el/la CAMPEÓN/A del torneo eliminatorio! +10 pts`, ts: now() });
       gameSay(bracketText() + `\n\n🏆 CAMPEÓN/A: ${champ} 🎉`);
       return endGame();
@@ -1578,7 +1726,7 @@ function makeEngine(ROOM, KIND) {
     const lines = groups.slice(0, 6).map((g, i) => {
       if (g.people.length !== prev) { place = i; prev = g.people.length; }
       const label = [...g.labels].sort((a, b) => b[1] - a[1])[0][0];
-      if (place < 3 && g.people.length >= 2) for (const n of g.people) { addPoints(n, pts[place]); game.scores.set(n, (game.scores.get(n) || 0) + pts[place]); }
+      if (place < 3 && g.people.length >= 2) for (const n of g.people) { addPoints(n, pts[place]); bumpNick(n, "rotos", 1, { xp: 2, capKey: "game", cap: 200 }); game.scores.set(n, (game.scores.get(n) || 0) + pts[place]); }
       return `${place < 3 && g.people.length >= 2 ? medals[place] : "▫️"} ${label.toUpperCase()} — ${g.people.length} voto${g.people.length === 1 ? "" : "s"}\n      (${g.people.join(", ")})`;
     });
     const solos = groups.filter((g) => g.people.length === 1).length;
@@ -1736,7 +1884,7 @@ function makeEngine(ROOM, KIND) {
       const reveal = [...g.alias].map(([n, a]) => `${a} era ${n}`).concat([`${g.aiAlias} era 🤖 LA IA`]).join("\n");
       let msg;
       if (top.length === 1 && top[0] === aiIdx) {
-        for (const [n, idx] of votes) if (idx === aiIdx && g.alias.has(n)) addPoints(n, 3);
+        for (const [n, idx] of votes) if (idx === aiIdx && g.alias.has(n)) { addPoints(n, 3); bumpNick(n, "detective", 1, { xp: 5, capKey: "game", cap: 200 }); }
         msg = `🎉 ¡LOS HUMANOS GANAN! Descubrieron a la IA: era ${g.aiAlias}.\n+3 pts para los que la votaron.`;
       } else if (!top.length) msg = "🤷 Nadie votó… ¡la IA gana por abandono! 🤖";
       else {
@@ -1806,7 +1954,7 @@ function makeEngine(ROOM, KIND) {
       for (const [voter, idx] of votes) {
         const o = opts[idx];
         if (o.truth) { addPoints(voter, 2); g.scores.set(voter, (g.scores.get(voter) || 0) + 2); }
-        else for (const a of o.authors) if (a !== voter) { addPoints(a, 1); g.scores.set(a, (g.scores.get(a) || 0) + 1); }
+        else for (const a of o.authors) if (a !== voter) { addPoints(a, 1); g.scores.set(a, (g.scores.get(a) || 0) + 1); bumpNick(a, "fooled", 1, { xp: 2, capKey: "game", cap: 200 }); }
       }
       opts.forEach((o, i) => { if (!o.truth) lines.push(`🤥 «${o.text}» — de ${o.authors.join(", ")}${counts[i] ? ` (engañó a ${counts[i]} 😈)` : ""}`); });
       gameSay(`✅ La verdad era: «${g.fact[0].replace("___", g.fact[1].toUpperCase())}»\n${counts[ti] ? `${counts[ti]} la encontraron (+2)` : "¡Nadie la encontró!"}\n${lines.join("\n")}`);
@@ -1875,6 +2023,8 @@ function makeEngine(ROOM, KIND) {
       const top = topVoted(counts), caught = top.length === 1 && opts[top[0]] === g.impostor;
       if (caught) { for (const n of opts) if (n !== g.impostor) addPoints(n, 2); }
       else addPoints(g.impostor, 4);
+      for (const [n, idx] of votes) if (n !== g.impostor && opts[idx] === g.impostor) bumpNick(n, "detective", 1, { xp: 5, capKey: "game", cap: 200 });
+      if (!caught) bumpNick(g.impostor, "fooled", Math.max(1, [...votes.keys()].filter((n) => n !== g.impostor).length), { xp: 8, capKey: "game", cap: 200 });
       gameSay(`${caught ? `🎯 ¡LO ENCONTRARON! El impostor era ${g.impostor}. +2 para el resto.` : `😈 ¡GANA EL IMPOSTOR! Era ${g.impostor} y ${top.length ? `votaron a ${top.map((i) => opts[i]).join(" y ")}` : "nadie votó"}. +4 para ${g.impostor}.`}\n🔑 La palabra era ${g.word.toUpperCase()} y el impostor tenía ${g.fake.toUpperCase()}.`);
       endGame();
     });
@@ -1923,11 +2073,67 @@ function makeEngine(ROOM, KIND) {
     const opts = [...g.roles.keys()].filter((n) => byNick(n));
     gamePoll("🔪 ¿Quién es el asesino?", opts, 45, (counts, votes) => {
       const top = topVoted(counts), caught = top.length === 1 && opts[top[0]] === g.culprit;
-      for (const [n, idx] of votes) if (opts[idx] === g.culprit && n !== g.culprit) addPoints(n, 2);
-      if (!caught) addPoints(g.culprit, 5);
+      for (const [n, idx] of votes) if (opts[idx] === g.culprit && n !== g.culprit) { addPoints(n, 2); bumpNick(n, "detective", 1, { xp: 5, capKey: "game", cap: 200 }); }
+      if (!caught) { addPoints(g.culprit, 5); bumpNick(g.culprit, "fooled", Math.max(1, [...votes.keys()].filter((n) => n !== g.culprit).length), { xp: 8, capKey: "game", cap: 200 }); }
       gameSay(`${caught ? `🚔 ¡ATRAPADO! El asesino era ${g.culprit} (${g.roles.get(g.culprit)}). +2 para quienes lo votaron.` : `😈 ¡EL ASESINO ESCAPÓ! Era ${g.culprit} (${g.roles.get(g.culprit)}). +5 para el/la asesino/a.`}\n🗝️ Arma: ${g.m.arma}\n📜 ${g.m.final}`);
       endGame();
     });
+  }
+
+  // ================== 🗣️ ¿Quién dijo esto? (frases célebres del chat) ==================
+  function startQuienDijo(starter, rounds = 5) {
+    const pool = frases.filter((f) => f.at < now() - 10 * 60000); // que no sea de recién
+    if (pool.length < 3) return gameSay(`🗣️ Todavía no hay suficientes frases célebres (hay ${pool.length}, se necesitan 3).\nUn mensaje se vuelve frase célebre cuando 3 personas le reaccionan, cuando una publicación de 📰 Comunidad junta 3 ❤️, o cuando un moderador lo marca con ⭐.`);
+    rounds = Math.min(rounds, pool.length, 15);
+    game = { type: "quiendijo", left: rounds, total: rounds, scores: new Map(), used: new Set(), timers: [], cleanup() { this.timers.forEach(clearTimeout); } };
+    gameSay(`🗣️ ¿QUIÉN DIJO ESTO? — ${rounds} frases célebres de Gente Rota.\nEscribí el apodo de quien lo dijo. El autor de la frase no puede contestar 😉`);
+    game.timers.push(setTimeout(qdRound, 3000));
+  }
+  const agoTxt = (t) => { const d = Math.floor((now() - t) / 86400e3); return d <= 0 ? "hoy" : d === 1 ? "ayer" : d < 30 ? `hace ${d} días` : d < 365 ? `hace ${Math.floor(d / 30)} mes${d >= 60 ? "es" : ""}` : "hace más de un año"; };
+  function qdRound() {
+    const g = game; if (!g || g.type !== "quiendijo") return;
+    g.timers.forEach(clearTimeout); g.timers = [];
+    // las menos usadas primero (y entre esas, al azar)
+    const pool = frases.filter((f) => !g.used.has(f.id) && f.at < now() - 10 * 60000).sort((a, b) => (a.uses || 0) - (b.uses || 0));
+    const low = pool.filter((f) => (f.uses || 0) === (pool[0]?.uses || 0));
+    const f = pick(low.length ? low : pool);
+    if (!f) return qdEnd();
+    g.used.add(f.id); f.uses = (f.uses || 0) + 1; f.lastUsed = now(); saveFrases();
+    g.cur = f; g.hints = 0; g.n = (g.n || 0) + 1;
+    const extra = f.kind === "muro" ? `📰 en Comunidad · ${agoTxt(f.at)}${f.score ? ` · ${f.score} ❤️` : ""}` : `${f.src} · ${agoTxt(f.at)}${f.score ? ` · ${f.score} personas reaccionaron` : ""}`;
+    gameSay(`🗣️ [${g.n}/${g.total}] ¿Quién dijo esto?\n«${f.text}»\n(${extra}) — 30 s`);
+    const name = f.by;
+    g.timers.push(setTimeout(() => { if (game === g && g.cur === f) { g.hints = 1; gameSay(`💡 Empieza con «${name[0].toUpperCase()}» (ahora vale 2)`); } }, 11000));
+    g.timers.push(setTimeout(() => { if (game === g && g.cur === f) { g.hints = 2; gameSay(`💡 ${[...name].map((ch, i) => (i === 0 || /\s/.test(ch) ? ch.toUpperCase() : i === name.length - 1 ? ch : "_")).join(" ")} (${name.length} letras, ahora vale 1)`); } }, 21000));
+    g.timers.push(setTimeout(() => qdReveal(null), 30000));
+  }
+  function qdReveal(winner) {
+    const g = game; if (!g || g.type !== "quiendijo" || !g.cur) return;
+    const f = g.cur; g.cur = null;
+    g.timers.forEach(clearTimeout); g.timers = [];
+    if (winner) {
+      const pts = Math.max(1, 3 - g.hints);
+      addPoints(winner, pts); g.scores.set(winner, (g.scores.get(winner) || 0) + pts);
+      bumpNick(winner, "guessed", 1, { xp: 4, capKey: "game", cap: 200 });
+      gameSay(`✅ ¡${winner} acertó! Lo dijo ${f.by}. +${pts} pt${pts === 1 ? "" : "s"}`);
+    } else gameSay(`⏰ Nadie acertó: lo dijo ${f.by} 👏`);
+    // el autor se entera de que su frase salió
+    const t = byNick(f.by); if (t && (!f.pkey || t.c.pkey === f.pkey)) { const p = profK(t.c.pkey, t.c.nick); if (p) gainPz(t.c.pkey, p, 2, "pFrase", 15, "tu frase salió en el juego"); }
+    g.left--;
+    if (g.left > 0) g.timers.push(setTimeout(qdRound, 4000)); else g.timers.push(setTimeout(qdEnd, 2500));
+  }
+  function qdEnd() {
+    const g = game; if (!g || g.type !== "quiendijo") return;
+    const res = [...g.scores].sort((a, b) => b[1] - a[1]);
+    endGame();
+    gameSay(res.length ? `🏁 Fin de ¿Quién dijo esto? Ganó ${res[0][0]} con ${res[0][1]} punto${res[0][1] === 1 ? "" : "s"} 🗣️\n` + res.map(([n, p]) => `${n}: ${p}`).join(" · ") : "🏁 Fin de ¿Quién dijo esto? Nadie acertó… ¡no se conocen nada! 😅");
+  }
+  function qdGuess(nick, t) {
+    const g = game, f = g.cur; if (!f) return;
+    const who = byNick(nick);
+    if (nick === f.by || (f.pkey && who?.c?.pkey === f.pkey)) return; // el autor no juega esta
+    const a = plain(f.by), x = plain(t).replace(/^@/, "");
+    if (x === a || (a.length >= 5 && lev(x, a) <= 1) || x.split(" ").includes(a)) qdReveal(nick);
   }
 
   // Eventos del celu que son de esta sala de juegos
@@ -2157,9 +2363,9 @@ io.on("connection", (socket) => {
     } catch (e) { console.error(`Error en "${ev}":`, e); }
   });
   const ip = realIp(socket.handshake.headers, socket.handshake.address);
-  const banUntil = bans.get(ip);
-  if (banUntil && banUntil > now()) {
-    socket.emit("kicked", { reason: "Estás baneado/a temporalmente.", ban: true, mins: Math.ceil((banUntil - now()) / 60000) });
+  const banHit = banFind(null, String(socket.handshake.auth?.dev || "").slice(0, 40));
+  if (banHit) {
+    socket.emit("kicked", { reason: banHit.reason || "Estás baneado/a.", ban: true, mins: banHit.until >= FOREVER / 2 ? -1 : Math.ceil((banHit.until - now()) / 60000) });
     return setTimeout(() => socket.disconnect(true), 300);
   }
 
@@ -2169,6 +2375,10 @@ io.on("connection", (socket) => {
   };
   clients.set(socket.id, c);
   muroHandlers(socket, c);
+  logrosHandlers(socket, c);
+  permHandlers(socket, c);
+  shopHandlers(socket, c);
+  bdayHandlers(socket, c);
   for (const E of ENGINES) E.bind(socket, c);
   socket.on("game-custom", (o = {}, cb) => { if (!Object.values(CUSTOM_OF).flat().includes(o.type)) cb && cb({ ok: false, error: "Juego desconocido." }); });
 
@@ -2191,9 +2401,11 @@ io.on("connection", (socket) => {
     clients.delete(oldId); clients.set(socket.id, c);
     users.set(c.nick.toLowerCase(), socket.id);
     ses.c = c; ses.id = socket.id;
+    achJoin(c);
     const replay = ses.buf; ses.buf = []; ses.bytes = 0;
     cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents(), replay, away: Math.round((now() - (old.awayAt || now())) / 1000) });
     if (c.admin) socket.emit("admin", { mod: true, owner: !!c.owner });
+    sendPerm(c, socket.id); if (c.admin) requestsCount();
     pushUsers();
   });
 
@@ -2219,6 +2431,10 @@ io.on("connection", (socket) => {
     if (RESERVED.includes(norm(nick)) || norm(nick).includes("fastidio")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
     if (censor(nick).hits) return cb({ ok: false, error: "Elegí otro apodo." });
     if (users.has(nick.toLowerCase())) return cb({ ok: false, error: "Ese apodo ya está en uso." });
+    if (banFind(null, null, nick)) return cb({ ok: false, error: "Ese apodo está baneado." });
+    // Baneo por IP: frena a los que vuelven con otro apodo y celu "limpio", pero no a los habituales
+    // que comparten IP con la persona baneada (en los celus pasa seguido).
+    if (!c.admin && banFind(c.ip)) { const old = profiles.get(pkeyOf(nick, c.dev || c.ip)); if (!old || (old.xp || 0) < 30) return cb({ ok: false, error: "No se puede entrar desde esta conexión por un rato. Si sos habitual del chat, probá más tarde." }); }
     const pu = penUntil(chatPenalties, c, nick);
     if (pu) {
       const mins = Math.ceil((pu - now()) / 60000);
@@ -2228,10 +2444,13 @@ io.on("connection", (socket) => {
     }
 
     c.nick = nick; c.joinedAt = now();
+    achJoin(c);
     c.token = newToken();
     sessions.set(c.token, { c, id: socket.id, timer: null, buf: [], bytes: 0 });
     users.set(nick.toLowerCase(), socket.id);
     cb({ ok: true, nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
+    sendPerm(c, socket.id); if (c.admin) requestsCount();
+    setTimeout(() => entryAnnounce(c), 600);
     emitFrom(c, "user-joined", nick, true);
     pushUsers();
   });
@@ -2248,23 +2467,14 @@ io.on("connection", (socket) => {
     if (text === null) return;
     const media = checkMedia(c, socket.id, p);
     if (!media) return;
+    // Fotos: solo con permiso de un moderador
+    if (media.image && !canPhoto(c)) { sendPerm(c, socket.id); return notice(socket.id, NO_PHOTO, "warn"); }
     const GE = ENGINE_BY_ROOM[room];
     if (GE && text && GE.intercept(c, socket.id, text)) return;
     if (GE) GE.recent(c.nick);
-    const id = newId();
-    const reply = buildReply(p.replyTo, room);
-    remember(id, { chat: room, from: c.nick, text: text || mediaLabel(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
-    const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
-    if (room === "mods") emitToMods("public-message", out);
-    else if (room === "confesiones") {
-      // Nadie ve el nombre; los moderadores sí (para poder moderar); el autor lo ve como propio
-      const anon = { id, room, from: "Anónimo", anon: true, text, ...media, reply, ts: out.ts };
-      for (const [sid, rc] of clients) {
-        if (!rc.nick || blockedPair(rc, c)) continue;
-        io.to(sid).emit("public-message", rc === c ? { ...anon, mine: true } : rc.admin ? { ...anon, realFrom: c.nick } : anon);
-      }
-    } else emitFrom(c, "public-message", out);
+    publishPublic(c, room, text, media, p.replyTo);
     if (GE && text) GE.guess(c.nick, text);
+    achMessage(c, room, text);
   });
 
   socket.on("private-message", ({ to, text: raw, replyTo, image, gif, audio } = {}, cb) => {
@@ -2275,14 +2485,55 @@ io.on("connection", (socket) => {
     if (blockedPair(c, target.c)) return cb({ ok: false, error: c.blocked.has(target.c.nick.toLowerCase()) ? `Tenés bloqueado/a a ${target.c.nick}. Desbloqueá para escribirle.` : "No podés enviarle mensajes a esta persona." });
     const text = checkMessage(c, socket.id, raw, "private", !!(image || gif || audio));
     if (text === null) return cb({ ok: false, silent: true });
+    if (image && !canPhoto(c)) { sendPerm(c, socket.id); return cb({ ok: false, error: NO_PHOTO }); }
     const media = checkMedia(c, socket.id, { image, gif, audio });
     if (!media) return cb({ ok: false, silent: true });
     const id = newId();
-    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
+    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mh: mediaHash(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
     const reply = buildReply(replyTo, null, c.nick, target.c.nick);
     const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
     io.to(target.id).emit("private-message", msg);
     cb({ ok: true, msg });
+  });
+
+  // ---- ↪️ Reenviar (como en WhatsApp): de una sala o un privado, a hasta 5 personas ----
+  socket.on("forward", ({ id, to, image, gif, audio } = {}, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    const m = messages.get(String(id || ""));
+    if (!m) return cb({ ok: false, error: "Ese mensaje ya no existe (se borró o es muy viejo)." });
+    const names = [...new Set((Array.isArray(to) ? to : [to]).map((x) => String(x || "")).filter(Boolean))].slice(0, 5);
+    if (!names.length) return cb({ ok: false, error: "Elegí a quién reenviarlo." });
+    // de dónde viene y a quién se le atribuye (sin revelar nunca a quien confesó)
+    let fwd;
+    if (m.chat === "mods") return cb({ ok: false, error: "Los mensajes de la sala de moderación no se reenvían." });
+    if (m.chat === "private") {
+      if (c.nick !== m.from && c.nick !== m.to) return cb({ ok: false, error: "No podés reenviar eso." });
+      fwd = m.from === c.nick ? { from: c.nick } : {};
+    } else if (m.chat === "confesiones") fwd = { from: "Anónimo", room: "🤫 Confesiones" };
+    else fwd = { from: m.from, room: FRASE_ROOMS[m.chat] || "# " + m.chat };
+    // el contenido tiene que ser el del mensaje original
+    const media = m.media ? checkMedia(c, socket.id, { image, gif, audio }) : {};
+    if (m.media) {
+      if (!m.mh) return cb({ ok: false, error: "Ese tipo de mensaje no se puede reenviar." });
+      if (!media) return cb({ ok: false, silent: true });
+      if (mediaHash(media) !== m.mh) return cb({ ok: false, error: "No se pudo reenviar ese archivo." });
+      if (media.image && !canPhoto(c)) { sendPerm(c, socket.id); return cb({ ok: false, error: NO_PHOTO }); }
+    }
+    const raw = m.media ? (m.cap || "") : m.fullText || m.text;
+    const text = checkMessage(c, socket.id, raw, "private", !!m.media);
+    if (text === null) return cb({ ok: false, silent: true });
+    const sent = [], errors = [];
+    for (const n of names) {
+      const target = byNick(n);
+      if (!target || target.id === socket.id) { errors.push(`${n}: no está conectado/a.`); continue; }
+      if (blockedPair(c, target.c)) { errors.push(`${target.c.nick}: no le podés escribir.`); continue; }
+      const nid = newId();
+      remember(nid, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mh: m.mh || "", ts: now(), media: !!m.media });
+      const msg = { id: nid, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, fwd, ts: now() };
+      io.to(target.id).emit("private-message", msg);
+      sent.push(msg);
+    }
+    cb({ ok: sent.length > 0, msgs: sent, errors, error: sent.length ? "" : errors.join(" ") });
   });
 
   socket.on("typing", ({ to, room, on } = {}) => {
@@ -2324,7 +2575,7 @@ io.on("connection", (socket) => {
     if (!set.size) delete m.reactions[emoji];
     const payload = { id, reactions: Object.fromEntries(Object.entries(m.reactions).map(([e, s]) => [e, [...s]])) };
     if (m.chat === "mods") emitToMods("reactions", payload);
-    else if (m.chat !== "private") io.emit("reactions", payload);
+    else if (m.chat !== "private") { io.emit("reactions", payload); checkReactFrase(id, m); }
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("reactions", payload); });
   });
 
@@ -2375,6 +2626,7 @@ io.on("connection", (socket) => {
       const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(avatar));
       if (c.noAvatar && !c.admin) { cb && cb({ ok: false, error: "Un moderador te sacó el permiso de poner foto de perfil." }); }
       else if (!m || avatar.length > 120000) { cb && cb({ ok: false, error: "La imagen no es válida o es muy pesada." }); }
+      else if (!canPhoto(c)) { pushUsers(); return cb && cb({ ok: false, error: NO_PHOTO, needPerm: true }); }
       else { c.avatar = Buffer.from(m[2], "base64"); c.avatarType = m[1]; c.avVer = now(); }
     }
     pushUsers();
@@ -2516,7 +2768,8 @@ io.on("connection", (socket) => {
     const r = censor(text);
     if (r.harm && !c.admin) { strike(c, socket.id, 2, "Incitar a hacerse daño"); }
     text = r.text;
-    m.text = text.slice(0, 160);
+    m.text = text.slice(0, 160); m.fullText = text.slice(0, MAX_MSG); m.cap = text;
+    { const f = frases.find((x) => x.id === id); if (f) { if (fraseOk(text)) { f.text = text.slice(0, 200); saveFrases(); } else dropFrase(id); } }
     const payload = { id, text, edited: true };
     if (m.chat === "private") [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("edited", payload); });
     else if (m.chat === "mods") emitToMods("edited", payload);
@@ -2527,7 +2780,8 @@ io.on("connection", (socket) => {
     const m = messages.get(id);
     if (!m || !c.nick) return;
     if (m.from !== c.nick && !(c.admin && m.chat !== "private")) return;
-    messages.delete(id);
+    messages.delete(id); dropFrase(id);
+    if (m.from !== c.nick) logMod(c.nick, `🗑️ borró un mensaje de ${m.from}: «${String(m.text || "").slice(0, 80)}»`);
     if (m.chat === "mods") emitToMods("deleted", { id });
     else if (m.chat !== "private") io.emit("deleted", { id, byMod: m.from !== c.nick });
     else [m.from, m.to].forEach((n) => { const t = byNick(n); if (t) io.to(t.id).emit("deleted", { id }); });
@@ -2545,12 +2799,16 @@ io.on("connection", (socket) => {
     if (!c.nick || !t || t.id === socket.id) return cb && cb({ ok: false });
     const key = t.c.nick.toLowerCase();
     const m = reports.get(key) || new Map();
-    m.set(c.nick.toLowerCase(), now());
-    for (const [k, ts] of m) if (now() - ts > 15 * 60000) m.delete(k);
+    // cuenta por celu (no por apodo): 3 apodos desde el mismo celu valen como 1 reporte
+    const sameDev = c.dev && c.dev === t.c.dev;
+    const fresh = now() - (c.joinedAt || now()) < 3 * 60000 && !c.veteran;
+    if (!sameDev && !fresh) m.set(c.dev || "ip:" + c.ip, { ts: now(), ip: c.ip });
+    for (const [k, v] of m) if (now() - v.ts > 15 * 60000) m.delete(k);
     reports.set(key, m);
     cb && cb({ ok: true });
-    notifyAdmins(`${c.nick} reportó a ${t.c.nick}: ${String(reason || "sin motivo").slice(0, 200)}`);
-    if (m.size >= 3 && !t.c.admin && t.c.mutedUntil < now()) {
+    notifyAdmins(`${c.nick} reportó a ${t.c.nick}: ${String(reason || "sin motivo").slice(0, 200)}${fresh ? " (recién llegado/a: no cuenta para el silencio automático)" : ""}`);
+    const ips = new Set([...m.values()].map((v) => v.ip));
+    if (m.size >= 3 && ips.size >= 2 && !t.c.admin && t.c.mutedUntil < now()) {
       m.clear();
       mute(t.c, t.id, 10, "Varios usuarios lo/la reportaron");
     }
@@ -2629,15 +2887,21 @@ function muroHidden(viewer, nick, authorAdmin) {
   return !!(a && a.blocked.has(viewer.nick.toLowerCase()) && !a.admin);
 }
 const ownsPost = (c, x) => c.admin || (x.by === c.nick && (!x.dev || !c.dev || x.dev === c.dev));
+function authorAch(x) {
+  const pr = profiles.get(x.pkey || pkeyOf(x.by, x.dev)); if (!pr) return {};
+  const b = BADGES.find((y) => y.id === pr.show && pr.b[y.id] !== undefined);
+  const ck = cosmetics(pr);
+  return { lv: levelOf(pr.xp) + 1, bd: b ? b.ico : "", ...(ck ? { ck } : {}) };
+}
 function postView(p, viewer) {
   if (muroHidden(viewer, p.by, p.admin)) return null;
   const likes = p.likes || [];
   return {
-    id: p.id, by: p.by, role: p.role || null, at: p.at, text: p.text, edited: !!p.edited,
+    id: p.id, by: p.by, role: p.role || null, at: p.at, text: p.text, edited: !!p.edited, ...authorAch(p),
     img: p.img ? `/muro/img/${p.id}` : "",
     likes: likes.length, liked: likes.includes(viewer.nick), likers: likes.slice(-5).reverse(),
     comments: (p.comments || []).filter((k) => !muroHidden(viewer, k.by, k.admin))
-      .map((k) => ({ id: k.id, by: k.by, role: k.role || null, at: k.at, text: k.text, mine: ownsPost(viewer, k) })),
+      .map((k) => ({ id: k.id, by: k.by, role: k.role || null, at: k.at, text: k.text, mine: ownsPost(viewer, k), ...authorAch(k) })),
     mine: ownsPost(viewer, p),
   };
 }
@@ -2652,6 +2916,18 @@ function muroBroadcast(ev, p) {
 function muroNotify(nick, text) {
   const t = byNick(nick); if (!t) return;
   io.to(t.id).emit("muro-notif", { text });
+}
+// Crea una publicación del muro (también al aprobar una que estaba esperando)
+function createPost(c, clean, img) {
+  const t = now();
+  const p = { id: newId() + t.toString(36), by: c.nick, dev: c.dev || "", pkey: c.pkey, role: role(c), admin: !!c.admin, at: t, text: clean, img: !!img, likes: [], comments: [] };
+  bump(c, "posts", 1, { xp: 15, capKey: "post", cap: 45 });
+  muro.unshift(p); muroById.set(p.id, p);
+  if (img) cacheImg(p.id, img.buf, img.type);
+  const cmds = [["SET", postKey(p.id), JSON.stringify(p)], ...(img ? [["SET", imgKey(p.id), img.data]] : []), ["LPUSH", MURO_KEY, p.id], ["LTRIM", MURO_KEY, 0, MURO_MAX - 1]];
+  while (muro.length > MURO_MAX) { const old = muro.pop(); muroById.delete(old.id); imgCache.delete(old.id); cmds.push(["DEL", postKey(old.id), imgKey(old.id)]); }
+  muroDb(cmds);
+  muroBroadcast("muro-new", p);
 }
 function muroHandlers(socket, c) {
   socket.on("muro-get", ({ before } = {}, cb) => {
@@ -2668,6 +2944,7 @@ function muroHandlers(socket, c) {
     if (!c.admin && t - (c.lastPostAt || 0) < 60000) return cb({ ok: false, error: `Esperá ${Math.ceil((60000 - (t - c.lastPostAt)) / 1000)} s para publicar de nuevo.` });
     let img = null;
     if (image) {
+      if (!canPhoto(c)) return cb({ ok: false, error: NO_PHOTO });
       if (c.noMedia && !c.admin) return cb({ ok: false, error: "Un moderador te sacó el permiso de subir fotos." });
       if (!c.admin && t - c.joinedAt < 60000) return cb({ ok: false, error: "Podés subir fotos después de tu primer minuto en el chat." });
       const m = typeof image === "string" && image.length < 1.4e6 && image.match(IMG_DATA_RE);
@@ -2678,13 +2955,7 @@ function muroHandlers(socket, c) {
     if (clean === null) return cb({ ok: false, silent: true });
     if (!clean && !img) return cb({ ok: false, error: "Escribí algo o subí una foto." });
     c.lastPostAt = t;
-    const p = { id: newId() + t.toString(36), by: c.nick, dev: c.dev || "", role: role(c), admin: !!c.admin, at: t, text: clean, img: !!img, likes: [], comments: [] };
-    muro.unshift(p); muroById.set(p.id, p);
-    if (img) cacheImg(p.id, img.buf, img.type);
-    const cmds = [["SET", postKey(p.id), JSON.stringify(p)], ...(img ? [["SET", imgKey(p.id), img.data]] : []), ["LPUSH", MURO_KEY, p.id], ["LTRIM", MURO_KEY, 0, MURO_MAX - 1]];
-    while (muro.length > MURO_MAX) { const old = muro.pop(); muroById.delete(old.id); imgCache.delete(old.id); cmds.push(["DEL", postKey(old.id), imgKey(old.id)]); }
-    muroDb(cmds);
-    muroBroadcast("muro-new", p);
+    createPost(c, clean, img);
     cb({ ok: true });
   });
   socket.on("muro-like", (id) => {
@@ -2692,7 +2963,15 @@ function muroHandlers(socket, c) {
     const i = p.likes.indexOf(c.nick);
     if (i >= 0) p.likes.splice(i, 1); else {
       p.likes.push(c.nick);
-      if (p.by !== c.nick && !(p.notified ||= []).includes(c.nick)) { p.notified.push(c.nick); muroNotify(p.by, `❤️ A ${c.nick} le gustó tu publicación`); }
+      if (p.by !== c.nick && !(p.notified ||= []).includes(c.nick)) {
+        p.notified.push(c.nick); muroNotify(p.by, `❤️ A ${c.nick} le gustó tu publicación`);
+        // logros: el que da ❤️ y el que la recibe (una sola vez por persona y publicación)
+        bump(c, "likesGiven", 1, { xp: 1, capKey: "likeGive", cap: 20 });
+        const ak = p.pkey || pkeyOf(p.by, p.dev);
+        bumpK(ak, p.by, "likesRecv", 1, { xp: 3, capKey: "likeRecv", cap: 90 });
+        bumpK(ak, p.by, "maxLikes", p.notified.length, { max: true });
+        if (p.notified.length >= 3) addFrase({ id: p.id, text: p.text, by: p.by, pkey: ak, at: p.at, src: "📰 Comunidad", score: p.notified.length, kind: "muro" });
+      }
     }
     savePost(p); muroBroadcast("muro-upd", p);
   });
@@ -2703,7 +2982,11 @@ function muroHandlers(socket, c) {
     if ((p.comments || []).length >= MURO_COMMENTS) return cb({ ok: false, error: "Esta publicación ya tiene demasiados comentarios." });
     const clean = checkMessage(c, socket.id, text, "comunidad");
     if (!clean) return cb({ ok: false, silent: true });
-    (p.comments ||= []).push({ id: newId(), by: c.nick, dev: c.dev || "", role: role(c), admin: !!c.admin, at: now(), text: clean });
+    (p.comments ||= []).push({ id: newId(), by: c.nick, dev: c.dev || "", pkey: c.pkey, role: role(c), admin: !!c.admin, at: now(), text: clean });
+    if (p.by !== c.nick) {
+      bump(c, "comments", 1, { xp: 4, capKey: "com", cap: 60 });
+      bumpK(p.pkey || pkeyOf(p.by, p.dev), p.by, "commentsRecv", 1, { xp: 2, capKey: "comRecv", cap: 40 });
+    }
     savePost(p); muroBroadcast("muro-upd", p);
     if (p.by !== c.nick) muroNotify(p.by, `💬 ${c.nick} comentó tu publicación: «${clean.slice(0, 60)}${clean.length > 60 ? "…" : ""}»`);
     // también a quienes comentaron antes (sin repetir)
@@ -2732,10 +3015,500 @@ function muroHandlers(socket, c) {
       return;
     }
     if (!ownsPost(c, p)) return;
-    muro.splice(muro.indexOf(p), 1); muroById.delete(p.id); imgCache.delete(p.id);
+    muro.splice(muro.indexOf(p), 1); muroById.delete(p.id); imgCache.delete(p.id); dropFrase(p.id);
     muroDb([["DEL", postKey(p.id), imgKey(p.id)], ["LREM", MURO_KEY, 0, p.id]]);
     io.emit("muro-del", p.id);
-    if (c.admin && p.by !== c.nick) notifyAdmins(`🗑️ ${c.nick} borró una publicación de ${p.by} en Comunidad.`);
+    if (c.admin && p.by !== c.nick) { notifyAdmins(`🗑️ ${c.nick} borró una publicación de ${p.by} en Comunidad.`); logMod(c.nick, `🗑️ borró una publicación de ${p.by} en Comunidad: «${String(p.text || "").slice(0, 80)}»`); }
+  });
+}
+
+// ================== 🏅 Logros, niveles e insignias ==================
+// Premian participar: charlar, publicar en el muro, que te den ❤️, comentar, jugar.
+// Se guardan por apodo + celu (así nadie te "roba" los logros entrando con tu apodo desde otro lado).
+const LOGROS_KEY = "genterota:logros";
+const LOGROS_BOT = "Logros";
+const profiles = new Map();   // pkey -> perfil
+const profDirty = new Set();
+const LEVELS = [[0, "🩹", "Recién llegado/a"], [40, "🧩", "Pieza suelta"], [150, "🔩", "Tornillo flojo"], [400, "🔧", "En reparación"],
+  [900, "🪡", "Remendado/a"], [1800, "🏺", "Kintsugi"], [3500, "💎", "Irrompible"], [7000, "👑", "Leyenda rota"]];
+const TIER = ["🥉", "🥈", "🥇"];
+const BADGES = [
+  { id: "rompehielos", ico: "👋", name: "Rompehielos", desc: "Mandá tu primer mensaje en una sala", stat: "msgs", tiers: [1] },
+  { id: "charla", ico: "🗣️", name: "Charlatán/a", desc: "Mensajes en las salas", stat: "msgs", tiers: [100, 1000, 5000] },
+  { id: "muro", ico: "📰", name: "Voz del muro", desc: "Publicaciones en 📰 Comunidad", stat: "posts", tiers: [1, 10, 50] },
+  { id: "querido", ico: "❤️", name: "Querido/a", desc: "❤️ que recibieron tus publicaciones", stat: "likesRecv", tiers: [10, 50, 250] },
+  { id: "viral", ico: "🔥", name: "Viral", desc: "❤️ en una sola publicación", stat: "maxLikes", tiers: [5, 15, 30] },
+  { id: "conversa", ico: "💬", name: "Conversador/a", desc: "Comentarios en publicaciones de otros", stat: "comments", tiers: [10, 50, 200] },
+  { id: "buenaonda", ico: "🤝", name: "Buena onda", desc: "❤️ que les diste a publicaciones de otros", stat: "likesGiven", tiers: [20, 100, 400] },
+  { id: "constante", ico: "📅", name: "Constante", desc: "Días seguidos entrando al chat", stat: "streak", tiers: [3, 7, 30] },
+  { id: "veterano", ico: "🎂", name: "Veterano/a", desc: "Días distintos que entraste", stat: "days", tiers: [7, 30, 100] },
+  { id: "cerebrito", ico: "🧠", name: "Cerebrito", desc: "Trivias y ahorcados ganados", stat: "trivia", tiers: [10, 50, 200] },
+  { id: "rayo", ico: "⚡", name: "Rayo", desc: "Trivias acertadas en menos de 6 segundos", stat: "fast", tiers: [3, 15, 50] },
+  { id: "valiente", ico: "🎭", name: "Valiente", desc: "Verdades o retos cumplidos en Verdad o reto", stat: "retos", tiers: [3, 15, 40] },
+  { id: "detective", ico: "🕵️", name: "Detective", desc: "Veces que descubriste a la IA, al impostor o al asesino", stat: "detective", tiers: [3, 10, 30] },
+  { id: "mentiroso", ico: "😈", name: "Mentiroso/a profesional", desc: "Gente que cayó en tus engaños (Mentiroso, Impostor, Asesinato)", stat: "fooled", tiers: [5, 20, 60] },
+  { id: "picasso", ico: "🖍️", name: "Picasso", desc: "Veces que adivinaron tu dibujo", stat: "drawn", tiers: [5, 20, 60] },
+  { id: "gladiador", ico: "⚔️", name: "Gladiador/a", desc: "Duelos ganados", stat: "duels", tiers: [3, 15, 40] },
+  { id: "campeon", ico: "🏆", name: "Campeón/a", desc: "Torneos ganados (semanal o eliminatorio)", stat: "champ", tiers: [1, 3, 10] },
+  { id: "buho", ico: "🦉", name: "Búho", desc: "Escribiste entre las 3 y las 6 de la mañana", stat: "owl", tiers: [1], secret: true },
+  { id: "madrugador", ico: "☀️", name: "Primero del día", desc: "Fuiste la primera persona en escribir en General ese día", stat: "early", tiers: [1], secret: true },
+  { id: "fenix", ico: "🪶", name: "Fénix", desc: "Volviste después de más de 2 semanas sin entrar", stat: "fenix", tiers: [1], secret: true },
+];
+const arDay = (t = now()) => new Date(t - 3 * 3600e3).toISOString().slice(0, 10); // día en Argentina
+const arHour = (t = now()) => new Date(t - 3 * 3600e3).getUTCHours();
+const levelOf = (xp) => { let i = 0; while (i + 1 < LEVELS.length && xp >= LEVELS[i + 1][0]) i++; return i; };
+const pkeyOf = (nick, dev) => String(nick || "").toLowerCase() + "|" + (dev || "");
+function profK(pkey, nick) {
+  if (!pkey) return null;
+  let p = profiles.get(pkey);
+  if (!p) { p = { nick, xp: 0, s: {}, b: {}, d: { day: "", x: {} }, show: "", last: "", streak: 0 }; profiles.set(pkey, p); }
+  if (nick) p.nick = nick;
+  return p;
+}
+const onlineOf = (pkey) => { for (const [sid, c] of clients) if (c.pkey === pkey && c.nick && !c.away) return { id: sid, c }; return null; };
+function gainXp(pkey, p, n, capKey, cap) {
+  if (capKey) {
+    if (p.d.day !== arDay()) p.d = { day: arDay(), x: {} };
+    const used = p.d.x[capKey] || 0;
+    n = Math.max(0, Math.min(n, cap - used)); p.d.x[capKey] = used + n;
+  }
+  if (!n) return;
+  const before = levelOf(p.xp); p.xp += n; profDirty.add(pkey);
+  const after = levelOf(p.xp);
+  if (after > before) {
+    const o = onlineOf(pkey);
+    if (o) io.to(o.id).emit("logro", { kind: "level", lv: after + 1, ico: LEVELS[after][1], name: LEVELS[after][2] });
+    if (after >= 2) botSay(`⬆️ ${p.nick} subió a nivel ${after + 1}: ${LEVELS[after][1]} ${LEVELS[after][2]}`, "general", LOGROS_BOT);
+    usersSoon();
+  }
+}
+// Suma a una estadística (y XP), y revisa si ganó alguna insignia
+function bumpK(pkey, nick, stat, n = 1, { xp = 0, cap = Infinity, capKey = stat, max = false } = {}) {
+  const p = profK(pkey, nick); if (!p) return;
+  p.s[stat] = max ? Math.max(p.s[stat] || 0, n) : (p.s[stat] || 0) + n;
+  profDirty.add(pkey);
+  if (xp) gainXp(pkey, p, xp, capKey, cap);
+  // 🧩 piezas para la tienda
+  const z = PZ[stat]; if (z) gainPz(pkey, p, z[0] * (max ? 1 : n), z[1], z[2]);
+  if (stat === "msgs" && p.s.msgs % 10 === 0) gainPz(pkey, p, 1, "pMsg", 15);
+  for (const b of BADGES) {
+    if (b.stat !== stat) continue;
+    const v = p.s[stat] || 0;
+    let tier = -1; b.tiers.forEach((t, i) => { if (v >= t) tier = i; });
+    const had = p.b[b.id] ?? -1;
+    if (tier > had) { p.b[b.id] = tier; award(pkey, p, b, tier); }
+  }
+}
+const bump = (c, stat, n, opts) => c?.pkey && bumpK(c.pkey, c.nick, stat, n, opts);
+const bumpNick = (nick, stat, n, opts) => { const t = byNick(nick); if (t?.c?.pkey) bumpK(t.c.pkey, t.c.nick, stat, n, opts); };
+const badgeTxt = (b, tier) => `${b.ico} ${b.name}${b.tiers.length > 1 ? " " + TIER[tier] : ""}`;
+function award(pkey, p, b, tier) {
+  const bonus = b.tiers.length === 1 ? 25 : [20, 60, 150][tier];
+  gainXp(pkey, p, bonus);
+  gainPz(pkey, p, b.tiers.length === 1 ? 25 : [25, 50, 100][tier], null, Infinity, "insignia");
+  if (!p.show) p.show = b.id;
+  const o = onlineOf(pkey);
+  if (o) io.to(o.id).emit("logro", { kind: "badge", id: b.id, ico: b.ico, name: b.name, desc: b.desc, tier: b.tiers.length > 1 ? tier : -1, xp: bonus });
+  if (tier >= 1 || b.secret) botSay(`🏅 ${p.nick} consiguió la insignia ${badgeTxt(b, tier)}${b.secret ? " (secreta 🤫)" : ""}`, "general", LOGROS_BOT);
+  usersSoon();
+}
+let usersTimer = null;
+const usersSoon = () => { if (!usersTimer) usersTimer = setTimeout(() => { usersTimer = null; pushUsers(); }, 800); };
+// Lo que se muestra al lado del nombre: nivel e insignia destacada
+function achInfo(c) {
+  const p = c.pkey && profiles.get(c.pkey); if (!p) return {};
+  const b = BADGES.find((x) => x.id === p.show && p.b[x.id] !== undefined);
+  const ck = cosmetics(p);
+  return { lv: levelOf(p.xp) + 1, bd: b ? b.ico : "", ...(ck ? { ck } : {}), ...(isBday(p) ? { cumple: true } : {}) };
+}
+// Al entrar: racha de días, Fénix y Campeón semanal
+function achJoin(c) {
+  c.pkey = pkeyOf(c.nick, c.dev || c.ip);
+  { const old = profiles.get(c.pkey); c.veteran = !!old && (old.xp || 0) >= 30; }
+  if (!c.veteran && !c.admin) {
+    const t = now(); newJoins.push(t); while (newJoins.length && t - newJoins[0] > 2 * 60000) newJoins.shift();
+    if (newJoins.length >= 10 && refugioUntil < t) { newJoins.length = 0; setRefugio(15, BOT); logMod("🤖 automático", "🛡️ activó modo refugio 15 min (10 apodos nuevos en 2 min)"); notifyAdmins("🛡️ Entraron 10 apodos nuevos en 2 minutos: activé el modo refugio por 15 min. Si era gente legítima, cortalo con /refugio off."); }
+  }
+  const p = profK(c.pkey, c.nick), today = arDay();
+  if (p.last !== today) {
+    const gap = p.last ? Math.round((Date.parse(today) - Date.parse(p.last)) / 86400e3) : 0;
+    p.streak = gap === 1 ? (p.streak || 0) + 1 : 1;
+    p.last = today; profDirty.add(c.pkey);
+    bump(c, "days", 1, { xp: 10 + Math.min(p.streak, 7) * 2, capKey: "visit", cap: 30 });
+    gainPz(c.pkey, p, 5 + Math.min(p.streak - 1, 5) * 2, "pVisit", 15, "visita diaria");
+    bump(c, "streak", p.streak, { max: true });
+    if (gap >= 14) bump(c, "fenix", 1);
+  }
+  achChamp(c);
+  bdayCheck(c.pkey);
+}
+function achChamp(c) {
+  const last = champions[champions.length - 1];
+  if (!last || last.nick.toLowerCase() !== String(c.nick).toLowerCase()) return;
+  const p = profK(c.pkey, c.nick);
+  if (p.champWeek === last.week) return;
+  p.champWeek = last.week; bump(c, "champ", 1, { xp: 100 });
+  gainPz(c.pkey, p, 200, null, Infinity, "campeón/a de la semana");
+}
+// Cada mensaje en una sala (no cuentan confesiones ni privados)
+let earlyDay = "";
+function achMessage(c, room, text) {
+  if (!c.pkey || room === "confesiones" || room === "mods") return;
+  const t = now();
+  if (t - (c.achMsgAt || 0) < 4000 || String(text || "").trim().length < 3) return;
+  c.achMsgAt = t;
+  bump(c, "msgs", 1, { xp: 1, capKey: "msg", cap: 60 });
+  const h = arHour(t);
+  if (h >= 3 && h < 6) bump(c, "owl", 1);
+  if (room === "general" && h >= 6 && earlyDay !== arDay(t)) { earlyDay = arDay(t); bump(c, "early", 1); }
+}
+async function loadLogros() {
+  if (!db.on) return;
+  try {
+    const flat = (await redis(["HGETALL", LOGROS_KEY])) || [];
+    for (let i = 0; i + 1 < flat.length; i += 2) { try { profiles.set(flat[i], JSON.parse(flat[i + 1])); } catch {} }
+    console.log(`Logros: ${profiles.size} perfiles cargados`);
+  } catch (e) { console.error("Logros cargar:", e.message); }
+}
+async function saveLogros() {
+  if (!db.on || !profDirty.size) return;
+  const keys = [...profDirty]; profDirty.clear();
+  const args = []; for (const k of keys) { const p = profiles.get(k); if (p) args.push(k, JSON.stringify(p)); }
+  for (let i = 0; i < args.length; i += 200) await redisPipe([["HSET", LOGROS_KEY, ...args.slice(i, i + 200)]]).catch((e) => { console.error("Logros guardar:", e.message); keys.forEach((k) => profDirty.add(k)); });
+}
+setInterval(() => saveLogros(), 20000).unref();
+function logrosView(p, full) {
+  const lv = levelOf(p.xp);
+  return {
+    nick: p.nick, xp: p.xp, lv: lv + 1, ico: LEVELS[lv][1], lvName: LEVELS[lv][2], from: LEVELS[lv][0], next: LEVELS[lv + 1]?.[0] || null,
+    nextName: LEVELS[lv + 1] ? `${LEVELS[lv + 1][1]} ${LEVELS[lv + 1][2]}` : "", show: p.show, streak: p.streak || 0,
+    badges: BADGES.filter((b) => full || p.b[b.id] !== undefined).map((b) => {
+      const got = p.b[b.id] !== undefined, hide = b.secret && !got;
+      return { id: b.id, ico: hide ? "❔" : b.ico, name: hide ? "Insignia secreta" : b.name, desc: hide ? "Se descubre sola… 🤫" : b.desc,
+        tier: got ? p.b[b.id] : -1, tiers: b.tiers, value: hide ? null : (p.s[b.stat] || 0), multi: b.tiers.length > 1 };
+    }),
+  };
+}
+function logrosHandlers(socket, c) {
+  socket.on("logros-get", (nick, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    if (!nick || nick === c.nick) return cb({ ok: true, mine: true, ...logrosView(profK(c.pkey, c.nick), true) });
+    const t = byNick(nick);
+    if (!t?.c?.pkey) return cb({ ok: false, error: "Solo se ven los logros de gente conectada." });
+    cb({ ok: true, mine: false, ...logrosView(profK(t.c.pkey, t.c.nick), false) });
+  });
+  socket.on("logros-show", (id) => {
+    const p = c.pkey && profiles.get(c.pkey); if (!p) return;
+    p.show = id && p.b[id] !== undefined ? String(id) : ""; profDirty.add(c.pkey); pushUsers();
+  });
+}
+function logrosTop() {
+  const top = [...profiles.values()].sort((a, b) => b.xp - a.xp).slice(0, 10);
+  if (!top.length) return "🏅 Todavía nadie tiene logros.";
+  return "🏅 Los de más nivel:\n" + top.map((p, i) => { const lv = levelOf(p.xp); return `${["🥇", "🥈", "🥉"][i] || i + 1 + "."} ${p.nick} — ${LEVELS[lv][1]} Nivel ${lv + 1} (${p.xp} XP) · ${Object.keys(p.b).length} insignias`; }).join("\n");
+}
+
+// ================== 📷 Permiso de fotos ==================
+// Para mandar fotos (en salas, en Comunidad y de perfil) hace falta que un moderador te dé permiso.
+// El permiso queda guardado por apodo + celu. Los moderadores y el dueño siempre pueden.
+let approvalMode = "nuevos";           // "nuevos" = hace falta permiso · "no" = cualquiera puede
+const photoRequests = new Map();       // pkey -> { nick, at }
+const canPhoto = (c) => c.admin || approvalMode === "no" || !!(c.pkey && profiles.get(c.pkey)?.trusted);
+const NO_PHOTO = "📷 Para mandar fotos necesitás permiso de un moderador. Tocá 🙋 «Pedir permiso de fotos» en ✏️ Mi perfil (o en el 📎).";
+function sendPerm(c, sid) { io.to(sid).emit("perm", { photo: canPhoto(c), asked: photoRequests.has(c.pkey) }); }
+function requestsCount() { emitToMods("photo-requests", photoRequests.size); }
+function setTrust(nick, on, by) {
+  const t = byNick(nick); if (!t?.c?.pkey) return false;
+  logMod(by, `${on ? "📷 dio" : "🚫 sacó"} permiso de fotos a ${t.c.nick}`);
+  const p = profK(t.c.pkey, t.c.nick); p.trusted = on; profDirty.add(t.c.pkey);
+  photoRequests.delete(t.c.pkey); requestsCount();
+  notice(t.id, on ? "📷 ¡Un moderador te dio permiso para mandar fotos! Ya podés subir fotos al chat, a Comunidad y de perfil." : "📷 Un moderador te sacó el permiso de mandar fotos.", on ? "help" : "warn");
+  sendPerm(t.c, t.id); pushUsers();
+  notifyAdmins(`${by ? by + " " : ""}${on ? "le dio" : "le sacó"} permiso de fotos a ${t.c.nick}.`);
+  return true;
+}
+function permHandlers(socket, c) {
+  socket.on("photo-request", (_, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    if (canPhoto(c)) return cb({ ok: true, already: true });
+    const prev = photoRequests.get(c.pkey);
+    if (prev && now() - prev.at < 10 * 60000) return cb({ ok: false, error: "Ya lo pediste. Esperá a que un moderador lo vea 🙏" });
+    photoRequests.set(c.pkey, { nick: c.nick, at: now() });
+    notifyAdmins(`🙋 ${c.nick} pide permiso para mandar fotos. Tocá su nombre → 📷 Dar permiso de fotos (o /permitirfotos ${c.nick}).`);
+    requestsCount(); sendPerm(c, socket.id);
+    cb({ ok: true });
+  });
+  socket.on("photo-requests-list", (_, cb) => {
+    if (typeof cb !== "function" || !c.admin) return;
+    cb([...photoRequests.values()].filter((r) => byNick(r.nick)).sort((a, b) => a.at - b.at));
+  });
+  socket.on("photo-perm", ({ nick, on, dismiss } = {}, cb) => {
+    if (!c.admin) return;
+    if (dismiss) {
+      const t = byNick(nick); if (t?.c?.pkey) { photoRequests.delete(t.c.pkey); sendPerm(t.c, t.id); }
+      for (const [k, r] of photoRequests) if (r.nick === nick) photoRequests.delete(k);
+      requestsCount(); return cb && cb({ ok: true });
+    }
+    const ok = setTrust(String(nick || ""), !!on, c.nick);
+    cb && cb(ok ? { ok: true } : { ok: false, error: "No encontré a esa persona conectada." });
+  });
+}
+
+// ================== 🧩 Piezas y 🛒 Tienda ==================
+// Moneda aparte del ranking: se gana participando y se gasta en cosas para lucirse (nada da ventaja en juegos).
+// Se guarda en el mismo perfil que los logros (apodo + celu).
+const SHOP = [
+  ...[["rojo", "Rojo fuego", "#ff5c5c"], ["naranja", "Naranja", "#ff9f1c"], ["oro", "Amarillo roto", "#ffd400"], ["lima", "Verde lima", "#7ed957"], ["turquesa", "Turquesa", "#2ec4b6"],
+    ["celeste", "Celeste", "#4cc9f0"], ["azul", "Azul eléctrico", "#5b8cff"], ["violeta", "Violeta", "#a78bfa"], ["rosa", "Rosa chicle", "#ff6ec7"], ["hueso", "Blanco hueso", "#e9e4d4"]]
+    .map(([id, name, val]) => ({ id: "c-" + id, cat: "color", name, price: 100, val })),
+  { id: "c-kintsugi", cat: "color", name: "Nombre Kintsugi ✨ (dorado con brillo)", price: 1000, val: "k" },
+  { id: "emoji", cat: "emoji", name: "Emoji de firma", price: 80 },
+  { id: "title", cat: "title", name: "Título personalizado", price: 300 },
+  ...[["oro", "Marco dorado"], ["fuego", "Marco de fuego"], ["neon", "Marco neón"], ["grieta", "Marco grieta"]].map(([id, name]) => ({ id: "f-" + id, cat: "frame", name, price: 200 })),
+  { id: "entry", cat: "entry", name: "Entrada épica", price: 150 },
+  ...[["galaxia", "Galaxia"], ["lluvia", "Lluvia"], ["atardecer", "Atardecer"], ["mate", "Mate"]].map(([id, name]) => ({ id: "bg-" + id, cat: "bg", name: "Fondo " + name, price: 60 })),
+];
+const SHOP_BY_ID = Object.fromEntries(SHOP.map((x) => [x.id, x]));
+const ENTRIES = ["🚪💥 {n} entró pateando la puerta", "🎺 Silencio todos… llegó {n}", "🌪️ {n} cayó como un huracán", "🦸 Tranquilos, {n} ya está acá",
+  "🎬 Y en el papel principal… ¡{n}!", "🧉 {n} llegó con el mate listo", "👀 {n} apareció de la nada", "🪩 {n} entró bailando"];
+// Cuántas piezas da cada cosa: [piezas, tope diario compartido, tope]
+const PZ = { posts: [10, "pPost", 30], likesRecv: [2, "pLike", 60], comments: [2, "pCom", 30],
+  trivia: [3, "pGame", 80], duels: [6, "pGame", 80], detective: [4, "pGame", 80], fooled: [3, "pGame", 80], drawn: [3, "pGame", 80],
+  retos: [4, "pGame", 80], guessed: [2, "pGame", 80], rotos: [1, "pGame", 80] };
+function gainPz(pkey, p, n, capKey, cap = Infinity, why = "") {
+  if (capKey) {
+    if (p.d.day !== arDay()) p.d = { day: arDay(), x: {} };
+    const used = p.d.x[capKey] || 0;
+    n = Math.max(0, Math.min(n, cap - used)); p.d.x[capKey] = used + n;
+  }
+  if (!n) return;
+  p.pz = (p.pz || 0) + n; profDirty.add(pkey);
+  const o = onlineOf(pkey); if (o) io.to(o.id).emit("pz", { n, total: p.pz, why });
+}
+// Lo que se ve de cada persona: color, emoji, marco y título
+function cosmetics(p) {
+  const e = p?.eq; if (!e) return null;
+  const o = {};
+  if (e.color && SHOP_BY_ID[e.color]) o.col = SHOP_BY_ID[e.color].val;
+  if (e.emoji) o.emo = e.emoji;
+  if (e.frame) o.frm = e.frame.slice(2);
+  if (e.title) o.tit = e.title;
+  return Object.keys(o).length ? o : null;
+}
+const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|[‍️\u{1F3FB}-\u{1F3FF}])+$/u;
+let lastEntry = new Map(); // pkey -> cuándo anunció su entrada (no repetir al recargar)
+function entryAnnounce(c) {
+  const p = c.pkey && profiles.get(c.pkey); if (!p?.eq?.entry && p?.eq?.entry !== 0) return;
+  if (now() - (lastEntry.get(c.pkey) || 0) < 30 * 60000) return;
+  lastEntry.set(c.pkey, now());
+  const tpl = ENTRIES[p.eq.entry]; if (tpl) botSay(tpl.replace("{n}", c.nick), "general", "Portero");
+}
+function shopView(c) {
+  const p = profK(c.pkey, c.nick);
+  return { pz: p.pz || 0, inv: p.inv || [], eq: p.eq || {}, items: SHOP, entries: ENTRIES.map((t) => t.replace("{n}", c.nick)) };
+}
+function shopHandlers(socket, c) {
+  socket.on("shop-get", (_, cb) => { if (typeof cb === "function" && c.pkey) cb(shopView(c)); });
+  socket.on("shop-buy", (id, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const it = SHOP_BY_ID[String(id)], p = profK(c.pkey, c.nick);
+    if (!it) return cb({ ok: false, error: "Ese producto no existe." });
+    p.inv ||= []; p.eq ||= {};
+    if (p.inv.includes(it.id)) return cb({ ok: false, error: "Ya lo tenés." });
+    if ((p.pz || 0) < it.price) return cb({ ok: false, error: `Te faltan ${it.price - (p.pz || 0)} 🧩.` });
+    p.pz -= it.price; p.inv.push(it.id);
+    // lo deja puesto apenas lo comprás
+    if (it.cat === "color") p.eq.color = it.id;
+    if (it.cat === "frame") p.eq.frame = it.id;
+    if (it.cat === "bg") p.eq.bg = it.id;
+    if (it.cat === "entry") p.eq.entry = 0;
+    profDirty.add(c.pkey); usersSoon();
+    if (it.price >= 300) botSay(`🛒 ${c.nick} se compró ${it.name.replace(" ✨ (dorado con brillo)", " ✨")} en la tienda`, "general", LOGROS_BOT);
+    cb({ ok: true, ...shopView(c) });
+  });
+  socket.on("shop-equip", ({ slot, value } = {}, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const p = profK(c.pkey, c.nick); p.inv ||= []; p.eq ||= {};
+    const has = (id) => p.inv.includes(id);
+    const v = value === undefined || value === null ? "" : value;
+    if (["color", "frame", "bg"].includes(slot)) {
+      if (v && (!has(v) || SHOP_BY_ID[v]?.cat !== slot)) return cb({ ok: false, error: "No lo tenés." });
+      p.eq[slot] = v;
+    } else if (slot === "entry") {
+      if (!has("entry")) return cb({ ok: false, error: "Primero comprá la entrada épica." });
+      const i = parseInt(v); p.eq.entry = v === "" ? null : (i >= 0 && i < ENTRIES.length ? i : 0);
+    } else if (slot === "emoji") {
+      if (!has("emoji")) return cb({ ok: false, error: "Primero comprá el emoji de firma." });
+      const e = String(v).trim();
+      if (e && (e.length > 12 || !EMOJI_RE.test(e) || [...new Intl.Segmenter().segment(e)].length > 2)) return cb({ ok: false, error: "Elegí 1 o 2 emojis (sin letras)." });
+      p.eq.emoji = e;
+    } else if (slot === "title") {
+      if (!has("title")) return cb({ ok: false, error: "Primero comprá el título." });
+      const t = String(v).trim().replace(/\s+/g, " ").slice(0, 28);
+      const r = censor(t);
+      if (r.hits || /https?:|www\./i.test(t)) return cb({ ok: false, error: "Ese título no está permitido." });
+      if (/(moderador|admin|dueñ|fastidio|crupier)/i.test(plain(t)) && !c.admin) return cb({ ok: false, error: "El título no puede hacerse pasar por moderación ni por los bots." });
+      p.eq.title = t;
+    } else return cb({ ok: false });
+    profDirty.add(c.pkey); usersSoon();
+    cb({ ok: true, ...shopView(c) });
+  });
+  socket.on("pz-gift", ({ to, amount } = {}, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const n = Math.floor(Number(amount));
+    const t = byNick(String(to || ""));
+    if (!t?.c?.pkey || t.c === c) return cb({ ok: false, error: "Elegí a alguien conectado (que no seas vos)." });
+    if (t.c.dev && t.c.dev === c.dev) return cb({ ok: false, error: "No podés regalarte piezas desde el mismo celu 😉" });
+    if (!(n >= 5 && n <= 500)) return cb({ ok: false, error: "Podés regalar entre 5 y 500 🧩." });
+    const p = profK(c.pkey, c.nick), q = profK(t.c.pkey, t.c.nick);
+    if (p.d.day !== arDay()) p.d = { day: arDay(), x: {} };
+    if ((p.d.x.gift || 0) + n > 500) return cb({ ok: false, error: `Hoy ya regalaste ${p.d.x.gift || 0} 🧩 (máximo 500 por día).` });
+    if ((p.pz || 0) < n) return cb({ ok: false, error: "No te alcanzan las piezas." });
+    p.pz -= n; p.d.x.gift = (p.d.x.gift || 0) + n; q.pz = (q.pz || 0) + n;
+    profDirty.add(c.pkey); profDirty.add(t.c.pkey);
+    io.to(t.id).emit("pz", { n, total: q.pz, why: `regalo de ${c.nick}` });
+    notice(t.id, `🎁 ${c.nick} te regaló ${n} 🧩. ¡Ya podés gastarlas en la 🛒 Tienda!`, "help");
+    cb({ ok: true, pz: p.pz });
+  });
+}
+
+// ================== ⭐ Frases célebres (para "¿Quién dijo esto?") ==================
+// Solo se guardan mensajes que marcaron algo: los que recibieron reacciones de 3+ personas,
+// las publicaciones de Comunidad con 3+ ❤️ y los que un moderador marca con ⭐. Nada de "hola".
+const FRASES_KEY = "genterota:frases";
+let frases = [];   // { id, text, by, pkey, at, src, score, kind, uses, lastUsed }
+const FRASE_ROOMS = { general: "# General", "j-trivia": "🧠 Trivia", "j-ia": "🕵️ Engaño", "j-fiesta": "🎉 Fiesta", "j-duelos": "⚔️ Duelos", voz: "🎙️ Voz", comunidad: "📰 Comunidad" };
+const BOT_NAMES = () => [BOT, CRUPIER, LOGROS_BOT, "Portero"];
+let frasesTimer = null;
+const saveFrases = () => { if (!db.on) return; clearTimeout(frasesTimer); frasesTimer = setTimeout(() => redis(["SET", FRASES_KEY, JSON.stringify(frases)]).catch((e) => console.error("Frases guardar:", e.message)), 3000); };
+async function loadFrases() {
+  if (!db.on) return;
+  try { const raw = await redis(["GET", FRASES_KEY]); if (raw) frases = JSON.parse(raw); console.log(`Frases célebres: ${frases.length}`); } catch (e) { console.error("Frases cargar:", e.message); }
+}
+// ¿Sirve como frase? Que tenga sustancia: nada de saludos, links sueltos ni puro emoji
+const TRIVIAL_RE = /^((hola|holis|holi|buenas|buen dia|buenos dias|buenas tardes|buenas noches|chau|chao|nos vemos|jaja\w*|jeje\w*|ja|si|no|ok|dale|gracias|que tal|como andan|como estan|todo bien)\s*)+$/;
+function fraseOk(text) {
+  const t = String(text || "").trim();
+  if (TRIVIAL_RE.test(plain(t))) return false;
+  if (t.length < 15 || t.length > 200 || t.startsWith("/")) return false;
+  if (/https?:\/\/|www\./i.test(t)) return false;
+  const words = plain(t).split(" ").filter((w) => w.length > 1);
+  return words.length >= 3;
+}
+function addFrase({ id, text, by, pkey, at, src, score, kind }, byMod) {
+  if (!id || !by || BOT_NAMES().includes(by)) return { ok: false, error: "Eso no puede ser frase célebre." };
+  if (!byMod && !fraseOk(text)) return { ok: false, error: "Muy corta o sin sustancia." };
+  if (byMod && (plain(text).length < 8 || TRIVIAL_RE.test(plain(text)))) return { ok: false, error: "Muy corta o es solo un saludo: elegí algo que se recuerde 😉" };
+  const prev = frases.find((f) => f.id === id);
+  if (prev) { prev.score = Math.max(prev.score || 0, score || 0); saveFrases(); return { ok: true, already: true }; }
+  frases.push({ id, text: String(text).trim().slice(0, 200), by, pkey: pkey || "", at: at || now(), src, score: score || 0, kind, uses: 0, lastUsed: 0 });
+  if (frases.length > 400) { frases.sort((a, b) => (b.score || 0) - (a.score || 0) || b.at - a.at); frases = frases.slice(0, 400); }
+  saveFrases();
+  // al autor le avisamos (y le damos unas piezas)
+  const t = byNick(by);
+  if (t && (!pkey || t.c.pkey === pkey)) {
+    notice(t.id, `⭐ Tu ${kind === "muro" ? "publicación" : "mensaje"} «${String(text).slice(0, 60)}${String(text).length > 60 ? "…" : ""}» quedó como frase célebre de Gente Rota. Puede salir en ¿Quién dijo esto? 🗣️`, "help");
+    const p = profK(t.c.pkey, t.c.nick); if (p) gainPz(t.c.pkey, p, 5, "pFrase", 15, "frase célebre");
+  }
+  return { ok: true };
+}
+const dropFrase = (id) => { const n = frases.length; frases = frases.filter((f) => f.id !== id); if (frases.length !== n) saveFrases(); };
+// reacciones de 3+ personas distintas (sin contar al autor)
+function checkReactFrase(id, m) {
+  if (m.famous || !FRASE_ROOMS[m.chat] || m.media || BOT_NAMES().includes(m.from)) return;
+  const people = new Set(); for (const s of Object.values(m.reactions)) for (const n of s) if (n !== m.from) people.add(n);
+  if (people.size < 3) return;
+  m.famous = true;
+  addFrase({ id, text: m.fullText || m.text, by: m.from, pkey: m.pkey, at: m.ts, src: FRASE_ROOMS[m.chat], score: people.size, kind: "chat" });
+}
+
+// ================== 🎂 Cumpleaños ==================
+// Cada uno carga día y mes (sin año). Ese día se anuncia, hay tarjeta colectiva y regalo de piezas.
+const CARDS_KEY = "genterota:tarjetas";
+let cards = {};   // "pkey|AAAA" -> { nick, msgs: [{ by, text, at }] }
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const arMD = (t = now()) => arDay(t).slice(5);          // "MM-DD"
+const arYear = (t = now()) => arDay(t).slice(0, 4);
+const isBday = (p) => !!p?.bday && p.bday === arMD();
+async function loadCards() {
+  if (!db.on) return;
+  try { const raw = await redis(["GET", CARDS_KEY]); if (raw) cards = JSON.parse(raw); } catch (e) { console.error("Tarjetas cargar:", e.message); }
+}
+let cardsTimer = null;
+function saveCards() {
+  // las tarjetas viejas (más de 10 días) se borran
+  const lim = arDay(now() - 10 * 86400e3);
+  for (const k of Object.keys(cards)) if ((cards[k].day || "") < lim) delete cards[k];
+  if (!db.on) return;
+  clearTimeout(cardsTimer); cardsTimer = setTimeout(() => redis(["SET", CARDS_KEY, JSON.stringify(cards)]).catch((e) => console.error("Tarjetas guardar:", e.message)), 2000);
+}
+// Anuncia el cumple (una vez por año) y le regala piezas
+function bdayCheck(pkey) {
+  const p = profiles.get(pkey); if (!isBday(p)) return;
+  const year = arYear();
+  if (p.bdayYear === year) return;
+  p.bdayYear = year; profDirty.add(pkey);
+  const key = pkey + "|" + year;
+  cards[key] ||= { nick: p.nick, day: arDay(), msgs: [] }; saveCards();
+  gainPz(pkey, p, 100, null, Infinity, "regalo de cumpleaños 🎂");
+  const id = newId();
+  remember(id, { chat: "general", from: LOGROS_BOT, text: "cumple" });
+  io.emit("public-message", { id, room: "general", from: LOGROS_BOT, bot: true, ts: now(), card: p.nick,
+    text: `🎂🎉 ¡HOY CUMPLE ${p.nick.toUpperCase()}! 🎉🎂\nDejale un saludo en su tarjeta: la firman todos y se la queda de recuerdo.` });
+  usersSoon();
+}
+// A las 10 de la mañana se anuncian los cumples de la gente activa aunque no esté conectada
+setInterval(() => {
+  if (arHour() < 10) return;
+  const recent = arDay(now() - 60 * 86400e3);
+  for (const [k, p] of profiles) if (isBday(p) && (p.last || "") >= recent) bdayCheck(k);
+}, 5 * 60000).unref();
+const cardKeyOf = (nick) => {
+  const year = arYear();
+  const t = byNick(nick);
+  if (t?.c?.pkey && cards[t.c.pkey + "|" + year]) return t.c.pkey + "|" + year;
+  return Object.keys(cards).find((k) => k.endsWith("|" + year) && cards[k].nick.toLowerCase() === String(nick).toLowerCase());
+};
+function bdayHandlers(socket, c) {
+  socket.on("bday-set", ({ day, month } = {}, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const d = parseInt(day), m = parseInt(month);
+    const p = profK(c.pkey, c.nick);
+    if (!d && !m) { p.bday = ""; profDirty.add(c.pkey); return cb({ ok: true, bday: "" }); }
+    const max = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+    if (!(m >= 1 && m <= 12 && d >= 1 && d <= max)) return cb({ ok: false, error: "Esa fecha no existe." });
+    if (p.bday && now() - (p.bdaySetAt || 0) < 30 * 86400e3) return cb({ ok: false, error: "Ya cargaste tu cumple. Se puede cambiar una vez por mes." });
+    p.bday = `${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`; p.bdaySetAt = now(); profDirty.add(c.pkey);
+    cb({ ok: true, bday: p.bday });
+    bdayCheck(c.pkey);
+  });
+  socket.on("bday-get", (_, cb) => { if (typeof cb === "function" && c.pkey) cb({ bday: profiles.get(c.pkey)?.bday || "" }); });
+  socket.on("card-get", (nick, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const k = cardKeyOf(nick); if (!k) return cb({ ok: false, error: "No hay tarjeta de cumpleaños para esa persona hoy." });
+    const cd = cards[k];
+    cb({ ok: true, nick: cd.nick, msgs: cd.msgs.filter((x) => !muroHidden(c, x.by)), signed: cd.msgs.some((x) => x.by === c.nick), mine: k.startsWith(c.pkey + "|") });
+  });
+  socket.on("card-sign", ({ nick, text } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const k = cardKeyOf(nick); if (!k) return cb({ ok: false, error: "Esa tarjeta ya no está." });
+    if (k.startsWith(c.pkey + "|")) return cb({ ok: false, error: "¡No podés firmar tu propia tarjeta! 😄" });
+    const cd = cards[k];
+    if (cd.msgs.some((x) => x.by === c.nick)) return cb({ ok: false, error: "Ya la firmaste 💛" });
+    const clean = checkMessage(c, socket.id, String(text || "").slice(0, 160), "general");
+    if (!clean) return cb({ ok: false, silent: true });
+    cd.msgs.push({ by: c.nick, text: clean, at: now() }); saveCards();
+    const t = byNick(cd.nick); if (t) io.to(t.id).emit("card-new", { by: c.nick, text: clean });
+    bump(c, "cards", 1, { xp: 3, capKey: "cardXp", cap: 15 });
+    cb({ ok: true });
+  });
+  socket.on("frase-add", (id, cb) => {
+    if (!c.admin) return;
+    const m = messages.get(String(id));
+    if (!m || !FRASE_ROOMS[m.chat]) return cb && cb({ ok: false, error: "Ese mensaje no se puede marcar (solo de salas públicas)." });
+    const r = addFrase({ id: String(id), text: m.fullText || m.text, by: m.from, pkey: m.pkey, at: m.ts, src: FRASE_ROOMS[m.chat], score: 5, kind: "chat" }, true);
+    if (r.ok) m.famous = true;
+    cb && cb(r);
   });
 }
 
@@ -2762,9 +3535,9 @@ function snapshot() {
   return {
     v: 1,
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
-    bans: [...bans].filter(([, until]) => until > t),
+    bans: [...bans].filter(([, b]) => b.until > t), modLog,
     points: [...points],
-    pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events,
+    pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events, approvalMode,
     weekly: { start: weekly.start, points: [...weekly.points] }, champions,
   };
 }
@@ -2792,10 +3565,15 @@ async function loadState() {
     if (raw) {
       const st = JSON.parse(raw);
       (st.modKeys || []).forEach(([k, n]) => { if (!modKeys.has(k)) modKeys.set(k, n); });
-      (st.bans || []).forEach(([ip, until]) => { if (until > now()) bans.set(ip, until); });
+      (st.bans || []).forEach(([k, b]) => {
+        if (typeof b === "number") { b = { until: b, nick: "", by: "", reason: "Baneo anterior" }; k = "ip:" + k; } // formato viejo
+        if (b?.until > now()) bans.set(k, b);
+      });
+      if (Array.isArray(st.modLog)) modLog = st.modLog.slice(-200);
       (st.points || []).forEach(([n, p]) => points.set(n, p));
       pinned = st.pinned || ""; slowMode = st.slowMode || 0;
       if (Array.isArray(st.badWords)) BAD_WORDS = st.badWords;
+      if (["nuevos", "todos", "no"].includes(st.approvalMode)) approvalMode = st.approvalMode;
       (st.locked || []).forEach((r) => lockedRooms.add(r));
       if (Array.isArray(st.events)) events = st.events;
       if (st.weekly?.start === weekly.start) (st.weekly.points || []).forEach(([n, p]) => weekly.points.set(n, p));
@@ -2814,8 +3592,8 @@ setInterval(() => { if (db.on) redis(["GET", DB_KEY]).catch(() => {}); }, 24 * 3
 // Render avisa antes de apagar: guardamos lo pendiente
 process.on("uncaughtException", (e) => console.error("Error no capturado (el servidor sigue):", e));
 process.on("unhandledRejection", (e) => console.error("Promesa rechazada (el servidor sigue):", e));
-process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await saveNow().catch(() => {}); process.exit(0); });
+process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await Promise.all([saveNow().catch(() => {}), saveLogros().catch(() => {})]); process.exit(0); });
 
 const PORT = process.env.PORT || 3000;
-Promise.race([Promise.all([loadState(), loadMuro()]), new Promise((ok) => setTimeout(ok, 8000))]).finally(() =>
+Promise.race([Promise.all([loadState(), loadMuro(), loadLogros(), loadFrases(), loadCards()]), new Promise((ok) => setTimeout(ok, 8000))]).finally(() =>
   server.listen(PORT, () => console.log(`Gente Rota en http://localhost:${PORT}`)));
