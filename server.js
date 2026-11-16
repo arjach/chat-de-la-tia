@@ -3040,6 +3040,15 @@ function muroHandlers(socket, c) {
 // Se guardan por apodo + celu (así nadie te "roba" los logros entrando con tu apodo desde otro lado).
 const LOGROS_KEY = "genterota:logros";
 const LOGROS_BOT = "Logros";
+// 📣 Novedades: los logros ya no son mensajes en General; pasan unos segundos en una barrita arriba del chat.
+// Cada uno puede elegir no anunciar los suyos (p.quiet).
+let newsLog = [];
+function news(p, ico, text) {
+  if (!p || p.quiet) return;
+  const n = { ico, text, nick: p.nick || "", at: now() };
+  newsLog.push(n); if (newsLog.length > 30) newsLog = newsLog.slice(-30);
+  io.emit("news", n);
+}
 const profiles = new Map();   // pkey -> perfil
 const profDirty = new Set();
 const LEVELS = [[0, "🩹", "Recién llegado/a"], [40, "🧩", "Pieza suelta"], [150, "🔩", "Tornillo flojo"], [400, "🔧", "En reparación"],
@@ -3091,7 +3100,7 @@ function gainXp(pkey, p, n, capKey, cap) {
   if (after > before) {
     const o = onlineOf(pkey);
     if (o) io.to(o.id).emit("logro", { kind: "level", lv: after + 1, ico: LEVELS[after][1], name: LEVELS[after][2] });
-    if (after >= 2) botSay(`⬆️ ${p.nick} subió a nivel ${after + 1}: ${LEVELS[after][1]} ${LEVELS[after][2]}`, "general", LOGROS_BOT);
+    if (after >= 2) news(p, "⬆️", `${p.nick} subió a nivel ${after + 1}: ${LEVELS[after][1]} ${LEVELS[after][2]}`);
     usersSoon();
   }
 }
@@ -3122,7 +3131,7 @@ function award(pkey, p, b, tier) {
   if (!p.show) p.show = b.id;
   const o = onlineOf(pkey);
   if (o) io.to(o.id).emit("logro", { kind: "badge", id: b.id, ico: b.ico, name: b.name, desc: b.desc, tier: b.tiers.length > 1 ? tier : -1, xp: bonus });
-  if (tier >= 1 || b.secret) botSay(`🏅 ${p.nick} consiguió la insignia ${badgeTxt(b, tier)}${b.secret ? " (secreta 🤫)" : ""}`, "general", LOGROS_BOT);
+  news(p, "🏅", `${p.nick} consiguió la insignia ${badgeTxt(b, tier)}${b.secret ? " (secreta 🤫)" : ""}`);
   usersSoon();
 }
 let usersTimer = null;
@@ -3203,6 +3212,13 @@ function logrosView(p, full) {
   };
 }
 function logrosHandlers(socket, c) {
+  socket.on("news-get", (_, cb) => { if (typeof cb === "function" && c.nick) cb(newsLog.filter((n) => !c.blocked.has(n.nick.toLowerCase())).slice(-20).reverse()); });
+  socket.on("news-pref", (on, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const p = profK(c.pkey, c.nick);
+    if (typeof on === "boolean") { p.quiet = !on; profDirty.add(c.pkey); }
+    cb({ on: !p.quiet });
+  });
   socket.on("logros-get", (nick, cb) => {
     if (typeof cb !== "function" || !c.nick) return;
     if (!nick || nick === c.nick) return cb({ ok: true, mine: true, ...logrosView(profK(c.pkey, c.nick), true) });
@@ -3336,7 +3352,7 @@ function shopHandlers(socket, c) {
     if (it.cat === "bg") p.eq.bg = it.id;
     if (it.cat === "entry") p.eq.entry = 0;
     profDirty.add(c.pkey); usersSoon();
-    if (it.price >= 300) botSay(`🛒 ${c.nick} se compró ${it.name.replace(" ✨ (dorado con brillo)", " ✨")} en la tienda`, "general", LOGROS_BOT);
+    if (it.price >= 150) news(p, "🛒", `${c.nick} se compró ${it.name.replace(" ✨ (dorado con brillo)", " ✨")} en la tienda`);
     cb({ ok: true, ...shopView(c) });
   });
   socket.on("shop-equip", ({ slot, value } = {}, cb) => {
