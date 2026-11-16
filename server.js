@@ -51,6 +51,17 @@ async function verifyHuman(token, ip) {
     return !!j.success;
   } catch (e) { console.error("Turnstile:", e.message); return true; } // si Cloudflare no responde, no dejamos a nadie afuera
 }
+// "Pase" firmado: quien ya se verificó no lo vuelve a hacer por 3 días en ese celu (aunque se reinicie el servidor)
+const PASS_DAYS = 3;
+const passSig = (dev, exp) => require("crypto").createHmac("sha256", TURNSTILE_SECRET).update(dev + "|" + exp).digest("base64url").slice(0, 32);
+const makePass = (dev) => { const exp = Date.now() + PASS_DAYS * 86400e3; return `${exp}.${passSig(dev, exp)}`; };
+function passOk(dev, pass) {
+  if (!TURNSTILE_SECRET || !dev || typeof pass !== "string") return false;
+  const [exp, sig] = pass.split(".");
+  if (!(+exp > Date.now()) || !sig) return false;
+  const good = passSig(dev, exp);
+  return sig.length === good.length && require("crypto").timingSafeEqual(Buffer.from(sig), Buffer.from(good));
+}
 const isFloodBanned = (ip) => (floodBans.get(ip) || 0) > Date.now();
 setInterval(() => { // limpieza para que estos mapas no crezcan sin fin
   const t = Date.now();
@@ -2373,6 +2384,7 @@ io.on("connection", (socket) => {
     nick: "", status: "disponible", admin: false, owner: false, ip, dev: String(socket.handshake.auth?.dev || "").slice(0, 40), joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
   };
+  if (passOk(c.dev, socket.handshake.auth?.pass)) c.human = true;
   clients.set(socket.id, c);
   muroHandlers(socket, c);
   logrosHandlers(socket, c);
@@ -2414,17 +2426,18 @@ io.on("connection", (socket) => {
 
   socket.on("verify", async (token, cb) => {
     if (typeof cb !== "function") return;
-    if (!TURNSTILE_SECRET || c.human) return cb({ ok: true });
+    if (!TURNSTILE_SECRET) return cb({ ok: true });
+    if (c.human) return cb({ ok: true, pass: c.dev ? makePass(c.dev) : "" });
     if (tooMany("verify", c.ip, 20)) return cb({ ok: false });
     c.human = await verifyHuman(token, c.ip);
-    cb({ ok: c.human });
+    cb({ ok: c.human, pass: c.human && c.dev ? makePass(c.dev) : "" });
   });
 
   socket.on("join", (rawNick, cb) => {
     if (typeof cb !== "function") return;
     if (c.nick) return cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents() });
     if (tooMany("join", c.ip, SEC.maxJoinsPerMin)) return cb({ ok: false, error: "Demasiadas entradas desde tu conexión. Esperá un minuto." });
-    if (TURNSTILE_SECRET && !c.human) return cb({ ok: false, error: "Falta la verificación anti-bots. Recargá la página.", captcha: true });
+    if (TURNSTILE_SECRET && !c.human) return cb({ ok: false, error: "🤖 Un segundo: estamos verificando que no seas un bot…", captcha: true });
     const nick = String(rawNick || "").trim().replace(/\s+/g, " ").slice(0, 20);
     if (nick.length < 2) return cb({ ok: false, error: "El apodo tiene que tener al menos 2 caracteres." });
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
