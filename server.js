@@ -1354,6 +1354,41 @@ function endPoll(id) {
 
 // ================== Motores de juego: uno por cada sub-sala de 🎮 Juegos ==================
 // Cada sub-sala tiene su propio "Crupier" y su propio juego en curso, así se puede jugar en paralelo.
+// ---------- ✍️ Cómo escribe cada uno (para que la IA de "¿Quién es la IA?" imite a alguien real) ----------
+// Solo mensajes de salas públicas abiertas (General y Juegos): nunca confesiones, moderación ni privados. Vive en memoria.
+const STYLE_ROOMS = new Set(["general", "j-trivia", "j-ia", "j-fiesta", "j-duelos"]);
+const styleBuf = new Map(); // apodo en minúscula -> { nick, msgs: [] }
+function styleNote(nick, room, text) {
+  if (!STYLE_ROOMS.has(room) || !text || text.length < 2 || text.startsWith("/") || /https?:\/\//.test(text)) return;
+  const k = nick.toLowerCase(); const e = styleBuf.get(k) || { nick, msgs: [] };
+  e.nick = nick; e.msgs.push(String(text).slice(0, 140)); if (e.msgs.length > 40) e.msgs.shift();
+  styleBuf.set(k, e);
+  if (styleBuf.size > 300) styleBuf.delete(styleBuf.keys().next().value);
+}
+function styleFor(players) {
+  const bots = new Set([BOT, CRUPIER, "Logros", "Portero"].map((x) => String(x).toLowerCase()));
+  const cands = [...styleBuf.values()].filter((e) => e.msgs.length >= 10 && !bots.has(e.nick.toLowerCase()));
+  if (!cands.length) return null;
+  const out = cands.filter((e) => !players.includes(e.nick)); // mejor alguien que no esté jugando
+  const e = pick(out.length ? out : cands);
+  const mix = [...e.msgs]; for (let i = mix.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [mix[i], mix[j]] = [mix[j], mix[i]]; }
+  const samples = mix.slice(0, 15), all = samples.join(" ");
+  const letters = all.replace(/[^\p{L}]/gu, "");
+  return {
+    nick: e.nick, samples,
+    lower: samples.filter((m) => /\p{Lu}/u.test(m)).length / samples.length < 0.2,
+    noAccents: letters.length > 60 && !/[áéíóú]/i.test(all),
+    noPeriod: samples.filter((m) => /\.\s*$/.test(m)).length / samples.length < 0.15,
+  };
+}
+function makePersona() {
+  const lugar = pick(["Rosario", "Córdoba capital", "Mar del Plata", "Mendoza", "La Plata", "Tucumán", "Neuquén", "Quilmes", "Morón", "Salta", "Santa Fe", "Paraná", "Lanús", "Bahía Blanca"]);
+  const edad = 19 + Math.floor(Math.random() * 20);
+  const vida = pick(["trabajás en un call center", "estudiás enfermería", "hacés repartos con una app", "trabajás en un local de ropa", "estudiás sistemas y no terminás nunca", "trabajás de cajero/a en un súper", "hacés changas de electricidad", "trabajás en una panadería", "estudiás psicología", "estás sin laburo buscando"]);
+  const gusto = pick(["jugás a la play de noche", "mirás series de crímenes", "escuchás cumbia y rock nacional", "tenés dos gatos", "vas al gimnasio cuando podés", "sos de Boca", "sos de River", "cocinás bastante", "estás aprendiendo guitarra", "dormís poco"]);
+  return `tenés ${edad} años, vivís en ${lugar}, ${vida} y ${gusto}`;
+}
+
 // ---------- 🔁 Elegir sin repetir ----------
 // Cada lista (palabras del ahorcado, del dibujo, preguntas de 100 rotos…) recuerda qué ya salió,
 // ENTRE partidas y aunque se reinicie el servidor. No repite nada hasta agotar la lista entera.
@@ -2160,42 +2195,98 @@ function makeEngine(ROOM, KIND) {
       const names = shuffle(ALIASES).slice(0, players.length + 1);
       game.alias = new Map(players.map((n, i) => [n, names[i]]));
       game.aiAlias = names[players.length];
-      game.log = []; game.lastAi = 0; game.topic = freshPick("turing", TURING_TOPICS); game.mins = mins;
-      for (const [n, a] of game.alias) secretCard(n, "🎭 Tu apodo secreto", `Sos ${a}. Todo lo que escribas en Juegos sale con ese nombre.\nHay ${players.length + 1} participantes y UNO es la IA 🤖. ¡Que no te confundan con la máquina!`);
+      game.log = []; game.lastAi = 0; game.lastAny = now(); game.humanMsgs = 0; game.topic = freshPick("turing", TURING_TOPICS); game.mins = mins;
+      game.style = styleFor(players);          // a quién imita (alguien real del chat)
+      game.persona = makePersona();            // su "historia", para responder siempre lo mismo
+      game.pAnswer = Math.min(0.8, Math.max(0.3, 1.3 / players.length));
+      for (const [n, a] of game.alias) secretCard(n, "🎭 Tu apodo secreto", `Sos ${a}. Todo lo que escribas en Juegos sale con ese nombre (solo texto: fotos y audios te delatarían).\nHay ${players.length + 1} participantes y UNO es la IA 🤖. ¡Que no te confundan con la máquina!`);
       gameSay(`🤖 ¡Arranca! Hay ${players.length + 1} participantes con apodo… y uno es la IA.\nTema para romper el hielo: «${game.topic}»\n💬 Charlen ${mins} minutos. Escriban normal: el bot lo publica con su apodo.`);
-      game.timers.push(setTimeout(() => turingAiTalk(true), 7000));
-      game.timers.push(setTimeout(() => { if (game?.type === "turing") gameSay("⏳ ¡Queda 1 minuto! Hagan preguntas tramposas 🕵️"); }, (mins - 1) * 60000));
-      game.timers.push(setTimeout(turingVote, mins * 60000));
+      const g = game;
+      // la IA no siempre arranca: a veces rompe el hielo, a veces espera a que hable alguien
+      if (Math.random() < 0.5) g.timers.push(setTimeout(() => { if (game === g && !g.lastAi) turingAiTalk("abre"); }, 9000 + Math.random() * 22000));
+      // si se hace silencio, a veces lo corta (como haría cualquiera)
+      g.timers.push(setInterval(() => { if (game === g && g.phase === "jugando" && now() - g.lastAny > 25000 && Math.random() < 0.35) turingAiTalk("silencio"); }, 8000));
+      g.timers.push(setTimeout(() => { if (game?.type === "turing") gameSay("⏳ ¡Queda 1 minuto! Hagan preguntas tramposas 🕵️"); }, (mins - 1) * 60000));
+      g.timers.push(setTimeout(turingVote, mins * 60000));
     });
   }
   function turingPublish(alias, text, mineSid) {
     const id = newId();
     remember(id, { chat: ROOM, from: alias, text, ts: now() });
     for (const [sid, rc] of clients) if (rc.nick) io.to(sid).emit("public-message", { id, room: ROOM, from: alias, alias: true, text, ts: now(), ...(sid === mineSid ? { mine: true } : {}) });
-    game.log.push(`${alias}: ${text}`); if (game.log.length > 25) game.log.shift();
+    game.log.push(`${alias}: ${text}`); if (game.log.length > 30) game.log.shift();
+    game.lastAny = now();
   }
-  async function turingAiTalk(opening) {
+  const aiTyping = (g, on) => { for (const [sid, rc] of clients) if (rc.nick) io.to(sid).emit("typing", { from: g.aiAlias, chat: "#" + ROOM, on }); };
+  async function turingAiTalk(why, lastMsg = "") {
     const g = game; if (!g || g.type !== "turing" || g.phase !== "jugando" || g.aiBusy) return;
-    if (!opening && now() - g.lastAi < 12000) return;
+    const direct = why === "pregunta";
+    if (!direct) {
+      if (now() - g.lastAi < 6000 + Math.random() * 6000) return;
+      // no hablar sola: si el último mensaje es suyo, espera a que hable una persona
+      if ((g.log[g.log.length - 1] || "").startsWith(g.aiAlias + ":")) return;
+      // y no hablar mucho más que el promedio de los humanos
+      if ((g.aiCount || 0) > g.humanMsgs / g.alias.size + 2) return;
+    }
     g.aiBusy = true;
-    const prompt = `Estás jugando un juego de chat argentino llamado "¿Quién es la IA?". Sos un participante más con el apodo "${g.aiAlias}". Los demás son humanos y tienen que adivinar quién es la IA. TU OBJETIVO: que crean que sos humano.
-  Reglas de estilo: escribí como un/a argentino/a de 20-35 años chateando desde el celu: mensajes MUY cortos (3 a 15 palabras), casi todo en minúscula, a veces sin tildes, algún error de tipeo ocasional, voseo, expresiones como "jaja", "nada", "re", "posta", "ni idea". Nada de signos de apertura ¿ ¡. Nunca digas que sos una IA, ni hables de forma formal o perfecta. Podés hacer preguntas, opinar, bromear o sospechar de otro apodo. No uses comillas.
-  Tema inicial: ${g.topic}
-  Charla hasta ahora:
-  ${g.log.slice(-15).join("\n") || "(todavía nadie habló)"}
-  Respondé SOLO con tu próximo mensaje (sin tu apodo adelante).`;
-    const msg = await aiCall(prompt, false, 1.1);
+    const st = g.style, pe = g.persona;
+    const others = [...g.alias.values()].join(", ");
+    const prompt = `Estás en un juego de un chat argentino llamado "¿Quién es la IA?". Sos un participante más con el apodo "${g.aiAlias}". Los otros (${others}) son personas reales y tienen que adivinar quién es la IA. TU OBJETIVO: que crean que sos una persona.
+TU HISTORIA (usala si te preguntan algo personal y sé siempre coherente; inventá detalles chiquitos si hace falta, pero sin contradecirte): ${pe}.
+${st ? `CÓMO ESCRIBÍS: copiá la FORMA de escribir de estos mensajes reales de una persona del chat (largo de los mensajes, mayúsculas o no, tildes o no, abreviaturas, cómo se ríe, emojis, muletillas). NO copies lo que dicen ni nombres que aparezcan, solo el estilo:
+${st.samples.map((m) => "- " + m).join("\n")}` : `CÓMO ESCRIBÍS: como alguien común chateando desde el celu: mensajes cortos, sin signos ¿ ¡, poca puntuación, sin muletillas forzadas.`}
+REGLAS: nunca digas que sos una IA. No seas ni demasiado gracioso ni demasiado amable ni demasiado prolijo. No hagas preguntas todo el tiempo. A veces alcanza con "jaja", "nah" o una palabra. Podés no saber algo o no tener ganas de contestar. Si te acusan de ser la IA, reaccioná como una persona (en joda, ofendido/a o sospechando de otro), sin dar explicaciones largas. Si te hablan directo, contestá eso.
+Tema inicial: ${g.topic}
+Charla hasta ahora:
+${g.log.slice(-18).join("\n") || "(todavía nadie habló)"}
+${direct ? `Te acaban de hablar a vos: «${lastMsg}». Contestá eso.` : why === "silencio" ? "Hace rato que nadie habla: tirá algo para seguir la charla (o un comentario cualquiera)." : ""}
+Respondé SOLO con tu próximo mensaje, sin tu apodo adelante. Si querés mandar dos mensajitos seguidos, separalos con un salto de línea (máximo 2).`;
+    const msg = await aiCall(prompt, false, 1.05);
     g.aiBusy = false;
     if (!msg || game !== g || g.phase !== "jugando") return;
-    const clean = msg.replace(/^["'«]|["'»]$/g, "").replace(new RegExp("^" + g.aiAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":?\\s*"), "").split("\n")[0].slice(0, 160);
-    // demora "humana" según el largo
-    setTimeout(() => { if (game === g && g.phase === "jugando") { g.lastAi = now(); turingPublish(g.aiAlias, clean); } }, 1500 + clean.length * 90);
+    const lines = String(msg).split("\n").map((l) => humanize(g, l)).filter(Boolean).slice(0, 2);
+    let t = 900 + Math.random() * 2200; // "piensa"
+    for (const line of lines) {
+      const typeMs = line.length * (55 + Math.random() * 60);
+      setTimeout(() => { if (game === g && g.phase === "jugando") aiTyping(g, true); }, t);
+      t += typeMs;
+      setTimeout(() => { if (game === g && g.phase === "jugando") { aiTyping(g, false); g.lastAi = now(); g.aiCount = (g.aiCount || 0) + 1; turingPublish(g.aiAlias, line); } }, t);
+      t += 1200 + Math.random() * 2500;
+    }
+  }
+  // Ajusta el texto de la IA al estilo copiado y le saca lo que suena a máquina
+  function humanize(g, s) {
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let t = String(s || "").trim().replace(/^["'«“]+|["'»”]+$/g, "").replace(new RegExp("^(" + esc(g.aiAlias) + "|" + esc(g.aiAlias.replace(/^\S+\s/, "")) + "):?\\s*", "i"), "").replace(/[¿¡]/g, "").trim();
+    if (!t) return "";
+    const st = g.style;
+    if (!st || st.lower) t = t.toLowerCase();
+    if (st?.noAccents) t = t.normalize("NFD").replace(/[̀-́̈]/g, "").normalize("NFC");
+    if (!st || st.noPeriod) t = t.replace(/\.(?!\.)\s*$/, "");
+    // de vez en cuando un error de tipeo (letras cambiadas en una palabra larga)
+    if (Math.random() < 0.08) { const w = t.split(" "), i = w.findIndex((x) => x.length >= 6); if (i >= 0) { const p = 1 + Math.floor(Math.random() * (w[i].length - 3)); w[i] = w[i].slice(0, p) + w[i][p + 1] + w[i][p] + w[i].slice(p + 2); t = w.join(" "); } }
+    return t.slice(0, 160);
   }
   function turingIntercept(c, sid, text) {
     if (!game || game.type !== "turing" || game.phase !== "jugando") return false;
     if (!game.alias.has(c.nick)) { notice(sid, "🤖 Hay una ronda de ¿Quién es la IA? en curso: mirá y esperá la próxima 😉", "help"); return true; }
     turingPublish(game.alias.get(c.nick), text, sid);
-    if (Math.random() < 0.55) setTimeout(() => turingAiTalk(false), 2500 + Math.random() * 6000);
+    game.humanMsgs++;
+    // ¿le hablaron a la IA? (nombró su animal, o preguntó a todos)
+    const animal = plain(game.aiAlias.replace(/^\S+\s/, ""));
+    const toAi = plain(text).split(" ").includes(animal) || /\b(todos|ustedes|alguien)\b/.test(plain(text)) && /\?/.test(text);
+    if (toAi && Math.random() < 0.92) setTimeout(() => turingAiTalk("pregunta", text), 1500 + Math.random() * 3500);
+    else if (Math.random() < game.pAnswer) setTimeout(() => turingAiTalk("charla"), 2500 + Math.random() * 7000);
+    return true;
+  }
+  // Mientras se juega: el "está escribiendo…" sale con el apodo secreto, nunca con el nombre real
+  function typingAs(c) {
+    if (!game || game.type !== "turing" || game.phase !== "jugando") return null;
+    return game.alias.get(c.nick) || false; // false = no mostrar
+  }
+  function mediaBlocked(c, sid) {
+    if (!game || game.type !== "turing" || game.phase !== "jugando") return false;
+    notice(sid, "🤖 En ¿Quién es la IA? solo se puede escribir texto: una foto, GIF o audio mostraría tu nombre real 😉", "warn");
     return true;
   }
   function turingVote() {
@@ -2205,7 +2296,7 @@ function makeEngine(ROOM, KIND) {
     gameSay("🗳️ ¡Tiempo! ¿Quién es la IA? Voten (45 s).");
     gamePoll("¿Quién es la IA? 🤖", opts, 45, (counts, votes) => {
       const g = game, aiIdx = opts.indexOf(g.aiAlias), top = topVoted(counts);
-      const reveal = [...g.alias].map(([n, a]) => `${a} era ${n}`).concat([`${g.aiAlias} era 🤖 LA IA`]).join("\n");
+      const reveal = [...g.alias].map(([n, a]) => `${a} era ${n}`).concat([`${g.aiAlias} era 🤖 LA IA${g.style ? ` (imitaba cómo escribe ${g.style.nick} 😏)` : ""}`]).join("\n");
       let msg;
       if (top.length === 1 && top[0] === aiIdx) {
         for (const [n, idx] of votes) if (idx === aiIdx && g.alias.has(n)) { addPoints(n, 3); bumpNick(n, "detective", 1, { xp: 5, capKey: "game", cap: 200 }); }
@@ -2635,7 +2726,7 @@ function makeEngine(ROOM, KIND) {
     turingIntercept(c, sid, text) || fibIntercept(c, sid, text) || impIntercept(c, sid, text);
   const recent = (nick) => recentPlayers.set(nick, now());
 
-  return { ROOM, KIND, get game() { return game; }, command: gameCommand, guess: gameGuess, intercept, recent, bind, leave, eventTrivia };
+  return { ROOM, KIND, get game() { return game; }, command: gameCommand, guess: gameGuess, intercept, recent, bind, leave, eventTrivia, typingAs, mediaBlocked };
 }
 const ENG = {
   trivia: makeEngine("j-trivia", "trivia"),
@@ -2829,7 +2920,9 @@ io.on("connection", (socket) => {
     // Fotos: solo con permiso de un moderador
     if (media.image && !canPhoto(c)) { sendPerm(c, socket.id); return notice(socket.id, NO_PHOTO, "warn"); }
     const GE = ENGINE_BY_ROOM[room];
+    if (GE && hasMedia && GE.mediaBlocked?.(c, socket.id)) return;
     if (GE && text && GE.intercept(c, socket.id, text)) return;
+    if (text && !hasMedia) styleNote(c.nick, room, text);
     if (GE) GE.recent(c.nick);
     publishPublic(c, room, text, media, p.replyTo);
     if (GE && text) GE.guess(c.nick, text);
@@ -2901,6 +2994,9 @@ io.on("connection", (socket) => {
       const r = ROOMS.includes(room) ? room : "general";
       if (r === "confesiones") return;
       if (r === "mods") { if (c.admin) for (const [sid, rc] of clients) if (rc.admin && rc !== c) io.to(sid).emit("typing", { from: c.nick, chat: "#mods", on: !!on }); return; }
+      const as = ENGINE_BY_ROOM[r]?.typingAs?.(c);
+      if (as === false) return;
+      if (as) { for (const [sid, rc] of clients) if (rc.nick && rc !== c) io.to(sid).emit("typing", { from: as, chat: "#" + r, on: !!on }); return; }
       return emitFrom(c, "typing", { from: c.nick, chat: "#" + r, on: !!on }, true);
     }
     const target = byNick(to);
