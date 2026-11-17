@@ -121,6 +121,13 @@ function takeToken(socket, ev) {
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "Public")));
 app.get("/ping", (req, res) => res.send("ok"));
+// 🔎 Para Google: qué se puede indexar y dónde está el sitio
+const PUBLIC_URL = (process.env.PUBLIC_URL || "https://genterotachat.com.ar").replace(/\/$/, "");
+app.get("/robots.txt", (req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\nDisallow: /bye\nDisallow: /config\n\nSitemap: ${PUBLIC_URL}/sitemap.xml\n`));
+app.get("/sitemap.xml", (req, res) => res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${PUBLIC_URL}/</loc><lastmod>${new Date().toISOString().slice(0, 10)}</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
+</urlset>`));
 app.get("/avatar/:nick", (req, res) => {
   const t = byNick(req.params.nick);
   if (!t || !t.c.avatar) return res.status(404).end();
@@ -247,7 +254,7 @@ function setRefugio(min, by) {
 }
 const userList = (viewer) =>
   [...clients.values()].filter((c) => c.nick && !(viewer && blockedPair(viewer, c)))
-    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "", ...achInfo(c), ...(canPhoto(c) ? { ph: true } : {}), ...(c.away ? { away: true } : {}) }))
+    .map((c) => ({ nick: c.nick, status: c.status, admin: c.admin, role: role(c), champ: isChamp(c.nick), av: c.avatar ? c.avVer : 0, bio: c.bio || "", ...achInfo(c), ...(canPhoto(c) ? { ph: true } : {}), ...(c.away ? { away: true, awayAt: c.awayAt || 0 } : {}) }))
     .sort((a, b) => a.nick.localeCompare(b.nick));
 const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid).emit("users", userList(c)); };
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
@@ -483,6 +490,24 @@ function runCommand(c, id, text, room = "general") {
   }
 
   if (cmd === "logros" || cmd === "niveles") return notice(id, logrosTop(), "help");
+  if (cmd === "rocola") {
+    const a = arg.trim().toLowerCase();
+    if (c.admin && (a === "off" || a === "on")) { dj.on = a === "on"; if (!dj.on) { dj.queue = []; djNext("off"); } else djEmit(); logMod(c.nick, `🎵 ${dj.on ? "prendió" : "apagó"} la rocola`); return notice(id, `🎵 Rocola ${dj.on ? "prendida" : "apagada"}.`, "mod"); }
+    if (c.admin && a === "vaciar") { dj.queue = []; djEmit(); return notice(id, "🎵 Fila vaciada.", "mod"); }
+    if (arg) { io.to(id).emit("dj-add-cmd", arg.trim()); return; }
+    io.to(id).emit("dj-open", "rocola"); return;
+  }
+  if (cmd === "radio") {
+    if (!arg) { io.to(id).emit("dj-open", "radio"); return; }
+    if (!c.owner) return notice(id, "La radio la configura el dueño.", "warn");
+    const [u, ...nm] = arg.split(" ");
+    if (/^(off|no|borrar)$/i.test(u)) { radio = { url: "", name: "" }; dirty(); djEmit(); logMod(c.nick, "📻 sacó la radio"); return notice(id, "📻 Radio desactivada.", "mod"); }
+    if (!/^https:\/\/[^\s]+$/i.test(u)) return notice(id, "Uso: /radio https://stream.zeno.fm/tucodigo Nombre de la radio · /radio off", "warn");
+    radio = { url: u.slice(0, 300), name: nm.join(" ").slice(0, 40) || "Radio Gente Rota" }; dirty(); djEmit();
+    logMod(c.nick, `📻 configuró la radio: ${radio.name}`);
+    return notice(id, `📻 Listo: «${radio.name}» configurada. Todos la van a ver en el botón 📻.`, "mod");
+  }
+  if (cmd === "invitar") { io.to(id).emit("open-invite"); return; }
   if (cmd === "piezas") { const p = profiles.get(c.pkey); return notice(id, `🧩 Tenés ${p?.pz || 0} piezas. Gastalas en ✏️ Mi perfil → 🛒 Tienda.`, "help"); }
   if (cmd === "sintitulo") {
     if (!c.admin) return notice(id, "No tenés permiso para usar ese comando.", "warn");
@@ -512,7 +537,7 @@ function runCommand(c, id, text, room = "general") {
     if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
-      "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué)" +
+      "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué) · /liberar Apodo (suelta un apodo 💤 trabado)" +
       "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinavatar <apodo> (quitar foto de perfil) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
       "\n• Salas: /cerrar · /abrir (en la sala actual) · /lento <seg> · /limpiar · /fijar <texto> · /desfijar · /anuncio <texto>" +
       "\n• Listas: /silenciados · /reportes · /filtro +palabra | -palabra | lista" +
@@ -537,7 +562,7 @@ function runCommand(c, id, text, room = "general") {
     io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  const MOD_ONLY = ["desbanear", "baneados", "registro", "refugio", "sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  const MOD_ONLY = ["liberar", "desbanear", "baneados", "registro", "refugio", "sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
   if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
     ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
     : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
@@ -632,6 +657,12 @@ function runCommand(c, id, text, room = "general") {
       if (ms !== null) rsn = why.slice(1).join(" ") || "Decisión de moderación"; else ms = 24 * 3600e3;
       if (!c.owner && (ms === Infinity || ms > 7 * 86400e3)) return notice(id, "Los moderadores pueden banear hasta 1 semana. Para más (o para siempre), hablalo con el dueño.", "warn");
       return kick(target.id, rsn, true, c.nick, ms);
+    }
+    case "liberar": {
+      const t = byNick(targetNick); if (!t) return notice(id, "No encuentro ese apodo.", "warn");
+      if (!t.c.away) return notice(id, `${t.c.nick} está conectado/a ahora: no está trabado.`, "warn");
+      t.c.gone = true; finalLeave(t.c, t.id);
+      return notice(id, `✅ Liberé el apodo «${t.c.nick}». Ya lo puede usar quien quiera.`, "mod");
     }
     case "desbanear": {
       if (!arg) return notice(id, "Uso: /desbanear Apodo. Mirá la lista con /baneados.");
@@ -2680,6 +2711,7 @@ io.on("connection", (socket) => {
   const c = {
     nick: "", status: "disponible", admin: false, owner: false, ip, dev: String(socket.handshake.auth?.dev || "").slice(0, 40), joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
+    sid: socket.id, inv: String(socket.handshake.auth?.inv || "").slice(0, 12),
   };
   if (passOk(c.dev, socket.handshake.auth?.pass)) c.human = true;
   clients.set(socket.id, c);
@@ -2688,6 +2720,8 @@ io.on("connection", (socket) => {
   permHandlers(socket, c);
   shopHandlers(socket, c);
   bdayHandlers(socket, c);
+  invHandlers(socket, c);
+  djHandlers(socket, c);
   for (const E of ENGINES) E.bind(socket, c);
   socket.on("game-custom", (o = {}, cb) => { if (!Object.values(CUSTOM_OF).flat().includes(o.type)) cb && cb({ ok: false, error: "Juego desconocido." }); });
 
@@ -2697,6 +2731,10 @@ io.on("connection", (socket) => {
     if (c.nick) return cb({ ok: false });
     const ses = sessions.get(String(token || ""));
     if (!ses || ses.c.gone) return cb({ ok: false });
+    doResume(ses, cb);
+  });
+  // Recupera una sesión (desde la "llave" guardada o porque volvió desde el mismo celu escribiendo su apodo)
+  function doResume(ses, cb) {
     const old = ses.c, oldId = ses.id;
     const pu = penUntil(chatPenalties, c, old.nick);
     if (pu) return cb({ ok: false });
@@ -2716,7 +2754,7 @@ io.on("connection", (socket) => {
     if (c.admin) socket.emit("admin", { mod: true, owner: !!c.owner });
     sendPerm(c, socket.id); if (c.admin) requestsCount();
     pushUsers();
-  });
+  }
 
   // Salir a propósito (botón 🚪): se va en el momento, sin quedar 💤
   socket.on("leave", () => { if (!c.nick) return; c.gone = true; socket.disconnect(true); });
@@ -2740,7 +2778,18 @@ io.on("connection", (socket) => {
     if (!/^[\p{L}\p{N} _.\-]+$/u.test(nick)) return cb({ ok: false, error: "Usá solo letras, números, espacios, punto, guion o guion bajo." });
     if (RESERVED.includes(norm(nick)) || norm(nick).includes("fastidio")) return cb({ ok: false, error: "Ese apodo no se puede usar." });
     if (censor(nick).hits) return cb({ ok: false, error: "Elegí otro apodo." });
-    if (users.has(nick.toLowerCase())) return cb({ ok: false, error: "Ese apodo ya está en uso." });
+    if (users.has(nick.toLowerCase())) {
+      const hid = users.get(nick.toLowerCase()), held = clients.get(hid), hs = held && sessions.get(held.token);
+      // Es la misma persona desde el mismo celu y navegador: le devolvemos su lugar
+      if (held && hs && !held.gone && held.dev && c.dev && held.dev === c.dev) return doResume(hs, cb);
+      if (held?.away) {
+        const ago = Math.max(1, Math.round((now() - (held.awayAt || now())) / 60000));
+        const left = Math.max(1, Math.round(((held.awayAt || now()) + GRACE_MS - now()) / 60000));
+        const fmt = (m) => m >= 120 ? `${Math.round(m / 60)} h` : `${m} min`;
+        return cb({ ok: false, error: `Ese apodo es de alguien que salió hace ${fmt(ago)} y le guardamos el lugar por si vuelve. Se libera en ${fmt(left)}. Si sos vos, entrá desde el mismo celu y navegador que antes; si no, elegí otro apodo.` });
+      }
+      return cb({ ok: false, error: "Ese apodo lo está usando alguien conectado ahora. Elegí otro." });
+    }
     if (banFind(null, null, nick)) return cb({ ok: false, error: "Ese apodo está baneado." });
     // Baneo por IP: frena a los que vuelven con otro apodo y celu "limpio", pero no a los habituales
     // que comparten IP con la persona baneada (en los celus pasa seguido).
@@ -3361,6 +3410,7 @@ const BADGES = [
   { id: "buenaonda", ico: "🤝", name: "Buena onda", desc: "❤️ que les diste a publicaciones de otros", stat: "likesGiven", tiers: [20, 100, 400] },
   { id: "constante", ico: "📅", name: "Constante", desc: "Días seguidos entrando al chat", stat: "streak", tiers: [3, 7, 30] },
   { id: "veterano", ico: "🎂", name: "Veterano/a", desc: "Días distintos que entraste", stat: "days", tiers: [7, 30, 100] },
+  { id: "reclutador", ico: "🔗", name: "Reclutador/a", desc: "Amigos que invitaste y se quedaron", stat: "invites", tiers: [1, 5, 15] },
   { id: "cerebrito", ico: "🧠", name: "Cerebrito", desc: "Trivias y ahorcados ganados", stat: "trivia", tiers: [10, 50, 200] },
   { id: "rayo", ico: "⚡", name: "Rayo", desc: "Trivias acertadas en menos de 6 segundos", stat: "fast", tiers: [3, 15, 50] },
   { id: "valiente", ico: "🎭", name: "Valiente", desc: "Verdades o retos cumplidos en Verdad o reto", stat: "retos", tiers: [3, 15, 40] },
@@ -3393,6 +3443,7 @@ function gainXp(pkey, p, n, capKey, cap) {
   }
   if (!n) return;
   const before = levelOf(p.xp); p.xp += n; profDirty.add(pkey);
+  if (p.invBy && !p.invDone) setTimeout(() => invCheck(pkey, p), 0);
   const after = levelOf(p.xp);
   if (after > before) {
     const o = onlineOf(pkey);
@@ -3441,7 +3492,62 @@ function achInfo(c) {
   return { lv: levelOf(p.xp) + 1, bd: b ? b.ico : "", ...(ck ? { ck } : {}), ...(isBday(p) ? { cumple: true } : {}) };
 }
 // Al entrar: racha de días, Fénix y Campeón semanal
+// ================== 🔗 Invitaciones ==================
+// Cada uno tiene un link propio. Si alguien NUEVO entra con él, llega a nivel 2 y vuelve otro día,
+// ganan los dos: el que invitó 🧩150 (+ insignia Reclutador/a) y el invitado 🧩50.
+const INV_PZ = 150, INV_PZ_NEW = 50, INV_DAY_CAP = 5;
+const shortHash = (x) => require("crypto").createHash("sha1").update(String(x || "")).digest("base64url").slice(0, 12);
+function invCodeOf(pkey) {
+  const p = profiles.get(pkey); if (!p) return "";
+  if (!p.inv) {
+    const used = new Set([...profiles.values()].map((q) => q.inv).filter(Boolean));
+    let code; do code = require("crypto").randomBytes(5).toString("base64url").replace(/[-_]/g, "").slice(0, 6).toLowerCase(); while (!code || code.length < 6 || used.has(code));
+    p.inv = code; profDirty.add(pkey);
+  }
+  return p.inv;
+}
+function invOwner(code) {
+  code = String(code || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
+  if (!code) return null;
+  for (const [k, q] of profiles) if (q.inv === code) return k;
+  return null;
+}
+function invAttach(c, p, code) {
+  const owner = invOwner(code);
+  if (!owner || owner === c.pkey) return;
+  const op = profiles.get(owner);
+  if (!op || (op.devh && op.devh === shortHash(c.dev || c.ip))) return; // no vale invitarse a uno mismo desde el mismo celu
+  p.invBy = owner; p.invAt = now(); profDirty.add(c.pkey);
+  setTimeout(() => {
+    const me = byNick(c.nick); if (me) notice(me.id, `👋 Entraste con la invitación de ${op.nick}. Cuando llegues a nivel 2 y vuelvas otro día, ganan los dos: vos 🧩${INV_PZ_NEW} y ${op.nick} 🧩${INV_PZ}.`, "help");
+    const o = onlineOf(owner); if (o) notice(o.id, `🔗 ${c.nick} entró con tu invitación. Cuando llegue a nivel 2 y vuelva otro día, ganan los dos (vos 🧩${INV_PZ}).`, "help");
+  }, 2500);
+}
+function invCheck(pkey, p) {
+  if (!p?.invBy || p.invDone) return;
+  if (levelOf(p.xp) < 1 || (p.s.days || 0) < 2) return;
+  p.invDone = true; profDirty.add(pkey);
+  const owner = p.invBy, op = profiles.get(owner);
+  gainPz(pkey, p, INV_PZ_NEW, null, Infinity, "bienvenida por invitación 🔗");
+  if (!op) return;
+  if (op.d.day !== arDay()) op.d = { day: arDay(), x: {} };
+  const today = op.d.x.invR || 0;
+  bumpK(owner, op.nick, "invites", 1);
+  if (today < INV_DAY_CAP) { op.d.x.invR = today + 1; gainPz(owner, op, INV_PZ, null, Infinity, `${p.nick} se quedó en el chat 🔗`); }
+  const o = onlineOf(owner); if (o) notice(o.id, `🎉 ${p.nick} ya es parte de Gente Rota gracias a vos.${today < INV_DAY_CAP ? ` +🧩${INV_PZ}` : " (hoy ya llegaste al máximo de premios por invitación)"}`, "help");
+  news(op, "🔗", `${p.nick} se sumó a Gente Rota invitado/a por ${op.nick}`);
+}
+function invHandlers(socket, c) {
+  socket.on("inv-get", (_, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const code = invCodeOf(c.pkey); profK(c.pkey, c.nick);
+    const mine = [...profiles.values()].filter((q) => q.invBy === c.pkey);
+    cb({ url: `${PUBLIC_URL}/?inv=${code}`, done: mine.filter((q) => q.invDone).length, pending: mine.filter((q) => !q.invDone).map((q) => q.nick).slice(-10), pz: INV_PZ, pzNew: INV_PZ_NEW });
+  });
+}
+
 function achJoin(c) {
+  const isNew = !profiles.has(pkeyOf(c.nick, c.dev || c.ip));
   c.pkey = pkeyOf(c.nick, c.dev || c.ip);
   { const old = profiles.get(c.pkey); c.veteran = !!old && (old.xp || 0) >= 30; }
   if (!c.veteran && !c.admin) {
@@ -3449,6 +3555,8 @@ function achJoin(c) {
     if (newJoins.length >= 10 && refugioUntil < t) { newJoins.length = 0; setRefugio(15, BOT); logMod("🤖 automático", "🛡️ activó modo refugio 15 min (10 apodos nuevos en 2 min)"); notifyAdmins("🛡️ Entraron 10 apodos nuevos en 2 minutos: activé el modo refugio por 15 min. Si era gente legítima, cortalo con /refugio off."); }
   }
   const p = profK(c.pkey, c.nick), today = arDay();
+  p.devh = shortHash(c.dev || c.ip);
+  if (isNew && c.inv) invAttach(c, p, c.inv);
   if (p.last !== today) {
     const gap = p.last ? Math.round((Date.parse(today) - Date.parse(p.last)) / 86400e3) : 0;
     p.streak = gap === 1 ? (p.streak || 0) + 1 : 1;
@@ -3460,6 +3568,7 @@ function achJoin(c) {
   }
   achChamp(c);
   bdayCheck(c.pkey);
+  invCheck(c.pkey, p);
 }
 function achChamp(c) {
   const last = champions[champions.length - 1];
@@ -3838,6 +3947,106 @@ function bdayHandlers(socket, c) {
   });
 }
 
+// ================== 📻 Radio + 🎵 Rocola ==================
+// Radio: un link de transmisión (ej. Zeno.fm) que configura el dueño con /radio <link> [nombre].
+// Rocola: la gente pega links de YouTube, se arma una fila y todos escuchan lo mismo al mismo tiempo.
+let radio = { url: "", name: "" };
+const DJ_MAX_DUR = 10 * 60, DJ_MAX_QUEUE = 20;
+const dj = { on: true, cur: null, queue: [], skips: new Set(), timer: null, hist: [] };
+const djListeners = new Map(); // socket.id -> "radio" | "rocola"
+const djCount = () => { let r = 0, k = 0; for (const m of djListeners.values()) m === "radio" ? r++ : k++; return { radio: r, rocola: k }; };
+const djPublic = () => ({ radio: radio.url ? { url: radio.url, name: radio.name || "Radio Gente Rota" } : null, on: dj.on,
+  cur: dj.cur && { id: dj.cur.id, title: dj.cur.title, by: dj.cur.by, start: dj.cur.start, dur: dj.cur.dur },
+  queue: dj.queue.map((q) => ({ id: q.id, title: q.title, by: q.by })), listeners: djCount(), now: now() });
+let djEmitT = null;
+const djEmit = () => { clearTimeout(djEmitT); djEmitT = setTimeout(() => io.emit("dj", djPublic()), 150); };
+function ytId(url) {
+  const u = String(url || "").trim();
+  const m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/i);
+  return m ? m[1] : /^[\w-]{11}$/.test(u) ? u : null;
+}
+async function ytInfo(id) {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent("https://www.youtube.com/watch?v=" + id)}`, { signal: ctl.signal });
+    clearTimeout(t);
+    if (!r.ok) return null; // privado, borrado o no se puede insertar
+    const j = await r.json();
+    return { title: String(j.title || "Tema sin título").slice(0, 90), author: String(j.author_name || "").slice(0, 40) };
+  } catch { return { title: "Video de YouTube", author: "" }; } // si YouTube no responde, dejamos pasar
+}
+function djNext(reason) {
+  clearTimeout(dj.timer); dj.skips.clear();
+  if (dj.cur) { dj.hist.push(dj.cur.id); dj.hist = dj.hist.slice(-30); }
+  dj.cur = null;
+  const n = dj.on && dj.queue.shift();
+  if (n) {
+    dj.cur = { ...n, start: now() + 1500, dur: DJ_MAX_DUR, durSet: false };
+    dj.timer = setTimeout(() => djNext("fin"), (DJ_MAX_DUR + 3) * 1000);
+  }
+  djEmit();
+}
+function djSetDur(d) {
+  if (!dj.cur || dj.cur.durSet) return;
+  d = Math.max(10, Math.min(DJ_MAX_DUR, Math.round(+d || 0)));
+  dj.cur.dur = d; dj.cur.durSet = true;
+  clearTimeout(dj.timer);
+  const left = dj.cur.start + d * 1000 - now();
+  dj.timer = setTimeout(() => djNext("fin"), Math.max(1000, left + 2500));
+  djEmit();
+}
+function djHandlers(socket, c) {
+  socket.on("dj-state", (_, cb) => { if (typeof cb === "function") cb(djPublic()); });
+  socket.on("dj-listen", (mode) => {
+    if (mode === "radio" || mode === "rocola") djListeners.set(socket.id, mode); else djListeners.delete(socket.id);
+    djEmit();
+  });
+  socket.on("disconnect", () => { if (djListeners.delete(socket.id)) djEmit(); });
+  socket.on("dj-add", async (url, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    if (!dj.on) return cb({ ok: false, error: "La rocola está apagada por los moderadores." });
+    const id = ytId(url); if (!id) return cb({ ok: false, error: "Pegá un link de YouTube (youtube.com/watch?v=… o youtu.be/…)." });
+    if (!c.admin) {
+      const p = profiles.get(c.pkey);
+      if (!p || levelOf(p.xp) < 1) return cb({ ok: false, error: "Para poner temas en la rocola tenés que llegar a nivel 2 (chateá un rato y listo)." });
+      if (c.mutedUntil > now()) return cb({ ok: false, error: "Estás silenciado/a." });
+      if (dj.queue.some((q) => q.by === c.nick)) return cb({ ok: false, error: "Ya tenés un tema en la fila. Esperá a que suene para poner otro." });
+      if (tooMany("dj-add", c.pkey || c.ip, 6)) return cb({ ok: false, error: "Pusiste muchos temas seguidos. Esperá un ratito." });
+    }
+    if (dj.queue.length >= DJ_MAX_QUEUE) return cb({ ok: false, error: "La fila está llena. Probá en un rato." });
+    if (dj.cur?.id === id || dj.queue.some((q) => q.id === id)) return cb({ ok: false, error: "Ese tema ya está sonando o en la fila." });
+    if (dj.hist.slice(-5).includes(id)) return cb({ ok: false, error: "Ese tema sonó hace poquito. Elegí otro." });
+    const info = await ytInfo(id);
+    if (!info) return cb({ ok: false, error: "Ese video no se puede reproducir fuera de YouTube (privado, borrado o bloqueado)." });
+    const cz = censor(info.title);
+    if (cz.harm || cz.hits >= 2) return cb({ ok: false, error: "No se puede poner ese tema." });
+    dj.queue.push({ id, title: cz.text, by: c.nick });
+    cb({ ok: true, pos: dj.cur ? dj.queue.length : 0, title: cz.text });
+    if (!dj.cur) djNext("nuevo"); else djEmit();
+  });
+  socket.on("dj-dur", ({ id, d } = {}) => { if (dj.cur && id === dj.cur.id) djSetDur(d); });
+  socket.on("dj-err", ({ id, code } = {}) => {
+    if (!dj.cur || id !== dj.cur.id || ![100, 101, 150].includes(+code)) return;
+    if (tooMany("dj-err", c.ip, 5)) return;
+    const t = dj.cur.title; djNext("error");
+    io.to(socket.id).emit("dj-msg", `⏭️ «${t}» no se puede reproducir fuera de YouTube. Pasamos al siguiente.`);
+  });
+  socket.on("dj-skip", (_, cb) => {
+    if (!dj.cur || !c.nick) return cb && cb({ ok: false });
+    if (c.admin || dj.cur.by === c.nick) { djNext("skip"); return cb && cb({ ok: true, done: true }); }
+    if (djListeners.get(socket.id) !== "rocola") return cb && cb({ ok: false, error: "Prendé la rocola para votar." });
+    dj.skips.add(c.dev || c.ip);
+    const need = Math.max(2, Math.ceil(djCount().rocola * 0.5));
+    if (dj.skips.size >= need) { djNext("votos"); return cb && cb({ ok: true, done: true }); }
+    cb && cb({ ok: true, votes: dj.skips.size, need });
+  });
+  socket.on("dj-remove", (i, cb) => {
+    i = parseInt(i); const q = dj.queue[i];
+    if (!q || !(c.admin || q.by === c.nick)) return cb && cb({ ok: false });
+    dj.queue.splice(i, 1); djEmit(); cb && cb({ ok: true });
+  });
+}
+
 // Mantener despierto en Render (plan gratis)
 const SELF_URL = process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL && typeof fetch === "function") {
@@ -3861,7 +4070,7 @@ function snapshot() {
   return {
     v: 1,
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
-    bans: [...bans].filter(([, b]) => b.until > t), modLog, usedBags,
+    bans: [...bans].filter(([, b]) => b.until > t), modLog, usedBags, radio, djOn: dj.on,
     points: [...points],
     pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events, approvalMode,
     weekly: { start: weekly.start, points: [...weekly.points] }, champions,
@@ -3896,6 +4105,8 @@ async function loadState() {
         if (b?.until > now()) bans.set(k, b);
       });
       if (Array.isArray(st.modLog)) modLog = st.modLog.slice(-200);
+      if (st.radio?.url) radio = { url: String(st.radio.url), name: String(st.radio.name || "") };
+      if (st.djOn === false) dj.on = false;
       if (st.usedBags && typeof st.usedBags === "object") for (const [k, v] of Object.entries(st.usedBags)) if (Array.isArray(v)) usedBags[k] = v.slice(-1000);
       (st.points || []).forEach(([n, p]) => points.set(n, p));
       pinned = st.pinned || ""; slowMode = st.slowMode || 0;
