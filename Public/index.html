@@ -1092,6 +1092,7 @@ function enterChat(res) {
   {
     setJoinBusy(false); joinWaiting = false; $("err").textContent = "";
     restoring = false;
+    setTimeout(armBack, 0);
     if (res.token) setSess({ nick: res.nick, token: res.token });
     me = res.nick; online = res.users;
     $("meName").textContent = me;
@@ -1472,14 +1473,12 @@ function push(chat, m) {
 let selMsg = null;
 const canAct = (m) => m && m.id && !m.deleted && !m.poll;
 function clearSel(fromBack) {
-  if (selMsg && !fromBack && window.history.state?.sel) { try { window.history.back(); } catch {} }
   selMsg = null; $("msgMenu").hidden = true; $("selBar").hidden = true; $("title").hidden = false;
   $("messages").querySelectorAll(".msg.sel").forEach((n) => n.classList.remove("sel"));
 }
 function selectMsg(m, msgEl) {
   if (!canAct(m)) return;
   clearSel(true); selMsg = m; msgEl.classList.add("sel");
-  try { if (!window.history.state?.sel) window.history.pushState({ sel: 1 }, ""); } catch {} // el botón "atrás" del celu cancela la selección
   try { navigator.vibrate?.(25); } catch {}
   const recent = Date.now() - (m.ts || 0) < 30 * 60000;
   $("selEdit").hidden = !(isMine(m) && !m.image && !m.gif && !m.audio && recent);
@@ -1500,7 +1499,31 @@ function selectMsg(m, msgEl) {
   menu.style.top = (r.top - menu.offsetHeight - 8 < 60 ? r.bottom + 8 : r.top - menu.offsetHeight - 8) + "px";
 }
 $("selX").onclick = () => clearSel();
-window.addEventListener("popstate", () => { if (selMsg) clearSel(true); });
+// ---------- Botón "atrás" del celu: como en una app ----------
+// Cierra lo que esté abierto (foto, perfil, tienda, emojis, selección…), vuelve de un privado o sala a General,
+// y recién ahí pide tocar dos veces para salir. Así no se cierra el chat sin querer.
+let lastBackTry = 0;
+function armBack() { try { if (!window.history.state?.grGuard) window.history.pushState({ grGuard: 1 }, ""); } catch {} }
+function backClose() {
+  if (!$("viewer").hidden) { $("viewer").hidden = true; return true; }
+  if (!$("sheetBg").hidden) { closeSheet(); return true; }
+  if (selMsg) { clearSel(true); return true; }
+  if ($("emojiPanel").classList.contains("open")) { $("emojiPanel").classList.remove("open"); return true; }
+  if (!$("replyBar").hidden) { cancelReply(); return true; }
+  if (document.body.classList.contains("focus")) { setFocus(false); return true; }
+  if (current !== GENERAL) { openChat(GENERAL); return true; }
+  return false;
+}
+window.addEventListener("popstate", () => {
+  if (!me) return; // en la pantalla de entrada, "atrás" funciona normal
+  if (backClose()) return armBack();
+  if (Date.now() - lastBackTry < 2500) return window.history.back(); // segundo toque seguido: sale de verdad
+  lastBackTry = Date.now();
+  floatMsg("Tocá atrás otra vez para salir del chat");
+  armBack();
+});
+// cualquier toque vuelve a poner la "red" (Chrome ignora las que se agregan sin que la persona toque la página)
+document.addEventListener("pointerdown", () => { if (me) armBack(); }, { passive: true });
 $("selReply").onclick = () => { const m = selMsg; clearSel(); if (m) startReply(m); };
 $("selEdit").onclick = () => { const m = selMsg; clearSel(); if (m) startEdit(m); };
 $("selDel").onclick = () => { const m = selMsg; clearSel(); if (m && confirm(isMine(m) ? "¿Eliminar tu mensaje para todos?" : `¿Eliminar el mensaje de ${m.from}?`)) socket.emit("delete-message", m.id); };
