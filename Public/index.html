@@ -159,6 +159,7 @@
   .dj-row { display: flex; align-items: center; gap: 6px; font-size: 13.5px; padding: 6px 2px; border-bottom: 1px solid var(--border); }
   .dj-row.now { color: var(--accent); font-weight: 700; }
   #sheet .dj-x { margin: 0 0 0 auto; width: auto; background: none; border: 0; color: var(--muted); padding: 2px 8px; }
+  .lost-media { font-size: 13px; font-style: italic; opacity: .7; padding: 6px 2px; }
   #newsWrap { position: relative; height: 0; z-index: 6; }
   #newsBar { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; align-items: center; gap: 8px; background: #0b0b0b; color: #f2f2f2; border: 1px solid var(--accent); border-radius: 12px; padding: 7px 10px; font-size: 13.5px; text-align: left; box-shadow: 0 6px 20px #0008; animation: newsIn .35s cubic-bezier(.2,1.3,.4,1); }
   #newsBar.out { animation: newsOut .3s ease forwards; }
@@ -1088,12 +1089,55 @@ function join(nick, onFail) {
     lostShown = false;
   });
 }
+// ---------- 💾 Los mensajes que ya viste sobreviven si Android recarga la pestaña ----------
+// Se guardan en la memoria de ESTA pestaña (sessionStorage): se borran solos al cerrarla.
+const HIST_KEY = "gr-hist";
+let histT = null;
+function saveHistSoon() { clearTimeout(histT); histT = setTimeout(saveHist, 1500); }
+function saveHist(noMedia) {
+  if (!me) return;
+  try {
+    let budget = noMedia ? 0 : 2200000; // ~2 MB para fotos y audios (de lo más nuevo a lo más viejo)
+    const out = {};
+    for (const [chat, list] of Object.entries(history)) {
+      if (!list?.length || chat === BOARD) continue;
+      const keep = list.slice(-120), rows = [];
+      for (let i = keep.length - 1; i >= 0; i--) {
+        const m = { ...keep[i] };
+        for (const f of ["image", "audio"]) {
+          const v = m[f]; if (typeof v !== "string" || !v.startsWith("data:")) continue;
+          if (v.length <= budget) budget -= v.length;
+          else { delete m[f]; m.lost = f === "image" ? "📷 Foto" : "🎤 Audio"; }
+        }
+        rows.unshift(m);
+      }
+      out[chat] = rows;
+    }
+    sessionStorage.setItem(HIST_KEY, JSON.stringify({ nick: me, at: Date.now(), current, h: out }));
+  } catch { if (!noMedia) saveHist(true); }
+}
+function loadHist(nick) {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(HIST_KEY) || "null");
+    if (!d || d.nick !== nick || Date.now() - d.at > 6 * 3600e3) return false;
+    for (const [chat, rows] of Object.entries(d.h || {})) {
+      if ((history[chat] || []).length) continue; // si ya hay mensajes en memoria, no pisamos nada
+      history[chat] = rows; for (const m of rows) if (m.id) byId.set(m.id, m);
+    }
+    return true;
+  } catch { return false; }
+}
+const clearHist = () => { try { sessionStorage.removeItem(HIST_KEY); } catch {} };
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveHist(); });
+window.addEventListener("pagehide", () => saveHist());
+
 function enterChat(res) {
   {
     setJoinBusy(false); joinWaiting = false; $("err").textContent = "";
     restoring = false;
     setTimeout(armBack, 0);
     if (res.token) setSess({ nick: res.nick, token: res.token });
+    if (me !== res.nick) loadHist(res.nick); // la pestaña se recargó: recuperamos lo que ya habías visto
     me = res.nick; online = res.users;
     $("meName").textContent = me;
     $("login").hidden = true;
@@ -1368,6 +1412,10 @@ function renderMessage(m) {
     b.append(img);
     if (m.text) { const cap = el("div", "caption"); linkify(cap, m.text); b.append(cap); }
   }
+  else if (m.lost) {
+    b.append(el("div", "lost-media", `${m.lost} · no quedó guardada al recargar`));
+    if (m.text) { const cap = el("div", "caption"); linkify(cap, m.text); b.append(cap); }
+  }
   else linkify(b, m.text);
   if (m.card && !m.deleted) { const cb = el("button", "card-btn", `🎉 Ver y firmar la tarjeta de ${m.card}`); cb.type = "button"; cb.onclick = (e) => { e.stopPropagation(); openCard(m.card); }; b.append(cb); }
   d.append(meta, b);
@@ -1412,7 +1460,10 @@ function applyView() {
   const isBoard = current === BOARD, isMuro = current === MURO;
   $("boardView").hidden = !isBoard;
   $("muroView").hidden = !isMuro;
+  const wasHidden = $("messages").style.display === "none";
   ["messages", "typing", "msgForm"].forEach((i) => $(i).style.display = isBoard || isMuro ? "none" : "");
+  // si la lista estaba oculta (Comunidad o Pizarra), recién ahora tiene alto: la llevamos al último mensaje
+  if (wasHidden && !isBoard && !isMuro) { const box = $("messages"); box.scrollTop = box.scrollHeight; requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; }); }
   if (isMuro) ["gameBar", "replyBar", "mediaBar", "recBar", "pinned"].forEach((i) => $(i).hidden = true);
   if (isBoard) { ["gameBar", "replyBar", "mediaBar", "recBar", "pinned"].forEach((i) => $(i).hidden = true); $("bClearAll").hidden = !isAdmin; fitBoard(); }
 }
@@ -1461,12 +1512,14 @@ function forgetVoice(m) {
 }
 
 function push(chat, m) {
+  if (m.id && byId.has(m.id) && (history[chat] || []).includes(byId.get(m.id))) return;
   (history[chat] ||= []).push(m);
   if (m.id) byId.set(m.id, m);
   if (history[chat].length > 300) { const old = history[chat].shift(); if (old.id) byId.delete(old.id); if (old.audio) forgetVoice(old); }
   if (chat !== current || document.hidden) if (!["sys"].includes(m.type) && !isBlocked(m.from)) unread[chat] = (unread[chat] || 0) + 1;
   if (chat === current) renderMessages();
   renderUsers();
+  saveHistSoon();
 }
 
 // ---------- Mensajes estilo WhatsApp: mantener apretado = seleccionar · deslizar a la derecha = responder ----------
@@ -1499,11 +1552,31 @@ function selectMsg(m, msgEl) {
   menu.style.top = (r.top - menu.offsetHeight - 8 < 60 ? r.bottom + 8 : r.top - menu.offsetHeight - 8) + "px";
 }
 $("selX").onclick = () => clearSel();
+// ---------- Teclado del celu: si estabas viendo lo último, el chat se queda abajo ----------
+// Al abrir (o cerrar) el teclado la lista se achica; sin esto quedaban tapados los últimos mensajes.
+(() => {
+  const box = $("messages");
+  let atBottom = true, lastH = box.clientHeight;
+  box.addEventListener("scroll", () => { atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80; }, { passive: true });
+  const stick = () => { if (atBottom) box.scrollTop = box.scrollHeight; };
+  if (window.ResizeObserver) new ResizeObserver(() => { const h = box.clientHeight; if (h !== lastH) { lastH = h; stick(); } }).observe(box);
+  window.visualViewport?.addEventListener("resize", () => requestAnimationFrame(stick));
+  $("text").addEventListener("focus", () => { if (atBottom) [80, 300, 600].forEach((ms) => setTimeout(stick, ms)); });
+})();
+
 // ---------- Botón "atrás" del celu: como en una app ----------
 // Cierra lo que esté abierto (foto, perfil, tienda, emojis, selección…), vuelve de un privado o sala a General,
 // y recién ahí pide tocar dos veces para salir. Así no se cierra el chat sin querer.
 let lastBackTry = 0;
-function armBack() { try { if (!window.history.state?.grGuard) window.history.pushState({ grGuard: 1 }, ""); } catch {} }
+function armBack() {
+  try {
+    // Chrome ignora (y hasta saltea) las entradas que se agregan antes de que la persona toque la página:
+    // por eso el "freno" se pone recién después del primer toque.
+    const act = navigator.userActivation;
+    if (act && !act.hasBeenActive) return;
+    if (!window.history.state?.grGuard) window.history.pushState({ grGuard: 1 }, "");
+  } catch {}
+}
 function backClose() {
   if (!$("viewer").hidden) { $("viewer").hidden = true; return true; }
   if (!$("sheetBg").hidden) { closeSheet(); return true; }
@@ -1522,8 +1595,8 @@ window.addEventListener("popstate", () => {
   floatMsg("Tocá atrás otra vez para salir del chat");
   armBack();
 });
-// cualquier toque vuelve a poner la "red" (Chrome ignora las que se agregan sin que la persona toque la página)
-document.addEventListener("pointerdown", () => { if (me) armBack(); }, { passive: true });
+// cualquier toque o tecla pone la "red" (en fase de captura: antes de que se abra un perfil, una foto, etc.)
+for (const ev of ["click", "keydown", "touchend"]) document.addEventListener(ev, () => { if (me) armBack(); }, { capture: true, passive: true });
 $("selReply").onclick = () => { const m = selMsg; clearSel(); if (m) startReply(m); };
 $("selEdit").onclick = () => { const m = selMsg; clearSel(); if (m) startEdit(m); };
 $("selDel").onclick = () => { const m = selMsg; clearSel(); if (m && confirm(isMine(m) ? "¿Eliminar tu mensaje para todos?" : `¿Eliminar el mensaje de ${m.from}?`)) socket.emit("delete-message", m.id); };
@@ -1919,7 +1992,7 @@ function openProfile() {
   sbtn(sh, "🏅 Mis logros e insignias", () => { closeSheet(); openLogros(); });
   sbtn(sh, "🚪 Salir del chat (para cambiar de apodo o irte del todo)", () => {
     if (!confirm("¿Salir del chat? Vas a dejar de figurar como conectado/a.")) return;
-    wasKicked = true; setSess(null); socket.emit("leave"); setTimeout(() => location.reload(), 400);
+    wasKicked = true; setSess(null); clearHist(); socket.emit("leave"); setTimeout(() => location.reload(), 400);
   }, "danger");
 }
 $("meTop").onclick = openProfile;
