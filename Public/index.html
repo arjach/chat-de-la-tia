@@ -1,10 +1,28 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es-AR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0b0b">
-<title>Gente Rota</title>
+<title>Gente Rota · Chat argentino sin registro para charlar y desahogarte</title>
+<meta name="description" content="Chat argentino en tiempo real, gratis y sin registro: entrás con un apodo y charlás, te desahogás o conocés gente. Salas, privados, confesiones anónimas, juegos y trivia.">
+<link rel="canonical" href="https://genterotachat.com.ar/">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Gente Rota">
+<meta property="og:locale" content="es_AR">
+<meta property="og:url" content="https://genterotachat.com.ar/">
+<meta property="og:title" content="Gente Rota — Lo que quedó después del trauma">
+<meta property="og:description" content="Chat argentino sin registro: charlá, desahogate y conocé gente. Juegos, trivia, confesiones anónimas y comunidad. Entrás con un apodo y listo.">
+<meta property="og:image" content="https://genterotachat.com.ar/compartir.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Logo de Gente Rota: chat sin registro, juegos y confesiones">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Gente Rota — Lo que quedó después del trauma">
+<meta name="twitter:description" content="Chat argentino sin registro: charlá, desahogate y conocé gente.">
+<meta name="twitter:image" content="https://genterotachat.com.ar/compartir.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Gente Rota","alternateName":"Gente Rota Chat","url":"https://genterotachat.com.ar/","description":"Chat argentino en tiempo real, gratis y sin registro, para charlar, desahogarse y conocer gente. Incluye salas, mensajes privados, confesiones anónimas, comunidad y juegos.","inLanguage":"es-AR","applicationCategory":"SocialNetworkingApplication","operatingSystem":"Web","offers":{"@type":"Offer","price":"0","priceCurrency":"ARS"}}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&family=Special+Elite&display=swap" rel="stylesheet">
@@ -50,6 +68,15 @@
   .card { background: var(--panel); border: 1px solid var(--border); padding: 24px; border-radius: 14px; width: 100%; max-width: 440px; }
   .card h2 { margin: 0 0 6px; font-size: 20px; }
   .card .sub { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  .about { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+  .about h2 { font-size: 15px; color: var(--text); margin: 0 0 8px; }
+  .about p { margin: 0 0 8px; }
+  .about ul { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 3px; }
+  #sheet .inv-hint { width: 100%; margin: 0 0 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px dashed var(--accent); color: var(--text); border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 700; text-align: left; }
+  .inv-link { background: var(--panel2); border: 1px dashed var(--accent); border-radius: 10px; padding: 10px; font-size: 14px; word-break: break-all; margin: 8px 0; color: var(--accent); font-weight: 700; text-align: center; }
+  .inv-stats { display: flex; gap: 8px; margin: 10px 0; }
+  .inv-stats div { flex: 1; background: var(--panel2); border-radius: 10px; padding: 8px; text-align: center; font-size: 12.5px; color: var(--muted); }
+  .inv-stats b { display: block; font-size: 22px; color: var(--accent); }
   .field { width: 100%; padding: 12px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; outline: none; }
   .field:focus { border-color: var(--accent); }
   .primary { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 12px 16px; font-weight: 700; }
@@ -109,6 +136,29 @@
   #app.side-off #sidebar { display: none; }
   .news-pref { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; margin: 10px 0; line-height: 1.35; cursor: pointer; }
   .news-pref input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; margin-top: 1px; }
+  #djBtn { flex: none; background: transparent; border: 1px solid var(--border); border-radius: 20px; padding: 3px 8px; font-size: 14px; position: relative; }
+  #djBtn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+  #djBtn.live::after { content: ""; position: absolute; top: 1px; right: 1px; width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
+  #djBar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 5px 8px; display: flex; flex-direction: column; gap: 4px; }
+  #djBar[hidden] { display: none; }
+  .dj-tabs { display: flex; gap: 6px; }
+  .dj-tab { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 14px; padding: 2px 10px; font-size: 12px; }
+  .dj-tab.on { border-color: var(--accent); color: var(--accent); font-weight: 800; }
+  .dj-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .dj-main button { background: none; border: 0; font-size: 18px; padding: 2px 4px; color: var(--text); flex: none; }
+  .dj-main button:disabled { opacity: .35; }
+  #djLabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  #djLis { flex: none; font-size: 12px; color: var(--muted); }
+  #ytBox { position: fixed; right: 8px; bottom: 84px; z-index: 30; width: 200px; background: #000; border: 1px solid var(--accent); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 28px #000a; }
+  #ytBox[hidden] { display: none; }
+  #ytBox.left { right: auto; left: 8px; }
+  #ytBox .yt-head { font-size: 11.5px; color: #ddd; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #111; }
+  #ytBox iframe, #ytFrame { display: block; width: 200px; height: 200px; border: 0; background: #000; }
+  #ytBox .yt-ctl { display: flex; justify-content: space-around; background: #111; }
+  #ytBox .yt-ctl button { background: none; border: 0; font-size: 17px; padding: 4px 6px; color: #eee; }
+  .dj-row { display: flex; align-items: center; gap: 6px; font-size: 13.5px; padding: 6px 2px; border-bottom: 1px solid var(--border); }
+  .dj-row.now { color: var(--accent); font-weight: 700; }
+  #sheet .dj-x { margin: 0 0 0 auto; width: auto; background: none; border: 0; color: var(--muted); padding: 2px 8px; }
   #newsWrap { position: relative; height: 0; z-index: 6; }
   #newsBar { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; align-items: center; gap: 8px; background: #0b0b0b; color: #f2f2f2; border: 1px solid var(--accent); border-radius: 12px; padding: 7px 10px; font-size: 13.5px; text-align: left; box-shadow: 0 6px 20px #0008; animation: newsIn .35s cubic-bezier(.2,1.3,.4,1); }
   #newsBar.out { animation: newsOut .3s ease forwards; }
@@ -585,6 +635,17 @@
     <div id="captcha" style="display:flex;justify-content:center;margin:10px 0 0"></div>
     <div id="err"></div>
     <button class="primary" style="width:100%">Entrar al chat</button>
+    <section class="about">
+      <h2>Un chat argentino para charlar, desahogarte y conocer gente</h2>
+      <p>Gente Rota es un chat en tiempo real, gratis y sin registro: no te pedimos mail ni contraseña, solo un apodo. Un lugar para hablar de lo que te pasa, reírte un rato y encontrar gente que te entiende.</p>
+      <ul>
+        <li>💬 Sala general y mensajes privados</li>
+        <li>🤫 Confesiones anónimas</li>
+        <li>📰 Comunidad para publicar y comentar</li>
+        <li>🎮 Trivia, dibujo, verdad o reto y más juegos</li>
+        <li>🎙️ Audios, fotos y sala de voz</li>
+      </ul>
+    </section>
   </form>
 </div>
 
@@ -623,7 +684,7 @@
     <div class="legend">🟢 disponible · 🫂 necesita hablar · 👂 solo escucha · 🌙 ausente · 🔕 no molestar · 👑 dueño · 🛡️ moderador</div>
   </aside>
   <section id="main">
-    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="pzChip" type="button" title="Tus piezas · tocá para ir a la tienda">🧩 <b>0</b></button><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button><button id="focusBtn" type="button" title="Pantalla completa (solo el chat)" aria-label="Pantalla completa">⛶</button><button id="sideBtn" type="button" title="Mostrar/ocultar la columna de salas y conectados">👥</button></div>
+    <div id="title"><span id="titleText"># General</span><span id="titleSub"></span><button id="pzChip" type="button" title="Tus piezas · tocá para ir a la tienda">🧩 <b>0</b></button><button id="djBtn" type="button" title="Radio y rocola">📻</button><button id="callBtn" hidden title="Llamar">📞</button><button id="titleMore" hidden>⋯</button><button id="focusBtn" type="button" title="Pantalla completa (solo el chat)" aria-label="Pantalla completa">⛶</button><button id="sideBtn" type="button" title="Mostrar/ocultar la columna de salas y conectados">👥</button></div>
     <div id="selBar" hidden>
       <button type="button" id="selX" aria-label="Cancelar">←</button><span id="selN">1</span>
       <button type="button" id="selReply" aria-label="Responder" title="Responder">↩️</button>
@@ -634,6 +695,10 @@
       <button type="button" id="selDel" aria-label="Eliminar" title="Eliminar">🗑️</button>
     </div>
     <div id="newsWrap"><button type="button" id="newsBar" hidden></button></div>
+    <div id="djBar" hidden>
+      <div class="dj-tabs"><button type="button" class="dj-tab" data-t="radio">📻 Radio</button><button type="button" class="dj-tab" data-t="rocola">🎵 Rocola</button></div>
+      <div class="dj-main"><button type="button" id="djPlay">▶️</button><span id="djLabel"></span><span id="djLis"></span><button type="button" id="djAdd" title="Poner un tema">➕</button><button type="button" id="djClose" title="Apagar y cerrar">✕</button></div>
+    </div>
     <div id="voicePanel" hidden>
       <div class="vp-grid" id="vpGrid"></div>
       <div class="vp-actions" id="vpActions"></div>
@@ -750,6 +815,11 @@
   </div>
 </div>
 <div id="viewer" hidden><img alt=""></div>
+<div id="ytBox" hidden>
+  <div class="yt-head"><span id="ytTitle"></span></div>
+  <div id="ytFrame"></div>
+  <div class="yt-ctl"><button type="button" id="ytSkip" title="Saltar (votar)">⏭️</button><button type="button" id="ytList" title="Fila y poner tema">➕</button><button type="button" id="ytSide" title="Cambiar de lado">⇆</button><button type="button" id="ytClose" title="Apagar">✕</button></div>
+</div>
 <div id="callUI" hidden>
   <div class="call-card">
     <div class="call-av">📞</div>
@@ -775,7 +845,13 @@
 <script>
 // id de este dispositivo (sirve para que las penalizaciones de juegos no le caigan a otros con la misma conexión)
 const DEV = (() => { try { let d = localStorage.getItem("gr-dev"); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("gr-dev", d); } return d; } catch { return ""; } })();
-const socket = io({ auth: (cb) => { let pass = ""; try { pass = localStorage.getItem("gr-pass") || ""; } catch {} cb({ dev: DEV, pass }); } });
+// 🔗 Si llegó con un link de invitación (?inv=codigo), lo guardamos y limpiamos la barra de direcciones
+try {
+  const q = new URLSearchParams(location.search), inv = (q.get("inv") || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
+  if (inv && !localStorage.getItem("gr-inv")) localStorage.setItem("gr-inv", inv);
+  if (q.has("inv")) window.history.replaceState(null, "", location.pathname + location.hash);
+} catch {}
+const socket = io({ auth: (cb) => { let pass = "", inv = ""; try { pass = localStorage.getItem("gr-pass") || ""; inv = localStorage.getItem("gr-inv") || ""; } catch {} cb({ dev: DEV, pass, inv }); } });
 const GENERAL = "#general", JT = "#j-trivia", JI = "#j-ia", JF = "#j-fiesta", JD = "#j-duelos", MODS = "#mods", CONF = "#confesiones", BOARD = "#pizarra", VOZ = "#voz", MURO = "#comunidad";
 const ROOMS = { [GENERAL]: ["#", "General", "Todos ven estos mensajes"], [MURO]: ["📰", "Comunidad", "Publicaciones de todos · quedan guardadas"], [JT]: ["🧠", "Trivia", "Trivia, ahorcado y ¿Quién dijo esto?"], [JI]: ["🕵️", "Engaño", "¿Quién es la IA?, Impostor, Mentiroso y Asesinato"], [JF]: ["🎉", "Fiesta", "Verdad o reto, Dibujo, 100 rotos y Juicio"], [JD]: ["⚔️", "Duelos", "Duelos 1 contra 1, eliminatorio y torneo semanal"], [VOZ]: ["🎙️", "Voz", "Sala de voz · hablá en vivo, hasta 8 personas"], [CONF]: ["🤫", "Confesiones", "Anónimo: nadie ve tu nombre (los moderadores sí)"], [BOARD]: ["🖍️", "Pizarra", "Dibujen entre todos · se borra si se reinicia el servidor"], [MODS]: ["🛡️", "Moderación", "Solo moderadores · acá avisa Fastidio"] };
 const lockedRooms = new Set();
@@ -1003,6 +1079,12 @@ function join(nick, onFail) {
   socket.emit("join", nick, (res) => {
     if (!res.ok) return onFail && onFail(res.error, res);
     enterChat(res);
+    if (res.replay?.length) {
+      replaying = true;
+      for (const [ev, ...args] of res.replay) { try { socket.listeners(ev).forEach((fn) => fn(...args)); } catch {} }
+      replaying = false;
+      push(current, { type: "sys", text: "✔ Volviste: recuperaste tu lugar y lo que te perdiste." });
+    }
     lostShown = false;
   });
 }
@@ -1144,7 +1226,7 @@ function sideItem(chat, label, opts = {}) {
   const room = isRoom(chat);
   const div = el("div", "item" + (current === chat ? " active" : "") + (opts.off ? " off" : "") + (!room && isBlocked(chat) ? " blocked" : ""));
   div.dataset.chat = chat;
-  if (!room) { const w = el("span", "av-wrap"); w.append(avatarEl(chat, 22), el("span", "st-badge", opts.off ? "⚪" : opts.away ? "💤" : (STATUS[opts.status]?.[0] || "🟢"))); div.append(w); if (opts.away) div.title = "Tiene el chat minimizado (vuelve en cualquier momento)"; }
+  if (!room) { const w = el("span", "av-wrap"); w.append(avatarEl(chat, 22), el("span", "st-badge", opts.off ? "⚪" : opts.away ? "💤" : (STATUS[opts.status]?.[0] || "🟢"))); div.append(w); if (opts.away) div.title = `💤 Ausente ${awayAgo(opts.awayAt)}: cerró o minimizó el chat (vuelve en cualquier momento)`; }
   const name = el("span", "name", label);
   if (!room) name.style.color = nickColor(chat);
   div.append(name);
@@ -1313,7 +1395,7 @@ function renderMessages() {
   $("titleText").textContent = priv ? `🔒 ${current}` : ROOMS[current].slice(0, 2).join(" ");
   $("titleSub").textContent = priv ? (info ? STATUS[info.status]?.join(" ") : "desconectado/a") : (lockedRooms.has(current) ? "🔒 Cerrada por moderación" : ROOMS[current][2]);
   $("titleMore").hidden = !priv;
-  $("pzChip").hidden = priv;
+  $("pzChip").hidden = priv; $("djBtn").hidden = priv;
   $("callBtn").hidden = !priv || !info;
 
   $("pinned").hidden = current !== GENERAL || !$("pinned").dataset.text;
@@ -1548,6 +1630,7 @@ document.addEventListener("click", (e) => {
 $("messages").addEventListener("scroll", () => { if (selMsg) $("msgMenu").hidden = true; });
 
 // ---------- Hoja de acciones de un usuario ----------
+function awayAgo(t) { if (!t) return ""; const m = Math.max(1, Math.round((Date.now() - t) / 60000)); return m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : "hace más de un día"; }
 function openSheet(nick) {
   $("sheet").dataset.kind = ""; $("sheet").dataset.duel = "";
   if (nick === me || nick === BOT) return;
@@ -1558,7 +1641,8 @@ function openSheet(nick) {
   decoName(h, nick);
   const head = el("div", "prof-head"); head.append(avatarEl(nick, 84), h);
   if (info?.ck?.tit) head.append(el("div", "prof-title", "🏷️ " + info.ck.tit));
-  head.append(el("div", "stline", info ? STATUS[info.status]?.join(" ") : "Desconectado/a"));
+  head.append(el("div", "stline", !info ? "Desconectado/a" : info.away ? `💤 Ausente ${awayAgo(info.awayAt)}` : STATUS[info.status]?.join(" ")));
+  if (info?.away) head.append(el("div", "stline", "Cerró o minimizó el chat. Le guardamos el lugar por si vuelve; mientras tanto le podés dejar un mensaje privado y lo ve al volver."));
   if (info?.lv) head.append(el("div", "stline", `${info.bd ? info.bd + " · " : ""}Nivel ${info.lv}`));
   if (info?.bio) head.append(el("div", "bio", "“" + info.bio + "”"));
   sheet.append(head);
@@ -1806,6 +1890,7 @@ function openProfile() {
   sh.append(nRow);
   socket.emit("news-pref", null, (r) => { if (r) nChk.checked = r.on; });
   nChk.onchange = () => socket.emit("news-pref", nChk.checked, () => {});
+  sbtn(sh, "🔗 Invitar amigos · ganás 🧩150", () => { closeSheet(); openInvite(); }, "primary");
   sbtn(sh, "📣 Ver novedades", () => { closeSheet(); openNews(); });
   sbtn(sh, `🛒 Tienda · tenés 🧩 ${myPz}`, () => { closeSheet(); openShop(); }, "primary");
   sbtn(sh, "🏅 Mis logros e insignias", () => { closeSheet(); openLogros(); });
@@ -2741,6 +2826,163 @@ function openLogros(nick) {
 }
 
 
+// ================== 📻 Radio + 🎵 Rocola ==================
+// Nunca suena sola: cada uno la prende con ▶️. Baja el volumen cuando suena un audio y se pausa en llamadas.
+let djS = null, djOff = 0, djMode = null, djPausedBySys = false, djLoaded = "", djDurSent = {}, ytP = null, ytReady = null;
+const radioAudio = new Audio(); radioAudio.preload = "none";
+const djNow = () => Date.now() + djOff;
+const djTab = () => $("djBar").dataset.tab || (djS?.radio ? "radio" : "rocola");
+socket.on("dj", (s) => { djS = s; djOff = s.now - Date.now(); djRender(); if (djMode === "rocola") djSync(); });
+socket.on("dj-msg", (t) => push(current, { type: "notice", kind: "help", text: t }));
+socket.on("dj-open", (m) => djOpenBar(m));
+socket.on("dj-add-cmd", (u) => djAdd(u));
+function djRefresh() { socket.emit("dj-state", null, (s) => { if (s) { djS = s; djOff = s.now - Date.now(); djRender(); } }); }
+function djOpenBar(tab) {
+  const bar = $("djBar"); bar.hidden = false;
+  if (tab) bar.dataset.tab = tab;
+  else if (!bar.dataset.tab) bar.dataset.tab = djMode || (djS?.radio ? "radio" : "rocola");
+  djRefresh(); djRender();
+}
+function djRender() {
+  $("djBtn").classList.toggle("on", !!djMode);
+  $("djBtn").classList.toggle("live", !djMode && !!djS?.cur);
+  const bar = $("djBar"); if (bar.hidden || !djS) return;
+  const tab = djTab(), playing = djMode === tab;
+  bar.querySelectorAll(".dj-tab").forEach((b) => b.classList.toggle("on", b.dataset.t === tab));
+  const lbl = $("djLabel"), lis = $("djLis");
+  let txt = "";
+  if (tab === "radio") txt = djS.radio ? `📻 ${djS.radio.name}` : "📻 Todavía no hay radio configurada";
+  else txt = djS.cur ? `🎵 ${djS.cur.title} · puso ${djS.cur.by}` : (djS.on ? "🎵 La fila está vacía: poné el primer tema con ➕" : "🎵 La rocola está apagada");
+  lbl.textContent = txt; lbl.title = txt;
+  const n = tab === "radio" ? djS.listeners.radio : djS.listeners.rocola;
+  lis.textContent = n ? `🎧 ${n}` : "";
+  $("djPlay").textContent = playing ? "⏸️" : "▶️";
+  $("djPlay").disabled = tab === "radio" ? !djS.radio : !djS.on;
+  $("djAdd").hidden = tab !== "rocola" || !djS.on;
+  $("ytTitle").textContent = djS.cur ? djS.cur.title : "Fila vacía";
+}
+function djStop() {
+  if (djMode === "radio") { radioAudio.pause(); radioAudio.removeAttribute("src"); radioAudio.load(); }
+  if (djMode === "rocola") { try { ytP?.stopVideo(); } catch {} $("ytBox").hidden = true; djLoaded = ""; }
+  djMode = null; djPausedBySys = false; socket.emit("dj-listen", null); djRender();
+}
+function djPlay(tab) {
+  if (djMode === tab) return djStop();
+  djStop();
+  if (tab === "radio") {
+    if (!djS?.radio) return;
+    radioAudio.src = djS.radio.url;
+    radioAudio.play().then(() => { djMode = "radio"; socket.emit("dj-listen", "radio"); djRender(); })
+      .catch(() => push(current, { type: "notice", kind: "warn", text: "📻 No se pudo conectar con la radio. Probá en un ratito." }));
+    djMode = "radio"; djRender();
+  } else {
+    djMode = "rocola"; socket.emit("dj-listen", "rocola");
+    $("ytBox").hidden = false; djRender(); djSync();
+  }
+  try { localStorage.setItem("gr-dj", tab); } catch {}
+}
+radioAudio.addEventListener("error", () => { if (djMode === "radio" && radioAudio.src) { push(current, { type: "notice", kind: "warn", text: "📻 Se cortó la radio. Tocá ▶️ para reconectar." }); djStop(); } });
+function ytLoad() {
+  if (ytReady) return ytReady;
+  ytReady = new Promise((res) => {
+    window.onYouTubeIframeAPIReady = () => res();
+    const sc = document.createElement("script"); sc.src = "https://www.youtube.com/iframe_api"; sc.onerror = () => { ytReady = null; res(); }; document.head.append(sc);
+  });
+  return ytReady;
+}
+async function djSync() {
+  if (djMode !== "rocola") return;
+  const cur = djS?.cur;
+  if (!cur) { try { ytP?.stopVideo(); } catch {} djLoaded = ""; return; }
+  await ytLoad(); if (!window.YT?.Player) return push(current, { type: "notice", kind: "warn", text: "🎵 No se pudo cargar YouTube." });
+  if (djMode !== "rocola") return;
+  const at = Math.max(0, (djNow() - cur.start) / 1000);
+  if (!ytP) {
+    djLoaded = cur.id;
+    ytP = new YT.Player("ytFrame", { width: 200, height: 200, videoId: cur.id,
+      playerVars: { autoplay: 1, playsinline: 1, rel: 0, start: Math.floor(at), controls: 1, disablekb: 1, fs: 0 },
+      events: {
+        onReady: (e) => { if (djMode === "rocola") { e.target.seekTo((djNow() - (djS?.cur?.start || 0)) / 1000, true); e.target.playVideo(); } else e.target.stopVideo(); },
+        onStateChange: (e) => {
+          const id = djS?.cur?.id;
+          if (e.data === YT.PlayerState.PLAYING && id && !djDurSent[id]) { const d = ytP.getDuration(); if (d > 0) { djDurSent[id] = 1; socket.emit("dj-dur", { id, d }); } }
+        },
+        onError: (e) => { if (djS?.cur) socket.emit("dj-err", { id: djS.cur.id, code: e.data }); },
+      } });
+    return;
+  }
+  if (djLoaded !== cur.id) { djLoaded = cur.id; try { ytP.loadVideoById({ videoId: cur.id, startSeconds: at }); } catch {} return; }
+  try { if (ytP.getPlayerState?.() === YT.PlayerState.PLAYING && Math.abs(ytP.getCurrentTime() - at) > 5) ytP.seekTo(at, true); } catch {}
+}
+// Volumen inteligente: baja con los audios del chat y se pausa en llamadas o en la sala de voz
+setInterval(() => {
+  if (!djMode) return;
+  const busy = !!call || !!vRoom;
+  const duck = [...document.querySelectorAll("audio")].some((a) => a !== radioAudio && !a.paused && !a.muted && a.currentTime > 0);
+  if (busy && !djPausedBySys) { djPausedBySys = true; if (djMode === "radio") radioAudio.pause(); else try { ytP?.pauseVideo(); } catch {} }
+  else if (!busy && djPausedBySys) { djPausedBySys = false; if (djMode === "radio") radioAudio.play().catch(() => {}); else { try { ytP?.playVideo(); } catch {} djSync(); } }
+  radioAudio.volume = duck ? 0.15 : 1;
+  try { ytP?.setVolume?.(duck ? 15 : 100); } catch {}
+  if (djMode === "rocola" && !djPausedBySys && djS?.cur) djSync();
+}, 900);
+function djAdd(url) {
+  socket.emit("dj-add", url, (r) => {
+    if (!r?.ok) return push(current, { type: "notice", kind: "warn", text: "🎵 " + (r?.error || "No se pudo agregar.") });
+    floatMsg(r.pos ? `🎵 Agregado: queda ${r.pos}° en la fila` : "🎵 ¡Suena ahora!");
+    if (!djMode) { djOpenBar("rocola"); }
+  });
+}
+function djQueueSheet() {
+  const sh = sheetOpen("dj", "🎵 Rocola", "Pegá un link de YouTube y todos los que tienen la rocola prendida lo escuchan juntos. Un tema por persona en la fila, hasta 10 minutos.");
+  const inp = el("input", "field"); inp.placeholder = "https://youtu.be/…"; inp.inputMode = "url"; sh.append(inp);
+  sbtn(sh, "➕ Poner en la fila", () => { const v = inp.value.trim(); if (!v) return inp.focus(); djAdd(v); closeSheet(); }, "primary");
+  if (navigator.clipboard?.readText) sbtn(sh, "📋 Pegar link copiado", () => navigator.clipboard.readText().then((t) => { inp.value = t.trim(); }).catch(() => inp.focus()));
+  if (djS?.cur) {
+    sh.append(el("div", "modsep", "Sonando ahora"));
+    sh.append(el("div", "dj-row now", `▶️ ${djS.cur.title} · ${djS.cur.by}`));
+    sbtn(sh, "⏭️ Saltar este tema", () => socket.emit("dj-skip", null, (r) => { if (r?.done) floatMsg("⏭️ Saltado"); else if (r?.votes) floatMsg(`🗳️ Votos para saltar: ${r.votes}/${r.need}`); else if (r?.error) floatMsg(r.error); closeSheet(); }));
+  }
+  sh.append(el("div", "modsep", `En la fila (${djS?.queue.length || 0})`));
+  if (!djS?.queue.length) sh.append(el("div", "stline", "Vacía. ¡Poné el primero!"));
+  (djS?.queue || []).forEach((q, i) => {
+    const row = el("div", "dj-row", `${i + 1}. ${q.title} · ${q.by}`);
+    if (q.by === me || isAdmin) { const x = el("button", "dj-x", "✕"); x.type = "button"; x.onclick = () => socket.emit("dj-remove", i, () => djQueueSheet()); row.append(x); }
+    sh.append(row);
+  });
+  sbtn(sh, "Cerrar", closeSheet);
+}
+$("djBtn").onclick = () => { const b = $("djBar"); if (b.hidden) djOpenBar(); else if (!djMode) b.hidden = true; else djOpenBar(); };
+$("djBar").querySelectorAll(".dj-tab").forEach((b) => b.onclick = () => { $("djBar").dataset.tab = b.dataset.t; djRender(); });
+$("djPlay").onclick = () => djPlay(djTab());
+$("djAdd").onclick = djQueueSheet;
+$("djClose").onclick = () => { djStop(); $("djBar").hidden = true; };
+$("ytList").onclick = djQueueSheet;
+$("ytSkip").onclick = () => socket.emit("dj-skip", null, (r) => { if (r?.done) floatMsg("⏭️ Saltado"); else if (r?.votes) floatMsg(`🗳️ Votos para saltar: ${r.votes}/${r.need}`); else if (r?.error) floatMsg(r.error); });
+$("ytSide").onclick = () => $("ytBox").classList.toggle("left");
+$("ytClose").onclick = () => djStop();
+
+// ================== 🔗 Invitar amigos ==================
+socket.on("open-invite", () => openInvite());
+function openInvite() {
+  socket.emit("inv-get", null, (r) => {
+    if (!r?.url) return;
+    const sh = sheetOpen("invite", "🔗 Invitá a tus amigos", `Si entran con tu link, llegan a nivel 2 y vuelven otro día, ganan los dos: vos 🧩${r.pz} y tu amigo/a 🧩${r.pzNew}.`);
+    sh.append(el("div", "inv-link", r.url));
+    const txt = `Sumate a Gente Rota, un chat argentino sin registro para charlar, desahogarse y jugar 🧉 Entrá con mi link: ${r.url}`;
+    const copy = () => { const ok = () => floatMsg("📋 Link copiado"); if (navigator.clipboard?.writeText) navigator.clipboard.writeText(r.url).then(ok, () => { copyFallback(r.url); ok(); }); else { copyFallback(r.url); ok(); } };
+    if (navigator.share) sbtn(sh, "📤 Compartir", () => navigator.share({ title: "Gente Rota", text: txt, url: r.url }).catch(() => {}), "primary");
+    sbtn(sh, "🟢 Mandar por WhatsApp", () => window.open("https://wa.me/?text=" + encodeURIComponent(txt), "_blank"));
+    sbtn(sh, "📋 Copiar link", copy);
+    const st = el("div", "inv-stats");
+    const box = (n, t) => { const d = el("div"); d.append(el("b", null, String(n)), t); return d; };
+    st.append(box(r.done, "se quedaron"), box(r.pending.length, "en camino"));
+    sh.append(st);
+    if (r.pending.length) sh.append(el("div", "stline", "⏳ En camino: " + r.pending.join(", ") + ". Cuando lleguen a nivel 2 y vuelvan otro día, cobrás."));
+    sh.append(el("div", "stline", "💡 Ideas: mandalo a un grupo de amigos, ponelo en tu bio de Instagram o compartilo en una historia."));
+    sbtn(sh, "Cerrar", closeSheet);
+  });
+}
+
 // ================== 📣 Novedades (logros de la gente, sin llenar el chat) ==================
 const newsQ = []; let newsBusy = false;
 socket.on("news", (n) => {
@@ -2821,6 +3063,7 @@ function openShop(tab) {
 function renderShop(v, tab) {
   setPz(v.pz); applyBg(v.eq.bg || "");
   const sh = sheetOpen("shop", "🛒 Tienda", `Tenés 🧩 ${v.pz} piezas. Todo es para lucirse: nada da ventaja en los juegos. Lo que comprás queda tuyo y podés cambiarlo cuando quieras.`);
+  const invB = el("button", "inv-hint", "🔗 ¿Querés más piezas? Invitá amigos y ganás 🧩150 por cada uno"); invB.type = "button"; invB.onclick = () => { closeSheet(); openInvite(); }; sh.append(invB);
   const tabs = el("div", "shop-tabs");
   [["nombre", "🎨 Nombre"], ["foto", "🖼️ Foto"], ["entrada", "🚪 Entrada"], ["fondo", "🌌 Fondo"], ["regalar", "🎁 Regalar"]].forEach(([k, t]) => {
     const b = el("button", "shop-tab" + (k === tab ? " on" : ""), t); b.type = "button"; b.onclick = () => renderShop(v, k); tabs.append(b);
