@@ -1136,15 +1136,16 @@ async function aiVerify(pregunta, answers) {
   if (!a || /^(no\s*se|no\s*s[eé]|ns|no estoy segur|no lo se|desconocid)/i.test(plain(a))) return false; // dudó: descartamos
   return isCorrect(plain(a), answers) ? true : false;
 }
-async function aiQuestion(tema) {
+async function aiQuestion(tema, userChosen = false) {
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
 La respuesta tiene que ser corta (1 a 3 palabras), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
 MUY IMPORTANTE — la respuesta NO puede ser un año, una fecha ni un número de muchos dígitos (nadie sabe los años exactos y es aburrido ponerse a tipear números). PROHIBIDO empezar con "¿En qué año..." o "¿En qué fecha...". La respuesta tiene que ser un NOMBRE, un lugar, una persona, un animal, un objeto o una palabra (no un número). Solo se permite un número si es chico y adivinable (del 1 al 20, por ejemplo "cuántas patas tiene una araña").
 Preferí preguntas CURIOSAS y entretenidas: cosas sorprendentes, récords, orígenes de palabras, apodos, "cuál es el único...", "qué animal...", "cómo se llama...", curiosidades que generen un "¡ah, mirá!". Evitá lo típico de examen escolar.
 REGLA DE ORO — SOLO datos que sepas con CERTEZA ABSOLUTA. Si dudás aunque sea un poco, elegí OTRA pregunta más segura. Es mejor una pregunta fácil y correcta que una original y equivocada.
 EVITÁ los datos que se confunden fácil (son la causa de los errores): qué álbum/canción es de qué artista, en qué película actuó alguien, qué autor escribió qué libro específico, estadísticas exactas, quién ganó qué premio. Si hacés una de esas, que sea SÚPER conocida (ej: "Thriller" es de Michael Jackson), nunca algo de nicho.
+TEMAS DE NICHO: si el tema es un videojuego, anime, serie, cómic o fandom ESPECÍFICO (ej: Summoners War, Genshin, un anime puntual) donde NO podés garantizar que el dato sea exacto, hacé la pregunta igual sobre ese tema, pero marcá "nicho": true y sé lo más conservador posible. Para temas de conocimiento general (geografía, ciencia, historia conocida, deportes mainstream) marcá "nicho": false.
 No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
-Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ella","dato":"un dato curioso breve sobre la respuesta"}`;
+Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"nicho":true o false,"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ela","dato":"un dato curioso breve sobre la respuesta"}`;
   const q = await aiCall(prompt, true, 0.5); // menos "creatividad" = menos inventos
   if (!q) return null;
   if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
@@ -1153,13 +1154,18 @@ Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["va
   const esAnioOFecha = /^\s*(en|el|hacia|cerca de|alrededor de)?\s*(que\s+)?(a[ñn]o|fecha|siglo|d[ií]a)\b/i.test(String(q.pregunta)) || /^-?\d{3,}$/.test(plain(rawA).replace(/\D/g, "")) || /\b(1\d{3}|20\d{2})\b/.test(rawA);
   if (esAnioOFecha) { aiLastError = "pregunta de fecha descartada"; return null; }
   const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
-  // VERIFICACIÓN: otra consulta, en frío, vuelve a responder la pregunta sola. Si no coincide o la IA duda, se descarta.
-  const check = await aiVerify(q.pregunta, answers);
-  if (check === false) { aiLastError = "respuesta no verificada (posible error de la IA)"; return null; }
+  // ¿Es un tema de nicho (juego/anime/fandom) donde la IA puede equivocarse? Solo si el usuario eligió el tema.
+  const niche = userChosen && q.nicho === true;
+  // VERIFICACIÓN: en temas generales, otra consulta vuelve a responder en frío y descarta si no coincide.
+  // En temas de nicho NO sirve (la IA se equivoca igual al verificar), así que no descartamos: avisamos con un cartel.
+  if (!niche) {
+    const check = await aiVerify(q.pregunta, answers);
+    if (check === false) { aiLastError = "respuesta no verificada (posible error de la IA)"; return null; }
+  }
   // la pista no puede contener la respuesta
   let pista = String(q.pista || "").slice(0, 160);
   if (answers.some((a) => a.length >= 2 && (" " + plain(pista) + " ").includes(" " + a + " "))) pista = "";
-  return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), pista, ai: true };
+  return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), pista, ai: true, niche };
 }
 // "Bolsa barajada": recorre TODO el banco (205 preguntas) antes de repetir ninguna.
 let bankBag = [];
@@ -1310,8 +1316,8 @@ function makeEngine(ROOM, KIND) {
     game = { type: "cargando" };
     const t = tema || pick(TOPICS);
     const custom = triviaRound?.custom?.length ? triviaRound.custom.shift() : null;
-    let q = custom ? { q: custom.q, shown: custom.a[0], answers: custom.a.map(plain).filter(Boolean), dato: "", ai: false, custom: true } : await aiQuestion(t);
-    if (!q && !custom) q = await aiQuestion(t); // un reintento (por si descartó una pregunta de fecha)
+    let q = custom ? { q: custom.q, shown: custom.a[0], answers: custom.a.map(plain).filter(Boolean), dato: "", ai: false, custom: true } : await aiQuestion(t, !!tema);
+    if (!q && !custom) q = await aiQuestion(t, !!tema); // un reintento (por si descartó una pregunta de fecha)
     if (!q) {
       q = bankQuestion();
       if (tema) gameSay(`⚠️ No pude hacer una pregunta de "${tema}": ${aiLastError}. Va una general.`);
@@ -1322,7 +1328,7 @@ function makeEngine(ROOM, KIND) {
     game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null, excl: triviaRound?.creator || null,
       timer: setTimeout(() => finishTrivia(null), secs * 1000), hints: 0, hintTimers: [], startAt: now(), cleanup() { this.hintTimers.forEach(clearTimeout); } };
     if (triviaRound?.hints !== false) scheduleHints(game, q, secs);
-    gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.custom ? `✍️ de ${triviaRound.creator} ` : ""}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}${secs} s)\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : q.custom ? `Escribí la respuesta en el chat (${triviaRound.creator} no juega: la sabe 😉).` : "Escribí la respuesta en el chat."}`);
+    gameSay(`❓ ${triviaRound?.duel ? `⚔️ DUELO ${triviaRound.duel.a} vs ${triviaRound.duel.b} ` : "TRIVIA "}${n}${q.custom ? `✍️ de ${triviaRound.creator} ` : ""}${q.ai ? "🤖 " : ""}(${q.ai ? t + " · " : ""}${secs} s)${q.niche ? "\n⚠️ Tema de nicho: la respuesta puede no ser exacta." : ""}\n${q.q}\n${triviaRound?.duel ? "Solo responden los dos del duelo." : q.custom ? `Escribí la respuesta en el chat (${triviaRound.creator} no juega: la sabe 😉).` : "Escribí la respuesta en el chat."}`);
   }
   // El Crupier tira 2 pistas: a un tercio y a dos tercios del tiempo. Cada pista baja 1 punto el premio.
   function scheduleHints(g, q, secs) {
