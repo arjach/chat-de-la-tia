@@ -11,10 +11,17 @@ const server = http.createServer(app);
 // ================== Seguridad: que no tiren el servidor ni lo llenen de bots ==================
 // IP real de quien se conecta. Render tiene Cloudflare adelante, que manda True-Client-IP (no se puede falsificar).
 // X-Forwarded-For SÍ se puede falsificar (Render solo le agrega al final), así que de ahí se usa el último valor.
+// IP real del visitante. OJO: solo confiamos en la cabecera que pone NUESTRO proxy, nunca en una
+// que mande el cliente (si no, cualquiera manda "true-client-ip: loquesea" y se hace pasar por mil IPs
+// distintas, salteando topes, flood-ban y baneos). En Render (nube gris de Cloudflare) la IP real es
+// la última de x-forwarded-for, que la agrega Render. Si algún día ponés la nube naranja de Cloudflare,
+// configurá la variable TRUST_IP_HEADER=cf-connecting-ip en Render.
+const TRUST_IP_HEADER = (process.env.TRUST_IP_HEADER || "").toLowerCase().trim();
 function realIp(headers = {}, fallback = "") {
   const h = (k) => String(headers[k] || "").trim();
+  if (TRUST_IP_HEADER) return (h(TRUST_IP_HEADER) || fallback || "").slice(0, 64);
   const xff = h("x-forwarded-for").split(",").map((x) => x.trim()).filter(Boolean);
-  return (h("true-client-ip") || h("cf-connecting-ip") || xff[xff.length - 1] || fallback || "").slice(0, 64);
+  return (xff[xff.length - 1] || fallback || "").slice(0, 64);
 }
 const SEC = {
   maxConnPerIp: parseInt(process.env.MAX_CONN_PER_IP) || 20,   // conexiones abiertas a la vez desde una misma IP
@@ -87,6 +94,8 @@ const io = new Server(server, {
     if (isFloodBanned(ip)) return cb("bloqueado", false);
     if (io.engine.clientsCount >= SEC.maxTotalConn) return cb("lleno", false);
     if ((connCount.get(ip) || 0) >= SEC.maxConnPerIp) return cb("demasiadas conexiones", false);
+    // Tope de ráfaga: evita que muchas conexiones a la vez saltee el tope por IP (el contador real se suma recién al conectar)
+    if (tooMany("connBurst", ip, SEC.maxConnPerIp, 3000)) { if (tooMany("connflood", ip, 200)) floodBan(ip, 15, "conexiones sin parar"); return cb("muy seguido", false); }
     if (tooMany("conn", ip, SEC.maxNewConnPerMin)) { if (tooMany("connflood", ip, 200)) floodBan(ip, 15, "conexiones sin parar"); return cb("muy seguido", false); }
     cb(null, true);
   },
@@ -819,14 +828,13 @@ const TRIVIA = [
   ["¿Cuál es la capital de Australia?", ["canberra"]],
   ["¿Cuántos jugadores tiene un equipo de fútbol en la cancha?", ["11", "once"]],
   ["¿Qué planeta es conocido como el planeta rojo?", ["marte"]],
-  ["¿En qué año llegó el hombre a la Luna?", ["1969"]],
   ["¿Quién pintó la Mona Lisa?", ["leonardo", "da vinci", "leonardo da vinci"]],
   ["¿Cuántos lados tiene un hexágono?", ["6", "seis"]],
   ["¿Cuál es el océano más grande del mundo?", ["pacifico", "oceano pacifico"]],
   ["¿Cuál es el símbolo químico del oro?", ["au"]],
   ["¿Cuál es la capital de Canadá?", ["ottawa"]],
   ["¿Quién escribió \"Don Quijote de la Mancha\"?", ["cervantes", "miguel de cervantes"]],
-  ["¿En qué año ganó Argentina su tercer Mundial?", ["2022"]],
+  ["¿En qué país nació el tango?", ["argentina"]],
   ["¿En qué país se jugó el Mundial 2022?", ["qatar", "catar"]],
   ["¿Cuántos huesos tiene el cuerpo humano adulto?", ["206"]],
   ["¿Cuál es el animal terrestre más rápido?", ["guepardo", "chita", "cheetah"]],
@@ -847,7 +855,7 @@ const TRIVIA = [
   ["¿Cuál es la raíz cuadrada de 144?", ["12", "doce"]],
   ["¿Qué órgano bombea la sangre?", ["corazon", "el corazon"]],
   ["¿Cuál es la capital de Chile?", ["santiago", "santiago de chile"]],
-  ["¿En qué año se declaró la independencia argentina?", ["1816"]],
+  ["¿Cuál es el animal terrestre más alto?", ["jirafa", "la jirafa"]],
   ["¿Cuántas patas tiene una araña?", ["8", "ocho"]],
   ["¿Cuál es el país más grande del mundo?", ["rusia"]],
   ["¿Quién propuso la ley de la gravitación universal?", ["newton", "isaac newton"]],
@@ -866,6 +874,162 @@ const TRIVIA = [
   ["¿Qué gas necesitan las plantas para hacer la fotosíntesis?", ["dioxido de carbono", "co2"]],
   ["¿Cuál es la capital de Egipto?", ["el cairo", "cairo"]],
   ["¿Cuántas provincias tiene Argentina (sin contar CABA)?", ["23", "veintitres"]],
+  ["¿Qué animal es el mamífero más grande del mundo?", ["ballena azul", "la ballena azul", "ballena"]],
+  ["¿Cómo se llama la cría de la rana?", ["renacuajo", "el renacuajo"]],
+  ["¿Qué insecto produce la miel?", ["abeja", "la abeja", "abejas"]],
+  ["¿Cuál es el ave que no vuela y vive en la Antártida?", ["pinguino", "el pinguino"]],
+  ["¿Qué animal es el 'rey de la selva'?", ["leon", "el leon"]],
+  ["¿Cómo se llama el grupo de leones?", ["manada", "la manada"]],
+  ["¿Qué animal puede cambiar de color para camuflarse?", ["camaleon", "el camaleon"]],
+  ["¿Cuál es el único mamífero que puede volar?", ["murcielago", "el murcielago"]],
+  ["¿Qué animal tiene la memoria más famosa por ser buena?", ["elefante", "el elefante"]],
+  ["¿Cómo se llama la casa de las abejas?", ["colmena", "la colmena"]],
+  ["¿Qué animal marino tiene ocho brazos?", ["pulpo", "el pulpo"]],
+  ["¿Cuál es el animal más venenoso: medusa, araña o abeja... la más letal del mar?", ["medusa", "avispa de mar", "medusa avispa"]],
+  ["¿Qué animal duerme parado?", ["caballo", "el caballo"]],
+  ["¿Cómo se llama el bebé de la vaca?", ["ternero", "el ternero", "ternera"]],
+  ["¿Qué reptil es famoso por su caparazón?", ["tortuga", "la tortuga"]],
+  ["¿Qué animal australiano guarda a su cría en una bolsa?", ["canguro", "el canguro"]],
+  ["¿Cuál es el pez más grande del mundo?", ["tiburon ballena", "el tiburon ballena"]],
+  ["¿Qué animal hace 'muuu'?", ["vaca", "la vaca"]],
+  ["¿Cómo se llaman las rayas del cebra en una palabra: es blanco con negro o negro con blanco? Decí el color de fondo real", ["negro"]],
+  ["¿Qué animal es el mejor amigo del hombre?", ["perro", "el perro"]],
+  ["¿Cuál es el río más largo del mundo?", ["nilo", "el nilo", "amazonas", "el amazonas"]],
+  ["¿En qué continente está Egipto?", ["africa"]],
+  ["¿Cuál es el país con forma de bota?", ["italia"]],
+  ["¿Cuál es la capital de Francia?", ["paris"]],
+  ["¿Cuál es la capital de España?", ["madrid"]],
+  ["¿Cuál es la capital de Italia?", ["roma"]],
+  ["¿Cuál es la capital de Alemania?", ["berlin"]],
+  ["¿Cuál es la capital de Inglaterra?", ["londres"]],
+  ["¿Cuál es la capital de Brasil?", ["brasilia"]],
+  ["¿Cuál es la capital de México?", ["ciudad de mexico", "mexico df", "cdmx", "mexico"]],
+  ["¿Cuál es la capital de Estados Unidos?", ["washington", "washington dc"]],
+  ["¿En qué país está la Casa Rosada?", ["argentina"]],
+  ["¿Cuál es el país más austral del mundo (sin contar la Antártida)?", ["argentina", "chile"]],
+  ["¿Cómo se llama la cordillera que separa Argentina de Chile?", ["los andes", "andes", "la cordillera de los andes"]],
+  ["¿Cuál es el océano que baña las costas argentinas?", ["atlantico", "el atlantico", "oceano atlantico"]],
+  ["¿En qué provincia está la ciudad de Bariloche?", ["rio negro"]],
+  ["¿Cuál es la provincia más grande de Argentina?", ["buenos aires"]],
+  ["¿En qué país está la Torre de Pisa?", ["italia"]],
+  ["¿En qué país está la Estatua de la Libertad?", ["estados unidos", "eeuu", "usa"]],
+  ["¿Cuál es el continente más grande?", ["asia"]],
+  ["¿Cuál es el continente más frío?", ["antartida", "la antartida"]],
+  ["¿Cuál es el desierto más grande de Argentina?", ["la patagonia", "patagonia", "desierto patagonico"]],
+  ["¿En qué país están las pirámides de Guiza?", ["egipto"]],
+  ["¿Cuál es la capital de China?", ["pekin", "beijing"]],
+  ["¿Cuál es la capital de Rusia?", ["moscu"]],
+  ["¿Qué mar separa Europa de África?", ["mediterraneo", "el mediterraneo", "mar mediterraneo"]],
+  ["¿Cuál es la catarata más alta del mundo?", ["salto angel", "el salto angel"]],
+  ["¿Qué planeta habitamos?", ["tierra", "la tierra"]],
+  ["¿Cuál es la estrella más cercana a la Tierra?", ["el sol", "sol"]],
+  ["¿Qué satélite natural tiene la Tierra?", ["la luna", "luna"]],
+  ["¿Qué gas respiramos para vivir?", ["oxigeno", "el oxigeno"]],
+  ["¿Cuál es el planeta más cercano al Sol?", ["mercurio"]],
+  ["¿Cuál es el planeta de los anillos?", ["saturno"]],
+  ["¿De qué color es la sangre cuando tiene oxígeno?", ["roja", "rojo"]],
+  ["¿Qué órgano usamos para pensar?", ["cerebro", "el cerebro"]],
+  ["¿Cuántos pulmones tiene el ser humano?", ["2", "dos"]],
+  ["¿Qué parte del cuerpo bombea la sangre?", ["corazon", "el corazon"]],
+  ["¿Qué vitamina nos da el sol?", ["vitamina d", "d", "la d"]],
+  ["¿Cuál es el metal líquido a temperatura ambiente?", ["mercurio", "el mercurio"]],
+  ["¿Qué fuerza nos mantiene pegados al piso?", ["gravedad", "la gravedad"]],
+  ["¿En qué estado está el agua cuando se congela?", ["solido", "hielo", "estado solido"]],
+  ["¿Qué se forma cuando el agua hierve y se evapora?", ["vapor", "vapor de agua"]],
+  ["¿Cuál es el sentido que usamos para oler?", ["olfato", "el olfato"]],
+  ["¿Cuántos dientes tiene un adulto sano?", ["32", "treinta y dos"]],
+  ["¿Qué planeta es el más grande del sistema solar?", ["jupiter"]],
+  ["¿Qué instrumento usa un médico para escuchar el corazón?", ["estetoscopio", "el estetoscopio"]],
+  ["¿Qué animal fue el primero en ir al espacio?", ["perro", "perra", "la perra laika", "laika"]],
+  ["¿Con qué parte del cuerpo NO se puede tocar la pelota en el fútbol (si no sos arquero)?", ["mano", "las manos", "la mano", "manos"]],
+  ["¿Cuántos tiempos tiene un partido de fútbol?", ["2", "dos"]],
+  ["¿En qué deporte se usa una raqueta y una red en el medio?", ["tenis", "el tenis"]],
+  ["¿Qué país ganó el Mundial de fútbol de Qatar?", ["argentina"]],
+  ["¿En qué deporte se hace un 'home run'?", ["beisbol", "el beisbol"]],
+  ["¿Cuántos anillos tiene el símbolo olímpico?", ["5", "cinco"]],
+  ["¿En qué deporte destacó Michael Jordan?", ["basquet", "basketball", "basket", "baloncesto"]],
+  ["¿Qué selección tiene a la 'Canarinha' de apodo?", ["brasil"]],
+  ["¿En qué deporte se usa un palo y un hoyo?", ["golf", "el golf"]],
+  ["¿Qué número de camiseta usaba Maradona?", ["10", "diez"]],
+  ["¿En qué deporte juega la NBA?", ["basquet", "basketball", "basket", "baloncesto"]],
+  ["¿Cuántos jugadores hay en un equipo de vóley en cancha?", ["6", "seis"]],
+  ["¿En qué ciudad argentina está el estadio 'La Bombonera'?", ["buenos aires", "caba", "capital"]],
+  ["¿De qué club es la cancha 'El Monumental'?", ["river", "river plate"]],
+  ["¿Qué tenista argentino ganó medalla de oro olímpica en Atenas?", ["nalbandian", "del potro", "gaudio"]],
+  ["¿Qué banda inglesa integraban John, Paul, George y Ringo?", ["los beatles", "the beatles", "beatles"]],
+  ["¿Quién cantaba 'Thriller' y es el 'rey del pop'?", ["michael jackson", "jackson"]],
+  ["¿Qué instrumento tiene teclas blancas y negras?", ["piano", "el piano"]],
+  ["¿Cómo se llama el personaje de orejas grandes creado por Disney, un ratón?", ["mickey", "mickey mouse"]],
+  ["¿Qué superhéroe es 'el hombre araña'?", ["spiderman", "spider man", "hombre araña"]],
+  ["¿De qué color es Hulk?", ["verde"]],
+  ["¿Qué juguete vaquero dice 'hay una serpiente en mi bota' en Toy Story?", ["woody"]],
+  ["¿Qué princesa perdió un zapato de cristal?", ["cenicienta", "la cenicienta"]],
+  ["¿Quién dibujó a Mafalda?", ["quino"]],
+  ["¿Qué cantante argentino es conocido como 'el Flaco'?", ["spinetta", "luis alberto spinetta"]],
+  ["¿Qué banda argentina cantaba 'Matador'?", ["los fabulosos cadillacs", "cadillacs", "los cadillacs"]],
+  ["¿Qué instrumento es típico del tango?", ["bandoneon", "el bandoneon"]],
+  ["¿Cómo se llama el robot amarillo de La Guerra de las Galaxias?", ["c3po", "c-3po"]],
+  ["¿Qué color se obtiene al mezclar azul y amarillo?", ["verde"]],
+  ["¿Qué color se obtiene al mezclar rojo y amarillo?", ["naranja"]],
+  ["¿Qué color se obtiene al mezclar rojo y azul?", ["violeta", "morado", "purpura"]],
+  ["¿De qué fruta se hace el vino?", ["uva", "la uva", "uvas"]],
+  ["¿Qué ingrediente principal tiene el guacamole?", ["palta", "aguacate", "la palta"]],
+  ["¿De qué animal sale la leche que más tomamos?", ["vaca", "la vaca"]],
+  ["¿Qué comida italiana es redonda y lleva salsa y queso?", ["pizza", "la pizza"]],
+  ["¿Qué bebida caliente argentina se toma con bombilla?", ["mate", "el mate"]],
+  ["¿De qué se hace principalmente el pan?", ["harina", "la harina"]],
+  ["¿Qué fruta es amarilla y curva y les gusta a los monos?", ["banana", "la banana", "platano"]],
+  ["¿Qué dulce argentino se hace con leche y azúcar, untable?", ["dulce de leche"]],
+  ["¿Qué verdura te hace llorar al cortarla?", ["cebolla", "la cebolla"]],
+  ["¿Qué comida típica argentina se hace a la parrilla con amigos?", ["asado", "el asado"]],
+  ["¿Cuál es el ingrediente principal del hummus?", ["garbanzo", "garbanzos", "los garbanzos"]],
+  ["¿Qué fruta cítrica es famosa por la vitamina C?", ["naranja", "la naranja", "limon"]],
+  ["¿Qué pasta tiene forma de tubo?", ["tirabuzon", "macarron", "penne", "mostachol", "mostacholes"]],
+  ["¿Cuántas letras tiene el abecedario español (con la ñ)?", ["27", "veintisiete"]],
+  ["¿Qué signo se pone al inicio de una pregunta en español?", ["signo de interrogacion", "interrogacion", "¿"]],
+  ["¿Cómo se dice 'gato' en inglés?", ["cat"]],
+  ["¿Cómo se dice 'perro' en inglés?", ["dog"]],
+  ["¿Cómo se dice 'gracias' en portugués?", ["obrigado", "obrigada"]],
+  ["¿Qué forma geométrica tiene tres lados?", ["triangulo", "el triangulo"]],
+  ["¿Cuántos lados tiene un cuadrado?", ["4", "cuatro"]],
+  ["¿Cuántos lados tiene un pentágono?", ["5", "cinco"]],
+  ["¿Qué número viene después del 99?", ["100", "cien"]],
+  ["¿Cuánto es 7 por 8?", ["56", "cincuenta y seis"]],
+  ["¿Cuánto es la mitad de 50?", ["25", "veinticinco"]],
+  ["¿Qué instrumento marca los puntos cardinales?", ["brujula", "la brujula"]],
+  ["¿Qué color está arriba en el semáforo?", ["rojo"]],
+  ["¿Cuántos días tiene una semana?", ["7", "siete"]],
+  ["¿Cuántos meses tiene el año?", ["12", "doce"]],
+  ["¿Cuál es el primer mes del año?", ["enero"]],
+  ["¿Cuál es el último mes del año?", ["diciembre"]],
+  ["¿En qué dirección sale el sol?", ["este", "el este", "oriente"]],
+  ["¿Qué planeta tiene vida conocida?", ["tierra", "la tierra"]],
+  ["¿Cómo se llama el papá de tu papá para vos?", ["abuelo", "el abuelo"]],
+  ["¿Qué metal precioso tiene el símbolo 'Ag'?", ["plata", "la plata"]],
+  ["¿Qué se mide en grados Celsius?", ["temperatura", "la temperatura"]],
+  ["¿Qué instrumento usamos para ver la hora?", ["reloj", "el reloj"]],
+  ["¿Cuántos lados tiene un rombo?", ["4", "cuatro"]],
+  ["¿Qué moneda se usa en Argentina?", ["peso", "el peso", "pesos"]],
+  ["¿Qué moneda se usa en Estados Unidos?", ["dolar", "el dolar", "dolares"]],
+  ["¿Qué moneda se usa en la mayoría de Europa?", ["euro", "el euro"]],
+  ["¿Cómo se llama la línea imaginaria que divide la Tierra en norte y sur?", ["ecuador", "la linea del ecuador", "el ecuador"]],
+  ["¿Qué aparato inventó Thomas Edison y da luz?", ["lampara", "la lamparita", "bombilla", "foco", "lamparita"]],
+  ["¿Qué animal mitológico tiene cuerpo de caballo y un cuerno?", ["unicornio", "el unicornio"]],
+  ["¿Qué criatura mitológica tira fuego por la boca?", ["dragon", "el dragon"]],
+  ["¿Cómo se llama el hombre de las nieves del Himalaya?", ["yeti", "el yeti"]],
+  ["¿Qué planeta está entre la Tierra y el Sol?", ["venus", "mercurio"]],
+  ["¿Qué forma tiene una pelota?", ["esfera", "redonda", "circulo"]],
+  ["¿Qué estación viene después del invierno?", ["primavera", "la primavera"]],
+  ["¿Cuántas horas tiene un día?", ["24", "veinticuatro"]],
+  ["¿Qué animal es símbolo de la paz?", ["paloma", "la paloma"]],
+  ["¿De qué color es una esmeralda?", ["verde"]],
+  ["¿De qué color es un rubí?", ["rojo", "roja"]],
+  ["¿De qué color es un zafiro?", ["azul"]],
+  ["¿Qué deporte practicaba Manu Ginóbili?", ["basquet", "basketball", "basket", "baloncesto"]],
+  ["¿Qué cantante es 'la reina del pop' y canta 'Material Girl'?", ["madonna"]],
+  ["¿Qué país tiene forma de bota en Europa?", ["italia"]],
+  ["¿Cómo se llama la fruta seca que se saca de la vid y se usa en el pan dulce?", ["pasa", "pasas", "pasa de uva", "pasas de uva"]],
+  ["¿Qué animal cambia la piel y se arrastra sin patas?", ["serpiente", "vibora", "la serpiente"]],
 ];
 const WORDS = ["murcielago", "computadora", "mate", "asado", "empanada", "bandoneon", "guitarra", "cordillera", "pinguino",
   "dulce de leche", "alfajor", "colectivo", "chocolate", "biblioteca", "elefante", "jirafa", "mariposa", "relampago", "tormenta",
@@ -965,21 +1129,32 @@ async function aiCall(prompt, json = true, temperature = 1) {
 }
 async function aiQuestion(tema) {
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
-La respuesta tiene que ser corta (1 a 3 palabras o un número), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
+La respuesta tiene que ser corta (1 a 3 palabras), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
+MUY IMPORTANTE — la respuesta NO puede ser un año, una fecha ni un número de muchos dígitos (nadie sabe los años exactos y es aburrido ponerse a tipear números). PROHIBIDO empezar con "¿En qué año..." o "¿En qué fecha...". La respuesta tiene que ser un NOMBRE, un lugar, una persona, un animal, un objeto o una palabra (no un número). Solo se permite un número si es chico y adivinable (del 1 al 20, por ejemplo "cuántas patas tiene una araña").
+Preferí preguntas CURIOSAS y entretenidas: cosas sorprendentes, récords, orígenes de palabras, apodos, "cuál es el único...", "qué animal...", "cómo se llama...", curiosidades que generen un "¡ah, mirá!". Evitá lo típico de examen escolar.
 No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
 Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ella","dato":"un dato curioso breve sobre la respuesta"}`;
   const q = await aiCall(prompt, true, 1);
   if (!q) return null;
   if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
+  // Red de seguridad: descartar preguntas de año/fecha o con respuesta de números largos (aburren y nadie las sabe)
+  const rawA = String(q.respuesta).trim();
+  const esAnioOFecha = /^\s*(en|el|hacia|cerca de|alrededor de)?\s*(que\s+)?(a[ñn]o|fecha|siglo|d[ií]a)\b/i.test(String(q.pregunta)) || /^-?\d{3,}$/.test(plain(rawA).replace(/\D/g, "")) || /\b(1\d{3}|20\d{2})\b/.test(rawA);
+  if (esAnioOFecha) { aiLastError = "pregunta de fecha descartada"; return null; }
   const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
   // la pista no puede contener la respuesta
   let pista = String(q.pista || "").slice(0, 160);
   if (answers.some((a) => a.length >= 2 && (" " + plain(pista) + " ").includes(" " + a + " "))) pista = "";
   return { q: String(q.pregunta).slice(0, 300), shown: String(q.respuesta).slice(0, 80), answers, dato: String(q.dato || "").slice(0, 250), pista, ai: true };
 }
+// "Bolsa barajada": recorre TODO el banco (205 preguntas) antes de repetir ninguna.
+let bankBag = [];
 function bankQuestion() {
-  const pool = TRIVIA.filter(([q]) => !recentQs.includes(q));
-  const [q, answers] = pick(pool.length ? pool : TRIVIA);
+  if (!bankBag.length) { bankBag = TRIVIA.map((_, i) => i); for (let i = bankBag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bankBag[i], bankBag[j]] = [bankBag[j], bankBag[i]]; } }
+  // evitá repetir algo muy reciente (por si la IA ya lo preguntó)
+  let idx = bankBag.pop();
+  if (recentQs.includes(TRIVIA[idx][0]) && bankBag.length) { const k = bankBag.findIndex((i) => !recentQs.includes(TRIVIA[i][0])); if (k >= 0) { const tmp = bankBag[k]; bankBag[k] = idx; idx = tmp; } }
+  const [q, answers] = TRIVIA[idx];
   return { q, shown: answers[0], answers, dato: "", ai: false };
 }
 function lev(a, b) {
@@ -1122,6 +1297,7 @@ function makeEngine(ROOM, KIND) {
     const t = tema || pick(TOPICS);
     const custom = triviaRound?.custom?.length ? triviaRound.custom.shift() : null;
     let q = custom ? { q: custom.q, shown: custom.a[0], answers: custom.a.map(plain).filter(Boolean), dato: "", ai: false, custom: true } : await aiQuestion(t);
+    if (!q && !custom) q = await aiQuestion(t); // un reintento (por si descartó una pregunta de fecha)
     if (!q) {
       q = bankQuestion();
       if (tema) gameSay(`⚠️ No pude hacer una pregunta de "${tema}": ${aiLastError}. Va una general.`);
