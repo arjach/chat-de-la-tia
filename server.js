@@ -1031,11 +1031,31 @@ const TRIVIA = [
   ["¿Cómo se llama la fruta seca que se saca de la vid y se usa en el pan dulce?", ["pasa", "pasas", "pasa de uva", "pasas de uva"]],
   ["¿Qué animal cambia la piel y se arrastra sin patas?", ["serpiente", "vibora", "la serpiente"]],
 ];
-const WORDS = ["murcielago", "computadora", "mate", "asado", "empanada", "bandoneon", "guitarra", "cordillera", "pinguino",
-  "dulce de leche", "alfajor", "colectivo", "chocolate", "biblioteca", "elefante", "jirafa", "mariposa", "relampago", "tormenta",
-  "medialuna", "heladera", "ventilador", "bicicleta", "astronauta", "telescopio", "dinosaurio", "laberinto", "pirata", "tesoro",
-  "volcan", "galaxia", "paraguas", "caramelo", "pizza", "milanesa", "zapatilla", "teclado", "auriculares", "camiseta",
-  "cancha", "arquero", "gambeta", "hinchada", "trueno", "invierno", "primavera", "dragon", "castillo", "fantasma"];
+const WORDS = ["murcielago", "computadora", "mate", "asado", "empanada", "bandoneon", "guitarra", "cordillera", "pinguino", "dulce de leche", "alfajor",
+  "colectivo", "chocolate", "biblioteca", "elefante", "jirafa", "mariposa", "relampago", "tormenta", "medialuna", "heladera", "ventilador",
+  "bicicleta", "astronauta", "telescopio", "dinosaurio", "laberinto", "pirata", "tesoro", "volcan", "galaxia", "paraguas", "caramelo",
+  "pizza", "milanesa", "zapatilla", "teclado", "auriculares", "camiseta", "cancha", "arquero", "gambeta", "hinchada", "trueno", "invierno",
+  "primavera", "dragon", "castillo", "fantasma", "calesita", "hamaca", "tobogan", "barrilete", "rayuela", "escondida", "poncho",
+  "alpargata", "facon", "gaucho", "tranquera", "estancia", "pampa", "ombu", "hornero", "carpincho", "yacare", "tatu", "vizcacha", "guanaco",
+  "condor", "flamenco", "tucan", "colibri", "hipopotamo", "rinoceronte", "cocodrilo", "canguro", "koala", "camello", "dromedario",
+  "leopardo", "pantera", "chimpance", "gorila", "ardilla", "erizo", "puercoespin", "mapache", "zorrino", "lechuza", "buho", "halcon",
+  "gaviota", "pelicano", "tiburon", "ballena", "delfin", "medusa", "langosta", "cangrejo", "calamar", "estrella de mar", "caballito de mar",
+  "heladeria", "panaderia", "carniceria", "verduleria", "farmacia", "ferreteria", "peluqueria", "kiosco", "almacen", "supermercado", "termo",
+  "yerba", "bombilla", "parrilla", "chimichurri", "choripan", "provoleta", "locro", "humita", "tamal", "chipa", "pastafrola", "tortafrita",
+  "churro", "pochoclo", "panqueque", "flan", "budin", "bizcochuelo", "merengue", "frutilla", "durazno", "mandarina", "sandia", "melon",
+  "anana", "kiwi", "ciruela", "cereza", "pomelo", "frambuesa", "arandano", "zanahoria", "berenjena", "zapallo", "calabaza", "remolacha",
+  "espinaca", "acelga", "pepino", "lechuga", "tomate", "cebolla", "morron", "choclo", "arveja", "lenteja", "garbanzo", "escritorio",
+  "lampara", "almohada", "frazada", "sabana", "colchon", "ropero", "placard", "estante", "cortina", "alfombra", "espejo", "inodoro", "ducha",
+  "lavarropas", "secarropas", "microondas", "licuadora", "tostadora", "cafetera", "pava", "sarten", "cacerola", "colador", "espumadera",
+  "destornillador", "alicate", "serrucho", "taladro", "tornillo", "clavo", "manguera", "regadera", "carretilla", "rastrillo", "pala",
+  "paracaidas", "submarino", "helicoptero", "ambulancia", "bomberos", "patrullero", "camioneta", "motocicleta", "monopatin", "patineta",
+  "trampolin", "columpio", "piscina", "gimnasio", "estadio", "hipodromo", "autodromo", "aeropuerto", "estacion", "terminal", "murga",
+  "carnaval", "comparsa", "candombe", "chacarera", "zamba", "cuarteto", "cumbia", "tango", "milonga", "folklore", "arcoiris", "huracan",
+  "tornado", "terremoto", "avalancha", "neblina", "granizo", "escarcha", "rocio", "atardecer", "amanecer", "planeta", "cometa", "meteorito",
+  "asteroide", "constelacion", "eclipse", "satelite", "nebulosa", "piramide", "esfinge", "momia", "faraon", "vikingo", "samurai",
+  "caballero", "princesa", "hechicero", "duende", "gnomo", "hada", "sirena", "vampiro", "zombi", "detective", "espia", "inventor",
+  "cientifico", "bombero", "cartero", "carpintero", "electricista", "plomero", "jardinero", "cocinero", "ajedrez", "domino", "generala",
+  "truco", "escoba", "chinchon", "loteria", "rompecabezas", "crucigrama"];
 
 
 // ---------- IA: Groq (gratis, sin tarjeta) y/o Gemini ----------
@@ -1303,6 +1323,33 @@ function endPoll(id) {
 
 // ================== Motores de juego: uno por cada sub-sala de 🎮 Juegos ==================
 // Cada sub-sala tiene su propio "Crupier" y su propio juego en curso, así se puede jugar en paralelo.
+// ---------- 🔁 Elegir sin repetir ----------
+// Cada lista (palabras del ahorcado, del dibujo, preguntas de 100 rotos…) recuerda qué ya salió,
+// ENTRE partidas y aunque se reinicie el servidor. No repite nada hasta agotar la lista entera.
+const usedBags = {}; // "ahorcado" -> ["palabra", ...] usadas en la vuelta actual
+const itemKey = (x) => (typeof x === "string" ? x : JSON.stringify(x));
+function freshPick(key, arr, avoid = []) {
+  if (!arr?.length) return undefined;
+  let used = new Set(usedBags[key] || []);
+  const bad = new Set(avoid.map(itemKey));
+  let pool = arr.filter((x) => !used.has(itemKey(x)) && !bad.has(itemKey(x)));
+  if (!pool.length) {
+    // se terminó la vuelta: empieza otra (sin repetir lo último que salió)
+    const last = usedBags[key]?.slice(-Math.min(5, Math.floor(arr.length / 3))) || [];
+    used = new Set();
+    pool = arr.filter((x) => !last.includes(itemKey(x)) && !bad.has(itemKey(x)));
+    if (!pool.length) pool = arr;
+  }
+  const it = pool[Math.floor(Math.random() * pool.length)];
+  used.add(itemKey(it));
+  usedBags[key] = [...used];
+  dirty();
+  return it;
+}
+// Lo último que inventó la IA en cada juego, para pedirle que no lo repita
+function aiSeen(key, item) { if (item) { (usedBags["ia:" + key] ||= []).push(String(item).slice(0, 80)); usedBags["ia:" + key] = usedBags["ia:" + key].slice(-40); dirty(); } return (usedBags["ia:" + key] || []).slice(-25); }
+const freshPickN = (key, arr, n) => { const out = []; for (let i = 0; i < n && i < arr.length; i++) out.push(freshPick(key, arr, out)); return out; };
+
 function makeEngine(ROOM, KIND) {
   const gameSay = (text) => botSay(text, ROOM, CRUPIER);
   let game = null; // juego activo en la sala
@@ -1480,7 +1527,7 @@ function makeEngine(ROOM, KIND) {
           }
           return startTrivia(tema.slice(0, 60));
         }
-        game = { type: "ahorcado", word: pick(WORDS), found: new Set(), wrong: [], timer: setTimeout(() => { const g = game; endGame(); gameSay(`⏰ Se terminó el tiempo. La palabra era ${g.word.toUpperCase()}`); }, 5 * 60000) };
+        game = { type: "ahorcado", word: freshPick("ahorcado", WORDS), found: new Set(), wrong: [], timer: setTimeout(() => { const g = game; endGame(); gameSay(`⏰ Se terminó el tiempo. La palabra era ${g.word.toUpperCase()}`); }, 5 * 60000) };
         return gameSay(`🪢 AHORCADO\n${hangView()}\nEscribí una letra o arriesgá la palabra entera. Tienen 6 vidas.`);
     }
   }
@@ -1526,11 +1573,31 @@ function makeEngine(ROOM, KIND) {
 
   // ================== Dibujá y adiviná ==================
   const PIC_WORDS = ["perro", "gato", "casa", "sol", "luna", "arbol", "auto", "bicicleta", "pelota", "mate", "empanada", "pizza", "guitarra", "barco", "avion",
-    "pez", "flor", "nube", "lluvia", "paraguas", "anteojos", "zapato", "sombrero", "reloj", "telefono", "computadora", "libro", "lapiz", "silla", "mesa",
-    "cama", "puerta", "ventana", "llave", "corazon", "estrella", "montaña", "playa", "isla", "volcan", "cohete", "robot", "fantasma", "dragon", "castillo",
-    "corona", "espada", "tesoro", "pirata", "conejo", "elefante", "jirafa", "serpiente", "araña", "mariposa", "abeja", "caracol", "tortuga", "pinguino", "leon",
-    "banana", "manzana", "helado", "torta", "hamburguesa", "pan", "huevo", "taza", "botella", "cuchara", "tijera", "martillo", "escalera", "puente", "tren",
-    "colectivo", "semaforo", "faro", "carpa", "fogata", "globo", "regalo", "camara", "auriculares", "television", "microfono", "dinosaurio", "unicornio", "sirena", "bruja"];
+    "pez", "flor", "nube", "lluvia", "paraguas", "anteojos", "zapato", "sombrero", "reloj", "telefono", "computadora", "libro", "lapiz",
+    "silla", "mesa", "cama", "puerta", "ventana", "llave", "corazon", "estrella", "montaña", "playa", "isla", "volcan", "cohete", "robot",
+    "fantasma", "dragon", "castillo", "corona", "espada", "tesoro", "pirata", "conejo", "elefante", "jirafa", "serpiente", "araña", "mariposa",
+    "abeja", "caracol", "tortuga", "pinguino", "leon", "banana", "manzana", "helado", "torta", "hamburguesa", "pan", "huevo", "taza",
+    "botella", "cuchara", "tijera", "martillo", "escalera", "puente", "tren", "colectivo", "semaforo", "faro", "carpa", "fogata", "globo",
+    "regalo", "camara", "auriculares", "television", "microfono", "dinosaurio", "unicornio", "sirena", "bruja", "termo", "bombilla",
+    "parrilla", "choripan", "medialuna", "alfajor", "sandia", "frutilla", "uva", "cereza", "zanahoria", "choclo", "tomate", "hongo", "cactus",
+    "palmera", "hoja", "rosa", "girasol", "tulipan", "arbusto", "bosque", "cascada", "rio", "lago", "desierto", "arcoiris", "rayo", "tormenta",
+    "nieve", "muñeco de nieve", "iglu", "tienda", "hamaca", "tobogan", "calesita", "barrilete", "cometa", "planeta", "satelite", "astronauta",
+    "extraterrestre", "ovni", "telescopio", "lupa", "brujula", "mapa", "ancla", "timon", "velero", "submarino", "helicoptero", "paracaidas",
+    "ambulancia", "camion", "tractor", "grua", "patineta", "monopatin", "patines", "casco", "guantes", "bufanda", "gorro", "campera", "remera",
+    "pantalon", "pollera", "vestido", "corbata", "moño", "mochila", "valija", "cartera", "billetera", "anillo", "collar", "aros",
+    "reloj de arena", "vela", "lampara", "foco", "enchufe", "bateria", "iman", "candado", "cadena", "llave inglesa", "destornillador",
+    "serrucho", "pincel", "balde", "escoba", "plumero", "tacho de basura", "inodoro", "bañera", "ducha", "cepillo de dientes", "peine",
+    "espejo", "jabon", "toalla", "almohada", "sillon", "sofa", "escritorio", "estanteria", "cuadro", "maceta", "florero", "ventilador",
+    "heladera", "horno", "microondas", "tostadora", "licuadora", "pava", "sarten", "olla", "tenedor", "cuchillo", "plato", "vaso", "copa",
+    "jarra", "sandwich", "salchicha", "papas fritas", "pancho", "chupetin", "caramelo", "chocolate", "galletita", "torta de cumpleaños",
+    "pochoclo", "hielo", "cubito", "sushi", "tacos", "fideos", "queso", "leche", "miel", "nido", "huevo frito", "pollo", "gallina", "vaca",
+    "cerdo", "oveja", "caballo", "burro", "cabra", "pato", "buho", "loro", "aguila", "foca", "ballena", "delfin", "tiburon", "pulpo",
+    "cangrejo", "medusa", "estrella de mar", "caracol de mar", "langosta", "rana", "sapo", "lagarto", "cocodrilo", "camello", "canguro",
+    "koala", "oso", "panda", "zorro", "lobo", "ardilla", "erizo", "raton", "hormiga", "mosca", "mosquito", "vaca de san antonio", "gusano",
+    "murcielago", "mago", "hada", "vampiro", "momia", "esqueleto", "calavera", "zombi", "vikingo", "caballero", "rey", "reina", "princesa",
+    "payaso", "ninja", "superheroe", "angel", "diablo", "tambor", "trompeta", "violin", "piano", "saxofon", "flauta", "arpa", "acordeon",
+    "pelota de futbol", "arco", "red", "raqueta", "paleta", "bate", "guante de boxeo", "medalla", "trofeo", "podio", "bandera", "silbato",
+    "cronometro"];
   const recentPlayers = new Map(); // apodo -> última vez que habló en Juegos
   let pic = null; // ronda actual de dibujo (además de game)
   function picMask(word, revealed) { return word.split("").map((ch, i) => ch === " " ? " " : revealed.has(i) ? ch.toUpperCase() : "_").join(" "); }
@@ -1549,9 +1616,9 @@ function makeEngine(ROOM, KIND) {
     game.timers.forEach(clearTimeout); game.timers = [];
     game.round++;
     const used = game.used || (game.used = new Set());
-    const bank = game.words || PIC_WORDS;
-    const pool = bank.filter((w) => !used.has(w));
-    game.word = pick(pool.length ? pool : bank); used.add(game.word);
+    if (game.words) { const pool = game.words.filter((w) => !used.has(w)); game.word = pick(pool.length ? pool : game.words); }
+    else game.word = freshPick("dibujo", PIC_WORDS, [...used]);
+    used.add(game.word);
     const ms = game.secs * 1000;
     game.drawer = drawer; game.revealed = new Set(); game.pieces = []; game.endsAt = now() + ms;
     const d = byNick(drawer);
@@ -1888,11 +1955,24 @@ function makeEngine(ROOM, KIND) {
     "Un deporte para ver por tele", "Un personaje de Los Simpson", "Algo que se hace en Navidad", "Algo que te da miedo de noche",
     "Una cosa que se rompe siempre en casa", "Un color de auto", "Algo que se hace en un colectivo", "Una bebida para una juntada",
     "Algo que se dice cuando te pegás en el dedo chiquito", "Un trabajo que te gustaría probar un día", "Algo que hacés apenas te levantás",
+    "Algo que se hace en un día de lluvia", "Un plato que cocina tu abuela", "Algo que se olvida siempre al salir de casa", "Un lugar donde te quedás dormido/a",
+    "Algo que se pide en una pizzería", "Una fruta de verano", "Una palabra que dice mucho un adolescente", "Algo que hay en el baño",
+    "Un electrodoméstico", "Algo que se lleva a un campamento", "Un dibujo animado de la infancia", "Algo que te molesta del colectivo",
+    "Un juego de la infancia", "Algo que hacés en la fila del banco", "Una cosa que hay en el kiosco de la escuela", "Un sabor de empanada",
+    "Algo que tiene ruedas", "Algo que es amarillo", "Algo que es redondo", "Un insecto",
+    "Un animal de granja", "Algo que se encuentra en una plaza", "Un instrumento musical", "Una canción de cumpleaños o de cancha",
+    "Un postre", "Algo que se compra en la farmacia", "Algo que hacés el domingo a la tarde", "Un lugar de Buenos Aires",
+    "Un país para viajar", "Algo que hay en un cumpleaños de chicos", "Algo que te llevarías a una isla desierta", "Una red social",
+    "Un sonido que te molesta", "Algo que se hace en el verano", "Algo que hacés con el celular", "Una cosa que se presta y nunca vuelve",
+    "Una palabra que se usa para insultar sin ofender", "Algo que tiene un gaucho", "Algo que se come con la mano", "Algo que se hace en un casamiento",
+    "Un villano de película", "Una golosina de la infancia", "Algo que se dice al contestar el teléfono", "Un trabajo que no te gustaría tener",
+    "Un motivo para pelearse en un grupo de WhatsApp", "Algo que se hace cuando se corta la luz", "Una marca de auto", "Un nombre de perro",
+    "Un nombre de gato", "Algo que da vergüenza ajena",
   ];
   const STOP = new Set(["el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "mi", "tu", "con"]);
   const rotosKey = (t) => plain(t).split(" ").filter((w) => w && !STOP.has(w)).map((w) => w.length > 4 ? w.replace(/(es|s)$/, "") : w).join(" ");
   function startRotos(starter, rounds, customQs, secs) {
-    const pool = customQs?.length ? customQs : [...ROTOS_Q].sort(() => Math.random() - 0.5).slice(0, rounds);
+    const pool = customQs?.length ? customQs : freshPickN("rotos", ROTOS_Q, rounds);
     rounds = pool.length;
     game = { type: "rotos", phase: "", qs: pool, round: 0, total: rounds, secs: secs || 40, scores: new Map(), answers: new Map(), timers: [], cleanup() { this.timers.forEach(clearTimeout); } };
     gameSay(`📊 100 ROTOS DICEN — ${rounds} pregunta${rounds === 1 ? "" : "s"}${customQs?.length ? ` de ${starter}` : ""}.\nEl bot pregunta y cada uno responde EN SECRETO escribiendo en el chat (nadie ve tu respuesta hasta el final).\nSumás si pensás igual que la mayoría: 🥇 +3 · 🥈 +2 · 🥉 +1`);
@@ -1989,8 +2069,8 @@ function makeEngine(ROOM, KIND) {
       onEnd(counts, total) {
         if (game !== g) return;
         if (!total) { gameSay("⚖️ El jurado no votó. Caso archivado 🗄️"); return endGame(); }
-        if (counts[0] > counts[1]) gameSay(`🔨 VEREDICTO: ¡CULPABLE! (${counts[0]} a ${counts[1]})\n📜 Condena: ${g.acusado} deberá ${g.condena || pick(CONDENAS)}.`);
-        else if (counts[1] > counts[0]) gameSay(`🕊️ VEREDICTO: ¡INOCENTE! (${counts[1]} a ${counts[0]})\n${g.acusado} ${pick(ABSOLUCIONES)}`);
+        if (counts[0] > counts[1]) gameSay(`🔨 VEREDICTO: ¡CULPABLE! (${counts[0]} a ${counts[1]})\n📜 Condena: ${g.acusado} deberá ${g.condena || freshPick("condenas", CONDENAS)}.`);
+        else if (counts[1] > counts[0]) gameSay(`🕊️ VEREDICTO: ¡INOCENTE! (${counts[1]} a ${counts[0]})\n${g.acusado} ${freshPick("absoluciones", ABSOLUCIONES)}`);
         else gameSay(`⚖️ VEREDICTO: ¡EMPATE! (${counts[0]} a ${counts[1]}). El tribunal declara el caso… un misterio 🤷`);
         endGame();
       } };
@@ -2036,14 +2116,20 @@ function makeEngine(ROOM, KIND) {
 
   // ================== 🤖 ¿Quién es la IA? ==================
   const TURING_TOPICS = ["¿Cuál es la peor comida que probaste?", "¿Qué harías con un millón de dólares?", "¿Playa o montaña y por qué?", "Contá algo que te dio vergüenza esta semana",
-    "¿Cuál fue tu primer celular?", "¿Qué serie estás mirando?", "¿Mate dulce o amargo?", "¿Qué superpoder inútil te gustaría tener?", "¿Cuál es tu plan ideal de domingo?", "¿Le tenés miedo a algo raro?"];
+    "¿Cuál fue tu primer celular?", "¿Qué serie estás mirando?", "¿Mate dulce o amargo?", "¿Qué superpoder inútil te gustaría tener?", "¿Cuál es tu plan ideal de domingo?", "¿Le tenés miedo a algo raro?",
+    "¿Qué comida no comerías ni por plata?", "¿Cuál fue el mejor viaje de tu vida?", "¿Qué hacías de chico/a que ahora te da vergüenza?", "¿Perro o gato?",
+    "¿Qué canción te sabés entera?", "¿Cuál es tu golosina favorita?", "¿Qué harías si fueras invisible un día?", "¿Cuál es la peor excusa que pusiste?",
+    "¿Qué te hace reír siempre?", "¿Cuál es tu película favorita?", "¿Qué cosa nunca te sale bien?", "¿Madrugar o trasnochar?",
+    "¿Qué es lo más raro que comiste?", "¿Cuál es tu apodo y por qué?", "¿Qué trabajo tendrías en otra vida?", "¿Pizza con ananá: sí o no?",
+    "¿Qué te llevarías a una isla desierta?", "¿Cuál es tu recuerdo favorito de la escuela?", "¿Qué te pone de mal humor?", "¿Qué aprenderías si tuvieras tiempo?",
+    "¿Invierno o verano?", "¿Cuál fue tu primer trabajo?"];
   function startTuring(starter, mins = 3) {
     if (!AI_ON) return gameSay("🤖 Este juego necesita la IA activada (GROQ_API_KEY en Render).");
     inscription("turing", starter, "🤖 ¿QUIÉN ES LA IA?", "Todos reciben un apodo secreto de animal y la IA se mete como un jugador más. Charlen y descubran quién es la máquina.", 45, 3, 10, (players) => {
       const names = shuffle(ALIASES).slice(0, players.length + 1);
       game.alias = new Map(players.map((n, i) => [n, names[i]]));
       game.aiAlias = names[players.length];
-      game.log = []; game.lastAi = 0; game.topic = pick(TURING_TOPICS); game.mins = mins;
+      game.log = []; game.lastAi = 0; game.topic = freshPick("turing", TURING_TOPICS); game.mins = mins;
       for (const [n, a] of game.alias) secretCard(n, "🎭 Tu apodo secreto", `Sos ${a}. Todo lo que escribas en Juegos sale con ese nombre.\nHay ${players.length + 1} participantes y UNO es la IA 🤖. ¡Que no te confundan con la máquina!`);
       gameSay(`🤖 ¡Arranca! Hay ${players.length + 1} participantes con apodo… y uno es la IA.\nTema para romper el hielo: «${game.topic}»\n💬 Charlen ${mins} minutos. Escriban normal: el bot lo publica con su apodo.`);
       game.timers.push(setTimeout(() => turingAiTalk(true), 7000));
@@ -2112,6 +2198,15 @@ function makeEngine(ROOM, KIND) {
     ["La Torre Eiffel puede medir unos centímetros más en ___.", "verano"], ["El corazón de una ballena azul es del tamaño de un ___.", "auto chico"],
     ["Las vacas pueden estresarse cuando las separan de su ___.", "mejor amiga"], ["Los caracoles pueden dormir hasta ___ seguidos.", "tres años"],
     ["El sonido que hace un pato es parecido en todos los idiomas, pero en danés se escribe ___.", "rap"],
+    ["Las jirafas tienen la misma cantidad de vértebras en el cuello que los ___.", "humanos"], ["El ojo de un avestruz es más grande que su ___.", "cerebro"],
+    ["Los tiburones existen desde antes que los ___.", "árboles"], ["Los delfines duermen con medio ___ despierto.", "cerebro"],
+    ["Las mariposas sienten el sabor con las ___.", "patas"], ["El corazón de un camarón está en su ___.", "cabeza"],
+    ["Los pulpos tienen la sangre de color ___.", "azul"], ["Las estrellas de mar no tienen ___.", "cerebro"],
+    ["Debajo del pelaje blanco, los osos polares tienen la piel de color ___.", "negro"], ["Las hormigas no tienen ___: respiran por agujeritos del cuerpo.", "pulmones"],
+    ["Los gatos no pueden sentir el sabor ___.", "dulce"], ["Las ratas se ríen cuando les hacen ___.", "cosquillas"],
+    ["Los colibríes son las únicas aves que pueden volar hacia ___.", "atrás"], ["El órgano más grande del cuerpo humano es la ___.", "piel"],
+    ["El sonido viaja más rápido en el ___ que en el aire.", "agua"], ["Los caballos de mar que llevan a las crías en la panza son los ___.", "machos"],
+    ["Las abejas pueden reconocer ___ humanas.", "caras"], ["Las zanahorias originalmente eran de color ___, no naranja.", "violeta"],
   ];
   async function fibRound() {
     const g = game; if (!g || g.type !== "mentiroso") return;
@@ -2124,11 +2219,11 @@ function makeEngine(ROOM, KIND) {
     g.round++; g.phase = "cargando"; g.lies = new Map();
     let fact = null;
     if (AI_ON) {
-      const r = await aiCall(`Dame UN dato curioso REAL, verificable y sorprendente (animales, historia, cuerpo humano, países, inventos) escrito en español rioplatense, con UNA palabra o expresión clave reemplazada por "___". La respuesta oculta tiene que ser corta (1 a 3 palabras) y difícil de adivinar pero no imposible. No repitas: ${g.used.join(" | ")}. Devolvé SOLO JSON: {"dato":"... ___ ...","respuesta":"..."}`);
-      if (r?.dato?.includes("___") && r.respuesta) fact = [String(r.dato).slice(0, 220), String(r.respuesta).slice(0, 40)];
+      const r = await aiCall(`Dame UN dato curioso REAL, verificable y sorprendente (animales, historia, cuerpo humano, países, inventos) escrito en español rioplatense, con UNA palabra o expresión clave reemplazada por "___". La respuesta oculta tiene que ser corta (1 a 3 palabras) y difícil de adivinar pero no imposible. No repitas ninguno de estos: ${[...new Set([...aiSeen("dato"), ...g.used])].join(" | ") || "(ninguno)"}. Devolvé SOLO JSON: {"dato":"... ___ ...","respuesta":"..."}`);
+      if (r?.dato?.includes("___") && r.respuesta) { fact = [String(r.dato).slice(0, 220), String(r.respuesta).slice(0, 40)]; aiSeen("dato", fact[0]); }
     }
     if (game !== g) return;
-    if (!fact) { const pool = FIBS.filter(([d]) => !g.used.includes(d)); fact = pick(pool.length ? pool : FIBS); }
+    if (!fact) fact = freshPick("fibs", FIBS, FIBS.filter(([d]) => g.used.includes(d)));
     g.used.push(fact[0]); g.fact = fact; g.phase = "mentir";
     gameSay(`🃏 Ronda ${g.round}/${g.total}:\n«${fact[0]}»\n🤥 Escribí en el chat una respuesta FALSA pero creíble para completar el hueco (45 s). Es secreta. ¡Si otros la votan, sumás!`);
     io.emit("rotos-q", { q: "🃏 " + fact[0], round: g.round, total: g.total, endsAt: now() + 45000, hint: "🤥 Escribí tu mentira (secreta)" });
@@ -2178,17 +2273,23 @@ function makeEngine(ROOM, KIND) {
   const IMP_PAIRS = [["playa", "pileta"], ["mate", "té"], ["perro", "gato"], ["pizza", "empanada"], ["fútbol", "básquet"], ["guitarra", "violín"], ["colectivo", "tren"],
     ["invierno", "otoño"], ["helado", "yogur"], ["cine", "teatro"], ["avión", "helicóptero"], ["río", "lago"], ["café", "chocolatada"], ["cumpleaños", "casamiento"],
     ["escuela", "universidad"], ["asado", "parrilla de verduras"], ["bicicleta", "moto"], ["luna", "sol"], ["zapatilla", "ojota"], ["supermercado", "kiosco"],
-    ["dentista", "médico"], ["Navidad", "Año Nuevo"], ["montaña", "volcán"], ["piano", "teclado"], ["lluvia", "nieve"]];
+    ["dentista", "médico"], ["Navidad", "Año Nuevo"], ["montaña", "volcán"], ["piano", "teclado"], ["lluvia", "nieve"],
+    ["tenedor", "cuchara"], ["medialuna", "factura"], ["alfajor", "galletita"], ["milanesa", "escalope"], ["choripán", "hamburguesa"], ["Coca", "Pepsi"],
+    ["vino", "cerveza"], ["fernet", "gancia"], ["almohada", "almohadón"], ["sábana", "frazada"], ["heladera", "freezer"], ["lavarropas", "secarropas"],
+    ["celular", "tablet"], ["Instagram", "TikTok"], ["WhatsApp", "Telegram"], ["Netflix", "YouTube"], ["libro", "revista"], ["lápiz", "birome"],
+    ["mochila", "valija"], ["campera", "buzo"], ["bufanda", "cuello"], ["anteojos", "lentes de sol"], ["taxi", "Uber"], ["subte", "tren"],
+    ["mar", "río"], ["bosque", "selva"], ["desierto", "playa"], ["gallina", "pato"], ["tigre", "león"], ["lobo", "perro"],
+    ["mariposa", "polilla"], ["abeja", "avispa"], ["rana", "sapo"], ["tortuga", "caracol"], ["Boca", "River"], ["tenis", "pádel"]];
   function startImpostor(starter, customPair) {
     inscription("impostor", starter, "🫣 EL IMPOSTOR", "Todos reciben la misma palabra secreta… menos uno, que recibe una parecida (¡y no sabe que es el impostor!). Den pistas y descubran quién es.", 40, 3, 10, async (players) => {
       const g = game;
       let pair = customPair;
       if (!pair && AI_ON) {
-        const r = await aiCall(`Juego "El Impostor" para argentinos. Dame DOS palabras comunes y concretas que sean parecidas pero distintas (ej: "playa" y "pileta", "mate" y "té"), fáciles de describir con una pista. Variá los temas. Devolvé SOLO JSON: {"palabra":"...","parecida":"..."}`);
-        if (r?.palabra && r?.parecida) pair = [String(r.palabra).slice(0, 30), String(r.parecida).slice(0, 30)];
+        const r = await aiCall(`Juego "El Impostor" para argentinos. Dame DOS palabras comunes y concretas que sean parecidas pero distintas (ej: "playa" y "pileta", "mate" y "té"), fáciles de describir con una pista. Variá los temas. No uses ninguno de estos pares que ya salieron: ${aiSeen("impostor").join(" | ") || "(ninguno)"}. Devolvé SOLO JSON: {"palabra":"...","parecida":"..."}`);
+        if (r?.palabra && r?.parecida) { pair = [String(r.palabra).slice(0, 30), String(r.parecida).slice(0, 30)]; aiSeen("impostor", pair.join(" / ")); }
       }
       if (game !== g) return;
-      if (!pair) pair = pick(IMP_PAIRS);
+      if (!pair) pair = freshPick("impostor", IMP_PAIRS);
       if (Math.random() < 0.5) pair = [pair[1], pair[0]];
       g.word = pair[0]; g.fake = pair[1]; g.impostor = pick(players); g.order = shuffle(players); g.turn = 0; g.clueRound = 1; g.clues = [];
       for (const n of players) secretCard(n, "🤫 Tu palabra secreta", `${(n === g.impostor ? g.fake : g.word).toUpperCase()}\n\nDá pistas de UNA palabra sin decirla. Si sospechás que tu palabra es distinta a la de los demás… ¡quizás seas el impostor! 🫣`);
@@ -3760,7 +3861,7 @@ function snapshot() {
   return {
     v: 1,
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
-    bans: [...bans].filter(([, b]) => b.until > t), modLog,
+    bans: [...bans].filter(([, b]) => b.until > t), modLog, usedBags,
     points: [...points],
     pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events, approvalMode,
     weekly: { start: weekly.start, points: [...weekly.points] }, champions,
@@ -3795,6 +3896,7 @@ async function loadState() {
         if (b?.until > now()) bans.set(k, b);
       });
       if (Array.isArray(st.modLog)) modLog = st.modLog.slice(-200);
+      if (st.usedBags && typeof st.usedBags === "object") for (const [k, v] of Object.entries(st.usedBags)) if (Array.isArray(v)) usedBags[k] = v.slice(-1000);
       (st.points || []).forEach(([n, p]) => points.set(n, p));
       pinned = st.pinned || ""; slowMode = st.slowMode || 0;
       if (Array.isArray(st.badWords)) BAD_WORDS = st.badWords;
