@@ -1127,14 +1127,25 @@ async function aiCall(prompt, json = true, temperature = 1) {
   aiLastError = firstErr || "la IA no respondió";
   return null;
 }
+// Verifica una pregunta volviéndola a responder en frío. Devuelve true (coincide), false (no coincide
+// o la IA no está segura) o null (no se pudo verificar: la IA falló, aceptamos igual para no trabar el juego).
+async function aiVerify(pregunta, answers) {
+  const r = await aiCall(`Sos un verificador de trivia muy estricto. Respondé esta pregunta con la respuesta correcta y precisa, en 1 a 3 palabras. Si NO estás 100% seguro de la respuesta, respondé exactamente "NO SE" (no inventes). Pregunta: ${pregunta}\nDevolvé SOLO JSON: {"respuesta":"..."}`, true, 0);
+  if (!r || !r.respuesta) return null; // la IA de verificación no respondió
+  const a = String(r.respuesta).trim();
+  if (!a || /^(no\s*se|no\s*s[eé]|ns|no estoy segur|no lo se|desconocid)/i.test(plain(a))) return false; // dudó: descartamos
+  return isCorrect(plain(a), answers) ? true : false;
+}
 async function aiQuestion(tema) {
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
 La respuesta tiene que ser corta (1 a 3 palabras), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
 MUY IMPORTANTE — la respuesta NO puede ser un año, una fecha ni un número de muchos dígitos (nadie sabe los años exactos y es aburrido ponerse a tipear números). PROHIBIDO empezar con "¿En qué año..." o "¿En qué fecha...". La respuesta tiene que ser un NOMBRE, un lugar, una persona, un animal, un objeto o una palabra (no un número). Solo se permite un número si es chico y adivinable (del 1 al 20, por ejemplo "cuántas patas tiene una araña").
 Preferí preguntas CURIOSAS y entretenidas: cosas sorprendentes, récords, orígenes de palabras, apodos, "cuál es el único...", "qué animal...", "cómo se llama...", curiosidades que generen un "¡ah, mirá!". Evitá lo típico de examen escolar.
+REGLA DE ORO — SOLO datos que sepas con CERTEZA ABSOLUTA. Si dudás aunque sea un poco, elegí OTRA pregunta más segura. Es mejor una pregunta fácil y correcta que una original y equivocada.
+EVITÁ los datos que se confunden fácil (son la causa de los errores): qué álbum/canción es de qué artista, en qué película actuó alguien, qué autor escribió qué libro específico, estadísticas exactas, quién ganó qué premio. Si hacés una de esas, que sea SÚPER conocida (ej: "Thriller" es de Michael Jackson), nunca algo de nicho.
 No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
 Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ella","dato":"un dato curioso breve sobre la respuesta"}`;
-  const q = await aiCall(prompt, true, 1);
+  const q = await aiCall(prompt, true, 0.5); // menos "creatividad" = menos inventos
   if (!q) return null;
   if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
   // Red de seguridad: descartar preguntas de año/fecha o con respuesta de números largos (aburren y nadie las sabe)
@@ -1142,6 +1153,9 @@ Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["va
   const esAnioOFecha = /^\s*(en|el|hacia|cerca de|alrededor de)?\s*(que\s+)?(a[ñn]o|fecha|siglo|d[ií]a)\b/i.test(String(q.pregunta)) || /^-?\d{3,}$/.test(plain(rawA).replace(/\D/g, "")) || /\b(1\d{3}|20\d{2})\b/.test(rawA);
   if (esAnioOFecha) { aiLastError = "pregunta de fecha descartada"; return null; }
   const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
+  // VERIFICACIÓN: otra consulta, en frío, vuelve a responder la pregunta sola. Si no coincide o la IA duda, se descarta.
+  const check = await aiVerify(q.pregunta, answers);
+  if (check === false) { aiLastError = "respuesta no verificada (posible error de la IA)"; return null; }
   // la pista no puede contener la respuesta
   let pista = String(q.pista || "").slice(0, 160);
   if (answers.some((a) => a.length >= 2 && (" " + plain(pista) + " ").includes(" " + a + " "))) pista = "";
