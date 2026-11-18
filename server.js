@@ -128,6 +128,29 @@ app.get("/sitemap.xml", (req, res) => res.type("application/xml").send(`<?xml ve
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${PUBLIC_URL}/</loc><lastmod>${new Date().toISOString().slice(0, 10)}</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
 </urlset>`));
+// ---------- ⚡ Fotos y audios del chat: se guardan UNA vez y se mandan como link ----------
+// Antes cada foto viajaba entera por el socket a TODOS (aunque estuvieran en otra sala). Ahora cada celu la
+// descarga recién cuando la va a mostrar, y el navegador la guarda en caché. Vive en memoria (no en la base):
+// se borra al reiniciar el servidor o cuando se llena el espacio (las más viejas primero).
+const mediaStore = new Map(); let mediaBytes = 0;
+const MEDIA_MAX = 90e6;
+function storeMedia(dataUrl) {
+  const m = String(dataUrl || "").match(/^data:([^;,]+)((?:;[^;,]+)*);base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) return null;
+  const buf = Buffer.from(m[3], "base64");
+  const id = require("crypto").randomBytes(16).toString("base64url");
+  const params = m[2].split(";").filter((x) => x && x !== "base64").join(";");
+  mediaStore.set(id, { buf, type: m[1] + (params ? ";" + params : "") });
+  mediaBytes += buf.length;
+  while (mediaBytes > MEDIA_MAX && mediaStore.size > 1) { const [k, v] = mediaStore.entries().next().value; mediaStore.delete(k); mediaBytes -= v.buf.length; }
+  return "/m/" + id;
+}
+app.get("/m/:id", (req, res) => {
+  const it = mediaStore.get(String(req.params.id));
+  if (!it) return res.status(404).end();
+  res.set("Cache-Control", "private, max-age=86400, immutable").type(it.type).send(it.buf);
+});
+
 app.get("/avatar/:nick", (req, res) => {
   const t = byNick(req.params.nick);
   if (!t || !t.c.avatar) return res.status(404).end();
@@ -260,14 +283,15 @@ const pushUsers = () => { for (const [sid, c] of clients) if (c.nick) io.to(sid)
 const emitToMods = (event, payload) => { for (const [sid, rc] of clients) if (rc.admin) io.to(sid).emit(event, payload); };
 // Emite a todos menos a quienes tienen bloqueo con el remitente
 function emitFrom(sender, event, payload, skipSelf = false) {
+  // Un solo envío a todos los que corresponde (antes era uno por persona: con fotos pesadas se empaquetaba cientos de veces)
+  const to = [];
   for (const [sid, rc] of clients) {
     if (!rc.nick || (skipSelf && rc === sender) || blockedPair(rc, sender)) continue;
-    io.to(sid).emit(event, payload);
+    to.push(sid);
   }
+  if (to.length) io.to(to).emit(event, payload);
 }
 
-// huella de una foto/GIF/audio, para que al reenviar no se pueda cambiar el contenido
-const mediaHash = (media) => { const d = media?.image || media?.gif || media?.audio; return d ? require("crypto").createHash("sha1").update(d).digest("base64") : ""; };
 function remember(id, data) {
   messages.set(id, { ...data, text: String(data.text || "").slice(0, 160), fullText: String(data.text || "").slice(0, MAX_MSG), reactions: {} });
   if (messages.size > 3000) messages.delete(messages.keys().next().value);
@@ -284,16 +308,24 @@ const newToken = () => require("crypto").randomBytes(18).toString("base64url");
 const REPLAY = new Set(["public-message", "private-message", "edited", "deleted", "reactions", "poll-update", "poll-end", "notice", "announce", "clear",
   "pinned", "room-lock", "renamed", "secret-card", "rotos-q", "rotos-count", "user-joined", "user-left", "events", "juegos-ban"]);
 // Guarda lo que le iba a llegar a cada persona en segundo plano (engancha todos los envíos del servidor)
+// tamaño aproximado de un envío sin convertir todo a texto (las fotos y audios son strings largos)
+function packetSize(x, depth = 0) {
+  if (typeof x === "string") return x.length;
+  if (x == null || typeof x !== "object" || depth > 4) return 8;
+  let n = 2; for (const k in x) n += k.length + packetSize(x[k], depth + 1);
+  return n;
+}
 const adapter = io.of("/").adapter;
 const origBroadcast = adapter.broadcast.bind(adapter);
 adapter.broadcast = function (packet, opts) {
   if (ghostIds.size && Array.isArray(packet?.data) && REPLAY.has(packet.data[0])) {
+    let size = -1; // se calcula UNA vez (antes era una vez por cada ausente: con fotos pesadas trababa el servidor)
     for (const [gid, ses] of ghostIds) {
       if (opts?.except?.has?.(gid)) continue;
       if (opts?.rooms?.size && !opts.rooms.has(gid)) continue;
-      const size = JSON.stringify(packet.data).length;
-      ses.buf.push(packet.data); ses.bytes += size;
-      while (ses.buf.length > 400 || ses.bytes > 4e6) ses.bytes -= JSON.stringify(ses.buf.shift()).length;
+      if (size < 0) size = packetSize(packet.data);
+      ses.buf.push(packet.data); (ses.sizes ||= []).push(size); ses.bytes += size;
+      while (ses.buf.length > 400 || ses.bytes > 4e6) { ses.buf.shift(); ses.bytes -= ses.sizes.shift() || 0; }
     }
   }
   return origBroadcast(packet, opts);
@@ -318,7 +350,7 @@ function goAway(c, sid) {
   const ses = sessions.get(c.token);
   if (!ses || c.gone) return finalLeave(c, sid);
   c.away = true; c.awayAt = now();
-  ses.buf = []; ses.bytes = 0;
+  ses.buf = []; ses.sizes = []; ses.bytes = 0;
   ghostIds.set(sid, ses);
   clearTimeout(ses.timer);
   ses.timer = setTimeout(() => finalLeave(c, sid), GRACE_MS);
@@ -805,6 +837,7 @@ function checkMedia(c, id, p) {
     if (t - c.lastMediaAt < 8000) { notice(id, "📷 Esperá unos segundos antes de mandar otra foto, GIF o audio.", "warn"); return null; }
   }
   c.lastMediaAt = t;
+  for (const f of ["image", "audio"]) if (media[f]) { const u = storeMedia(media[f]); if (!u) { notice(id, "No se pudo procesar el archivo.", "warn"); return null; } media[f] = u; }
   return media;
 }
 const mediaLabel = (m) => m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : m.audio ? "🎤 Audio" : "";
@@ -813,16 +846,20 @@ const mediaLabel = (m) => m.image ? "📷 Foto" : m.gif ? "🎞️ GIF" : m.audi
 function publishPublic(c, room, text, media, replyTo) {
   const id = newId();
   const reply = buildReply(replyTo, room);
-  remember(id, { chat: room, from: c.nick, pkey: c.pkey, text: text || mediaLabel(media), cap: text || "", mh: mediaHash(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
+  remember(id, { chat: room, from: c.nick, pkey: c.pkey, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!(media.image || media.gif || media.audio) });
   const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
   if (room === "mods") emitToMods("public-message", out);
   else if (room === "confesiones") {
     // Nadie ve el nombre; los moderadores sí (para poder moderar); el autor lo ve como propio
     const anon = { id, room, from: "Anónimo", anon: true, text, ...media, reply, ts: out.ts };
+    const mine = [], mods = [], rest = [];
     for (const [sid, rc] of clients) {
       if (!rc.nick || blockedPair(rc, c)) continue;
-      io.to(sid).emit("public-message", rc.pkey && rc.pkey === c.pkey ? { ...anon, mine: true } : rc.admin ? { ...anon, realFrom: c.nick } : anon);
+      (rc.pkey && rc.pkey === c.pkey ? mine : rc.admin ? mods : rest).push(sid);
     }
+    if (mine.length) io.to(mine).emit("public-message", { ...anon, mine: true });
+    if (mods.length) io.to(mods).emit("public-message", { ...anon, realFrom: c.nick });
+    if (rest.length) io.to(rest).emit("public-message", anon);
   } else emitFrom(c, "public-message", out);
 }
 
@@ -2813,6 +2850,8 @@ io.on("connection", (socket) => {
   bdayHandlers(socket, c);
   invHandlers(socket, c);
   djHandlers(socket, c);
+  actHandlers(socket, c);
+  trHandlers(socket, c);
   for (const E of ENGINES) E.bind(socket, c);
   socket.on("game-custom", (o = {}, cb) => { if (!Object.values(CUSTOM_OF).flat().includes(o.type)) cb && cb({ ok: false, error: "Juego desconocido." }); });
 
@@ -2840,7 +2879,7 @@ io.on("connection", (socket) => {
     users.set(c.nick.toLowerCase(), socket.id);
     ses.c = c; ses.id = socket.id;
     achJoin(c);
-    const replay = ses.buf; ses.buf = []; ses.bytes = 0;
+    const replay = ses.buf; ses.buf = []; ses.sizes = []; ses.bytes = 0;
     cb({ ok: true, nick: c.nick, token: c.token, users: userList(c), pinned, slowMode, locked: [...lockedRooms], events: publicEvents(), replay, away: Math.round((now() - (old.awayAt || now())) / 1000) });
     if (c.admin) socket.emit("admin", { mod: true, owner: !!c.owner });
     sendPerm(c, socket.id); if (c.admin) requestsCount();
@@ -2941,7 +2980,7 @@ io.on("connection", (socket) => {
     const media = checkMedia(c, socket.id, { image, gif, audio });
     if (!media) return cb({ ok: false, silent: true });
     const id = newId();
-    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mh: mediaHash(media), ts: now(), media: !!(media.image || media.gif || media.audio) });
+    remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!(media.image || media.gif || media.audio) });
     const reply = buildReply(replyTo, null, c.nick, target.c.nick);
     const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
     io.to(target.id).emit("private-message", msg);
@@ -2963,13 +3002,13 @@ io.on("connection", (socket) => {
       fwd = m.from === c.nick ? { from: c.nick } : {};
     } else if (m.chat === "confesiones") fwd = { from: "Anónimo", room: "🤫 Confesiones" };
     else fwd = { from: m.from, room: FRASE_ROOMS[m.chat] || "# " + m.chat };
-    // el contenido tiene que ser el del mensaje original
-    const media = m.media ? checkMedia(c, socket.id, { image, gif, audio }) : {};
+    // el contenido es SIEMPRE el del mensaje original (sale de lo que guardó el servidor, no de lo que mande el celu)
+    const media = m.media ? { ...(m.mu || {}) } : {};
     if (m.media) {
-      if (!m.mh) return cb({ ok: false, error: "Ese tipo de mensaje no se puede reenviar." });
-      if (!media) return cb({ ok: false, silent: true });
-      if (mediaHash(media) !== m.mh) return cb({ ok: false, error: "No se pudo reenviar ese archivo." });
+      if (!media.image && !media.gif && !media.audio) return cb({ ok: false, error: "Ese tipo de mensaje no se puede reenviar." });
+      if (c.noMedia && !c.admin) return cb({ ok: false, error: "📷 Un moderador te sacó el permiso de mandar fotos, GIFs y audios." });
       if (media.image && !canPhoto(c)) { sendPerm(c, socket.id); return cb({ ok: false, error: NO_PHOTO }); }
+      if ((media.image && !mediaStore.has(media.image.slice(3))) || (media.audio && !mediaStore.has(media.audio.slice(3)))) return cb({ ok: false, error: "Ese archivo ya no está disponible." });
     }
     const raw = m.media ? (m.cap || "") : m.fullText || m.text;
     const text = checkMessage(c, socket.id, raw, "private", !!m.media);
@@ -2980,7 +3019,7 @@ io.on("connection", (socket) => {
       if (!target || target.id === socket.id) { errors.push(`${n}: no está conectado/a.`); continue; }
       if (blockedPair(c, target.c)) { errors.push(`${target.c.nick}: no le podés escribir.`); continue; }
       const nid = newId();
-      remember(nid, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mh: m.mh || "", ts: now(), media: !!m.media });
+      remember(nid, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!m.media });
       const msg = { id: nid, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, fwd, ts: now() };
       io.to(target.id).emit("private-message", msg);
       sent.push(msg);
@@ -3368,10 +3407,6 @@ function muroBroadcast(ev, p) {
     if (v) io.to(sid).emit(ev, v);
   }
 }
-function muroNotify(nick, text) {
-  const t = byNick(nick); if (!t) return;
-  io.to(t.id).emit("muro-notif", { text });
-}
 // Crea una publicación del muro (también al aprobar una que estaba esperando)
 function createPost(c, clean, img) {
   const t = now();
@@ -3419,7 +3454,7 @@ function muroHandlers(socket, c) {
     if (i >= 0) p.likes.splice(i, 1); else {
       p.likes.push(c.nick);
       if (p.by !== c.nick && !(p.notified ||= []).includes(c.nick)) {
-        p.notified.push(c.nick); muroNotify(p.by, `❤️ A ${c.nick} le gustó tu publicación`);
+        p.notified.push(c.nick); actAdd(p.pkey || pkeyOf(p.by, p.dev), p.by, { k: "like", by: c.nick, post: p.id, snip: (p.text || (p.img ? "📷 foto" : "")).slice(0, 50) });
         // logros: el que da ❤️ y el que la recibe (una sola vez por persona y publicación)
         bump(c, "likesGiven", 1, { xp: 1, capKey: "likeGive", cap: 20 });
         const ak = p.pkey || pkeyOf(p.by, p.dev);
@@ -3443,10 +3478,11 @@ function muroHandlers(socket, c) {
       bumpK(p.pkey || pkeyOf(p.by, p.dev), p.by, "commentsRecv", 1, { xp: 2, capKey: "comRecv", cap: 40 });
     }
     savePost(p); muroBroadcast("muro-upd", p);
-    if (p.by !== c.nick) muroNotify(p.by, `💬 ${c.nick} comentó tu publicación: «${clean.slice(0, 60)}${clean.length > 60 ? "…" : ""}»`);
+    const snip = (p.text || (p.img ? "📷 foto" : "")).slice(0, 50);
+    if (p.by !== c.nick) actAdd(p.pkey || pkeyOf(p.by, p.dev), p.by, { k: "com", by: c.nick, post: p.id, text: clean.slice(0, 100), snip });
     // también a quienes comentaron antes (sin repetir)
-    [...new Set(p.comments.map((k) => k.by))].filter((n) => n !== c.nick && n !== p.by)
-      .forEach((n) => muroNotify(n, `💬 ${c.nick} también comentó en la publicación de ${p.by}`));
+    const prev = new Map(); for (const k of p.comments) if (k.by !== c.nick && k.by !== p.by && k.pkey) prev.set(k.pkey, k.by);
+    for (const [pk, n] of prev) actAdd(pk, n, { k: "com2", by: c.nick, post: p.id, owner: p.by, text: clean.slice(0, 100), snip });
     cb({ ok: true });
   });
   socket.on("muro-edit", ({ id, text } = {}, cb) => {
@@ -4140,6 +4176,91 @@ function djHandlers(socket, c) {
     i = parseInt(i); const q = dj.queue[i];
     if (!q || !(c.admin || q.by === c.nick)) return cb && cb({ ok: false });
     dj.queue.splice(i, 1); djEmit(); cb && cb({ ok: true });
+  });
+}
+
+// ================== 🔔 Actividad en tus publicaciones ==================
+// Comentarios y ❤️ en tus publicaciones de Comunidad: te llegan en vivo y, si no estabas, te esperan para cuando entres.
+const ACT_MAX = 40;
+const actUnread = (p) => (p?.act || []).filter((x) => x.at > (p.actSeen || 0));
+function actAdd(pkey, nick, item) {
+  if (!pkey || !nick) return;
+  const p = profK(pkey, nick); if (!p) return;
+  const list = (p.act ||= []);
+  list.unshift({ ...item, at: now() }); if (list.length > ACT_MAX) list.length = ACT_MAX;
+  profDirty.add(pkey);
+  const o = onlineOf(pkey);
+  if (o) io.to(o.id).emit("act", { unread: actUnread(p).length, item: list[0] });
+}
+function actHandlers(socket, c) {
+  socket.on("act-count", (_, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const un = actUnread(profiles.get(c.pkey));
+    cb({ unread: un.length, items: un.slice(0, 10) });
+  });
+  socket.on("act-get", (_, cb) => {
+    if (typeof cb !== "function" || !c.pkey) return;
+    const p = profiles.get(c.pkey);
+    const seen = p?.actSeen || 0;
+    if (p) { p.actSeen = now(); profDirty.add(c.pkey); }
+    cb({ items: (p?.act || []).slice(0, ACT_MAX), seen });
+  });
+  socket.on("muro-one", (id, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const p = muroById.get(String(id || ""));
+    const v = p && postView(p, c);
+    cb(v ? { ok: true, post: v } : { ok: false, error: "Esa publicación ya no está." });
+  });
+}
+
+// ================== 📝 Audios a texto (Groq Whisper) ==================
+// Solo cuando alguien lo pide tocando "📝 Texto". El texto queda en memoria (no en la base) para no repetir el pedido.
+const trCache = new Map(), trPending = new Map();
+const WHISPER_JUNK = /amara\.org|subt[ií]tulos (realizados|por|hechos)|gracias por ver el video|suscr[ií]bete/i;
+async function transcribeMedia(it) {
+  const t0 = it.type.split(";")[0];
+  const ext = /mp4|m4a|aac/.test(t0) ? "m4a" : /ogg/.test(t0) ? "ogg" : /mpeg|mp3/.test(t0) ? "mp3" : /wav/.test(t0) ? "wav" : "webm";
+  const fd = new FormData();
+  fd.append("file", new Blob([it.buf], { type: t0 }), "audio." + ext);
+  fd.append("model", "whisper-large-v3-turbo");
+  fd.append("language", "es");
+  fd.append("response_format", "json");
+  fd.append("temperature", "0");
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { Authorization: "Bearer " + GROQ_KEY }, body: fd, signal: ctl.signal });
+    if (!r.ok) throw new Error("Groq respondió " + r.status);
+    const j = await r.json();
+    let text = String(j.text || "").trim();
+    if (!text || (WHISPER_JUNK.test(text) && text.length < 90)) text = "";
+    return text;
+  } finally { clearTimeout(tm); }
+}
+function trHandlers(socket, c) {
+  socket.on("transcribe", async ({ id } = {}, cb) => {
+    if (typeof cb !== "function" || !c.nick) return;
+    const m = messages.get(String(id || ""));
+    if (!m?.mu?.audio) return cb({ ok: false, error: "Ese audio ya no está disponible." });
+    if (m.chat === "private" && c.nick !== m.from && c.nick !== m.to) return cb({ ok: false, error: "No podés ver ese audio." });
+    if (m.chat === "mods" && !c.admin) return cb({ ok: false, error: "No podés ver ese audio." });
+    const mid = m.mu.audio.slice(3);
+    if (trCache.has(mid)) return cb({ ok: true, text: trCache.get(mid) });
+    const it = mediaStore.get(mid);
+    if (!it) return cb({ ok: false, error: "Ese audio ya no está disponible." });
+    if (!GROQ_KEY) return cb({ ok: false, error: "La transcripción necesita la IA activada (GROQ_API_KEY en Render)." });
+    if (!trPending.has(mid)) {
+      if (tooMany("tr", c.pkey || c.ip, 15, 10 * 60000)) return cb({ ok: false, error: "Pediste muchas transcripciones seguidas. Probá en un ratito." });
+      if (tooMany("tr-all", "todos", 400, 3600e3)) return cb({ ok: false, error: "Hay muchos pedidos de transcripción ahora. Probá en un rato." });
+      trPending.set(mid, transcribeMedia(it).finally(() => trPending.delete(mid)));
+    }
+    try {
+      const text = await trPending.get(mid);
+      trCache.set(mid, text); if (trCache.size > 800) trCache.delete(trCache.keys().next().value);
+      cb({ ok: true, text });
+    } catch (e) {
+      console.error("Transcripción:", e.message);
+      cb({ ok: false, error: "No se pudo transcribir ahora. Probá de nuevo en un rato." });
+    }
   });
 }
 
