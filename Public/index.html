@@ -118,7 +118,13 @@
 
   #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #title { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); font-weight: 700; display: flex; align-items: center; gap: 10px; }
-  #titleText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #titleText { flex: 1; min-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* celus angostos con la columna abierta: las piezas ya se ven en la columna, así el nombre de la sala entra */
+  @media (max-width: 480px) {
+    #app:not(.side-off) #pzChip { display: none; }
+    #title { gap: 6px; padding: 8px 10px; }
+    #title button { padding-left: 6px; padding-right: 6px; }
+  }
   #titleSub { color: var(--muted); font-weight: 400; font-size: 13px; }
   #connBar { background: var(--accent); color: var(--accent-text); font-size: 13px; font-weight: 700; padding: 6px 12px; text-align: center; }
   /* Modo pantalla completa: solo el chat */
@@ -159,6 +165,19 @@
   .dj-row { display: flex; align-items: center; gap: 6px; font-size: 13.5px; padding: 6px 2px; border-bottom: 1px solid var(--border); }
   .dj-row.now { color: var(--accent); font-weight: 700; }
   #sheet .dj-x { margin: 0 0 0 auto; width: auto; background: none; border: 0; color: var(--muted); padding: 2px 8px; }
+  .v-row { display: flex; gap: 6px; margin-top: 4px; }
+  .v-row button { background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid var(--border); color: inherit; border-radius: 14px; padding: 3px 10px; font-size: 12.5px; font-weight: 700; }
+  .v-row button:disabled { opacity: .6; }
+  .v-tr { margin-top: 6px; padding: 7px 9px; border-left: 3px solid var(--accent); background: #0002; border-radius: 6px; font-size: 14px; line-height: 1.4; white-space: pre-wrap; }
+  .v-tr.err { border-left-color: #e5484d; font-size: 13px; }
+  #muroActBtn { display: block; width: calc(100% - 16px); margin: 8px; padding: 9px 12px; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 10px; font-weight: 800; font-size: 14px; text-align: left; }
+  #muroActBtn[hidden] { display: none; }
+  #sheet .act-row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; margin: 0; color: var(--text); padding: 9px 4px; font-size: 14px; }
+  #sheet .act-row.new { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .act-row small { display: block; color: var(--muted); margin-top: 2px; }
+  .notice.act-link { cursor: pointer; text-decoration: underline dotted; }
+  .mpost.flash { animation: postflash 1.6s ease; }
+  @keyframes postflash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } }
   .lost-media { font-size: 13px; font-style: italic; opacity: .7; padding: 6px 2px; }
   #newsWrap { position: relative; height: 0; z-index: 6; }
   #newsBar { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; align-items: center; gap: 8px; background: #0b0b0b; color: #f2f2f2; border: 1px solid var(--accent); border-radius: 12px; padding: 7px 10px; font-size: 13.5px; text-align: left; box-shadow: 0 6px 20px #0008; animation: newsIn .35s cubic-bezier(.2,1.3,.4,1); }
@@ -726,6 +745,7 @@
     </div>
     <div id="messages"></div>
     <div id="muroView" hidden>
+      <button type="button" id="muroActBtn" hidden></button>
       <form id="muroForm" class="mcompose">
         <textarea id="muroText" rows="2" maxlength="2000" placeholder="¿Qué querés compartir con la comunidad?"></textarea>
         <div id="muroPrev" class="mprev" hidden><img id="muroPrevImg" alt=""><button type="button" id="muroPrevX" title="Quitar foto">✕</button></div>
@@ -934,6 +954,7 @@ function rulesHTML(card, mode) {
       <li><b>Nada de contenido sexual ni violento explícito.</b></li>
       <li><b>🤫 Confesiones es anónima para los demás,</b> pero los moderadores pueden ver quién escribió, para cuidar el espacio.</li>
       <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Tocá el nombre de cualquier persona para bloquearla (no se van a leer entre ustedes) o reportarla.</li>
+      <li><b>🔒 Tus privados son privados.</b> Los mensajes privados no se guardan y nadie del equipo (ni el dueño ni los moderadores) los puede leer.</li>
     </ol>
     <p class="sub" style="margin:0">🤖 El bot <b>Fastidio</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
     ${mode === "accept"
@@ -1011,9 +1032,10 @@ function linkify(node, text) {
   node.append(text.slice(last));
 }
 const userInfo = (n) => online.find((u) => u.nick === n);
+const BASE_TITLE = document.title; // el título completo (el que lee Google) se mantiene hasta entrar al chat
 function updateTitle() {
   const total = Object.values(unread).reduce((a, b) => a + (b || 0), 0);
-  document.title = total ? `(${total}) Gente Rota` : "Gente Rota";
+  document.title = !me ? BASE_TITLE : total ? `(${total}) Gente Rota` : "Gente Rota";
   updateSideBtn();
 }
 
@@ -1136,6 +1158,7 @@ function enterChat(res) {
     setJoinBusy(false); joinWaiting = false; $("err").textContent = "";
     restoring = false;
     setTimeout(armBack, 0);
+    setTimeout(actCheck, 1500);
     if (res.token) setSess({ nick: res.nick, token: res.token });
     if (me !== res.nick) loadHist(res.nick); // la pestaña se recargó: recuperamos lo que ya habías visto
     me = res.nick; online = res.users;
@@ -1352,7 +1375,7 @@ function setPinned(text) {
 }
 function renderMessage(m) {
   if (m.type === "sys") return el("div", "sys", m.text);
-  if (m.type === "notice") return el("div", "notice " + (m.kind || ""), m.text);
+  if (m.type === "notice") { const n = el("div", "notice " + (m.kind || "") + (m.act ? " act-link" : ""), m.text); if (m.act) n.onclick = (e) => { e.stopPropagation(); openActivity(); }; return n; }
   if (m.type === "announce") { const d = el("div", "announce", "📢 " + m.text); d.append(el("small", null, "Anuncio de moderación · " + hhmm(m.ts))); return d; }
   if (isBlocked(m.from)) return null;
   const mine = isMine(m);
@@ -1407,7 +1430,8 @@ function renderMessage(m) {
   }
   else if (m.image || m.gif) {
     d.classList.add("has-media");
-    const img = el("img", "media"); img.src = m.image || m.gif; img.loading = "lazy"; img.alt = m.gif ? "GIF" : "Foto";
+    const img = el("img", "media"); img.loading = "lazy"; img.decoding = "async"; img.src = m.image || m.gif; img.alt = m.gif ? "GIF" : "Foto";
+    img.onerror = () => { if (img.dataset.gone) return; img.dataset.gone = "1"; img.replaceWith(el("div", "lost-media", m.gif ? "🎞️ El GIF ya no está disponible" : "📷 Esta foto ya no está disponible")); };
     img.onload = () => { const box = $("messages"); if (box.scrollHeight - box.scrollTop - box.clientHeight < 400) box.scrollTop = box.scrollHeight; };
     b.append(img);
     if (m.text) { const cap = el("div", "caption"); linkify(cap, m.text); b.append(cap); }
@@ -1435,7 +1459,8 @@ function renderMessage(m) {
 function renderMessages() {
   const box = $("messages");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  box.replaceChildren(...(history[current] || []).map(renderMessage).filter(Boolean));
+  box.replaceChildren(...(isRoom(current) ? [] : [el("div", "sys privnote", "🔒 Este chat es privado: no se guarda y nadie del equipo lo puede leer.")]),
+    ...(history[current] || []).map(renderMessage).filter(Boolean));
   if (selMsg) { const n = box.querySelector(`.msg[data-id="${CSS.escape(selMsg.id)}"]`); if (n && box.dataset.chat === current) n.classList.add("sel"); else clearSel(); }
   if (atBottom || box.dataset.chat !== current) box.scrollTop = box.scrollHeight;
   box.dataset.chat = current;
@@ -1484,6 +1509,9 @@ function dataToBlob(data) {
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   return new Blob([arr], { type });
 }
+const SPEEDS = [1, 1.5, 2];
+let voiceSpeed = (() => { try { const v = +localStorage.getItem("gr-speed"); return SPEEDS.includes(v) ? v : 1; } catch { return 1; } })();
+const speedLabel = () => "⏩ " + String(voiceSpeed).replace(".", ",") + "x";
 function voiceEl(m) {
   const key = m.id || m.audio.length + ":" + m.audio.slice(-48);
   if (voiceCache.has(key)) return voiceCache.get(key);
@@ -1502,7 +1530,29 @@ function voiceEl(m) {
   };
   au.onerror = fail;
   if (type && au.canPlayType(type) === "") fail(); else au.src = url;
+  au.addEventListener("play", () => { au.playbackRate = voiceSpeed; });
   w.append(au);
+  // ⏩ velocidad y 📝 texto (como en WhatsApp)
+  const row = el("div", "v-row");
+  const sp = el("button", "v-speed", speedLabel()); sp.type = "button"; sp.title = "Velocidad de reproducción";
+  sp.onclick = (e) => { e.stopPropagation(); const i = SPEEDS.indexOf(voiceSpeed); voiceSpeed = SPEEDS[(i + 1) % SPEEDS.length]; try { localStorage.setItem("gr-speed", voiceSpeed); } catch {} document.querySelectorAll("audio.voice").forEach((a) => { a.playbackRate = voiceSpeed; }); document.querySelectorAll(".v-speed").forEach((b) => { b.textContent = speedLabel(); }); };
+  row.append(sp);
+  if (m.id) {
+    const tb = el("button", "v-trbtn", "📝 Texto"); tb.type = "button"; tb.title = "Ver lo que dice el audio";
+    const out = el("div", "v-tr"); out.hidden = true;
+    tb.onclick = (e) => {
+      e.stopPropagation();
+      if (m.tr != null) { out.hidden = !out.hidden; tb.textContent = out.hidden ? "📝 Texto" : "📝 Ocultar"; return; }
+      tb.disabled = true; tb.textContent = "⏳ Transcribiendo…";
+      socket.emit("transcribe", { id: m.id }, (r) => {
+        tb.disabled = false;
+        if (!r?.ok) { tb.textContent = "📝 Texto"; out.hidden = false; out.classList.add("err"); out.textContent = "⚠️ " + (r?.error || "No se pudo transcribir."); return; }
+        m.tr = r.text; out.classList.remove("err"); out.textContent = r.text || "(no se entiende ninguna palabra)";
+        out.hidden = false; tb.textContent = "📝 Ocultar";
+      });
+    };
+    row.append(tb); w.append(row, out);
+  } else w.append(row);
   voiceCache.set(key, w);
   return w;
 }
@@ -1516,11 +1566,34 @@ function push(chat, m) {
   (history[chat] ||= []).push(m);
   if (m.id) byId.set(m.id, m);
   if (history[chat].length > 300) { const old = history[chat].shift(); if (old.id) byId.delete(old.id); if (old.audio) forgetVoice(old); }
-  if (chat !== current || document.hidden) if (!["sys"].includes(m.type) && !isBlocked(m.from)) unread[chat] = (unread[chat] || 0) + 1;
-  if (chat === current) renderMessages();
-  renderUsers();
+  let badge = false;
+  if (chat !== current || document.hidden) if (!["sys"].includes(m.type) && !isBlocked(m.from)) { unread[chat] = (unread[chat] || 0) + 1; badge = true; }
+  if (chat === current) appendMessage(m);
+  if (badge) renderUsersSoon();
   saveHistSoon();
 }
+// ---------- ⚡ Rendimiento: agregar/actualizar solo lo que cambió (antes se redibujaba todo el chat por cada mensaje) ----------
+function appendMessage(m) {
+  const box = $("messages");
+  if (box.dataset.chat !== current || box.style.display === "none") return renderMessages();
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const node = renderMessage(m); if (node) box.append(node);
+  const max = (history[current] || []).length; // el historial se recorta: la pantalla también
+  const note = box.firstElementChild?.classList.contains("privnote") ? 1 : 0;
+  while (box.children.length - note > max && box.children[note]) box.children[note].remove();
+  if (atBottom || isMine(m)) box.scrollTop = box.scrollHeight;
+}
+function refreshMsg(m) {
+  if (!(history[current] || []).includes(m)) return;
+  const box = $("messages"), old = m.id && box.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`);
+  if (!old) return renderMessages();
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const nu = renderMessage(m);
+  if (nu) { if (old.classList.contains("sel")) nu.classList.add("sel"); old.replaceWith(nu); } else old.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+let usersRaf = 0;
+function renderUsersSoon() { if (!usersRaf) usersRaf = requestAnimationFrame(() => { usersRaf = 0; renderUsers(); }); }
 
 // ---------- Mensajes estilo WhatsApp: mantener apretado = seleccionar · deslizar a la derecha = responder ----------
 let selMsg = null;
@@ -1874,6 +1947,7 @@ $("mediaCancel").onclick = clearMedia;
 $("attachBtn").onclick = (e) => { e.stopPropagation(); $("emojiPanel").classList.remove("open"); $("attachMenu").hidden = !$("attachMenu").hidden; };
 $("pickPhoto").onclick = () => { $("attachMenu").hidden = true; if (needPhotoPerm()) return; $("fileInput").click(); };
 const MAX_BYTES = 2.4 * 1024 * 1024;
+const CHAT_PHOTO_BYTES = 450 * 1024; // las fotos del chat se achican hasta ~450 KB: se ven igual en el celu y cargan mucho más rápido
 const readAsDataURL = (f) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(f); });
 const dataBytes = (d) => Math.ceil((d.length - d.indexOf(",") - 1) * 3 / 4);
 async function shrink(file, maxBytes = MAX_BYTES) {
@@ -1901,7 +1975,7 @@ $("fileInput").onchange = async () => {
     if (f.type === "image/gif") {
       if (f.size > MAX_BYTES) return push(current, { type: "notice", kind: "warn", text: "Ese GIF pesa más de 2,4 MB. Probá con uno más liviano o buscalo con 🔍." });
       setMedia({ image: await readAsDataURL(f) });
-    } else setMedia({ image: await shrink(f) });
+    } else setMedia({ image: await shrink(f, CHAT_PHOTO_BYTES) });
   } catch { push(current, { type: "notice", kind: "warn", text: "No pude abrir esa imagen." }); }
 };
 // Buscador de GIFs (GIPHY)
@@ -2192,7 +2266,7 @@ function openCustomGame(type = "rotos") {
   }
   const err = el("div", "err"); sh.append(err);
   sbtn(sh, "▶️ Empezar", () => {
-    socket.emit("game-custom", collect(), (r) => { if (r?.ok) { closeSheet(); const gr = GAME_ROOM_OF[o.type]; if (gr && current !== gr) openChat(gr); } else err.textContent = r?.error || "No se pudo empezar."; });
+    socket.emit("game-custom", collect(), (r) => { if (r?.ok) { closeSheet(); const gr = GAME_ROOM_OF[type]; if (gr && current !== gr) openChat(gr); } else err.textContent = r?.error || "No se pudo empezar."; });
   }, "primary");
   sbtn(sh, "Cancelar", closeSheet);
 }
@@ -2260,9 +2334,9 @@ function openPollSheet(prefill) {
   setTimeout(() => q.focus(), 50);
 }
 $("pickPoll").onclick = (e) => { e.stopPropagation(); openPollSheet(); };
-socket.on("poll-update", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; if ((history[current] || []).includes(m)) renderMessages(); });
-socket.on("poll-end", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; m.poll.ended = true; if ((history[current] || []).includes(m)) renderMessages(); });
-setInterval(() => { if ((history[current] || []).some((m) => m.poll && !m.poll.ended)) renderMessages(); }, 15000);
+socket.on("poll-update", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; refreshMsg(m); });
+socket.on("poll-end", ({ id, counts }) => { const m = byId.get(id); if (!m?.poll) return; m.poll.counts = counts; m.poll.ended = true; refreshMsg(m); });
+setInterval(() => { for (const m of history[current] || []) if (m.poll && !m.poll.ended) refreshMsg(m); }, 15000);
 
 // ---------- Duelos ----------
 function sheetOpen(kind, title, sub) {
@@ -2843,6 +2917,64 @@ socket.on("muro-upd", (p) => { if (muroLoaded) muroUpdate(p); });
 socket.on("muro-del", (id) => {
   const w = muroCards.get(id); if (w) { w.card.remove(); muroCards.delete(id); muroPosts.delete(id); muroEmpty(); }
 });
+// ================== 🔔 Actividad en tus publicaciones ==================
+let actN = 0; const actLive = new Set(); // lo que ya se avisó en vivo en esta pestaña
+const actKey = (x) => `${x.at}|${x.by}|${x.k}`;
+const actText = (x) => x.k === "like" ? `❤️ A ${x.by} le gustó tu publicación${x.snip ? ` «${x.snip}»` : ""}`
+  : x.k === "com2" ? `💬 ${x.by} también comentó en la publicación de ${x.owner}: «${x.text}»`
+  : `💬 ${x.by} comentó tu publicación: «${x.text}»`;
+function setActN(n) {
+  actN = n;
+  const b = $("muroActBtn"); b.hidden = !n; b.textContent = `🔔 Tenés ${n} novedad${n === 1 ? "" : "es"} en tus publicaciones · ver`;
+  if (current !== MURO) { unread[MURO] = n || 0; renderUsersSoon(); }
+}
+function actCheck() {
+  socket.emit("act-count", null, (r) => {
+    if (!r) return; setActN(r.unread);
+    const fresh = r.items.filter((x) => !actLive.has(actKey(x)));
+    if (!fresh.length) return;
+    const more = r.unread - (r.items.length - fresh.length) - 1;
+    push(current, { type: "notice", kind: "help", act: true, text: `🔔 Novedades en tus publicaciones: ${actText(fresh[0])}${more > 0 ? ` (y ${more} más)` : ""}. Tocá para ver.` });
+  });
+}
+socket.on("act", ({ unread: n, item }) => {
+  actLive.add(actKey(item));
+  setActN(n); beep(760);
+  const t = actText(item);
+  if (current === MURO && !document.hidden) muroToast(t);
+  else push(current, { type: "notice", kind: "help", act: true, text: t + " · tocá para ver" });
+  notify("Comunidad", t);
+});
+function openActivity() {
+  socket.emit("act-get", null, (r) => {
+    setActN(0);
+    const sh = sheetOpen("act", "🔔 Actividad en tus publicaciones", "Comentarios y ❤️ en lo que publicaste en Comunidad (y en las que comentaste).");
+    if (!r?.items?.length) sh.append(el("div", "stline", "Todavía no hay nada. ¡Publicá algo en 📰 Comunidad!"));
+    for (const x of r?.items || []) {
+      const row = el("button", "act-row" + (x.at > r.seen ? " new" : "")); row.type = "button";
+      row.append(el("span", "act-t", actText(x)), el("small", null, ago(x.at)));
+      row.onclick = () => { closeSheet(); openPost(x.post); };
+      sh.append(row);
+    }
+    sbtn(sh, "Cerrar", closeSheet);
+  });
+}
+// Abre Comunidad y lleva a esa publicación (aunque sea vieja y no esté cargada)
+function openPost(id) {
+  if (current !== MURO) openChat(MURO);
+  const go = (tries = 0) => {
+    const w = muroCards.get(id);
+    if (w) { w.card.scrollIntoView({ behavior: "smooth", block: "start" }); w.card.classList.remove("flash"); void w.card.offsetWidth; w.card.classList.add("flash"); return; }
+    if (!muroLoaded && tries < 20) return setTimeout(() => go(tries + 1), 150);
+    socket.emit("muro-one", id, (r) => {
+      if (!r?.ok) return muroToast(r?.error || "Esa publicación ya no está.");
+      muroPosts.set(r.post.id, r.post); $("muroFeed").prepend(muroCard(r.post)); muroEmpty(); setTimeout(() => go(99), 50);
+    });
+  };
+  go();
+}
+$("muroActBtn").onclick = openActivity;
+
 socket.on("muro-notif", ({ text }) => {
   beep(760);
   if (current === MURO && !document.hidden) return muroToast(text);
@@ -3514,19 +3646,25 @@ socket.on("clear", (p) => { const chat = "#" + (p?.room || "general"); history[c
 socket.on("reactions", ({ id, reactions }) => {
   const m = byId.get(id); if (!m) return;
   m.reactions = reactions;
-  if ((history[current] || []).includes(m)) renderMessages();
+  refreshMsg(m);
 });
 socket.on("edited", ({ id, text }) => {
   const m = byId.get(id); if (!m) return;
   m.text = text; m.edited = true;
-  if ((history[current] || []).includes(m)) renderMessages();
+  refreshMsg(m);
 });
 socket.on("deleted", ({ id, byMod }) => {
   const m = byId.get(id); if (!m) return;
   m.deleted = true; m.deletedByMod = byMod; m.text = ""; m.reactions = {};
-  if ((history[current] || []).includes(m)) renderMessages();
+  refreshMsg(m);
 });
-socket.on("users", (list) => { online = list; renderUsers(); renderMe(); if (current !== BOARD) renderMessages(); });
+let usersSig = "";
+socket.on("users", (list) => {
+  online = list; renderUsers(); renderMe();
+  // los mensajes muestran colores/títulos/🏆/🎂 de cada uno: solo se redibujan si eso cambió
+  const sig = list.map((u) => `${u.nick}|${u.champ ? 1 : 0}|${u.cumple ? 1 : 0}|${u.bd || ""}|${u.ck ? JSON.stringify(u.ck) : ""}`).sort().join("~");
+  if (sig !== usersSig) { usersSig = sig; if (current !== BOARD) renderMessages(); }
+});
 socket.on("user-joined", (n) => push(GENERAL, { type: "sys", text: `${n} entró` }));
 socket.on("user-left", (n) => {
   clearTyping(n);
