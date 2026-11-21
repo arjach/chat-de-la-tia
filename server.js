@@ -201,6 +201,10 @@ const HELP_TEXT =
 const clients = new Map(); // socket.id -> datos del usuario
 const users = new Map();   // apodo en minúsculas -> socket.id
 const bans = new Map();    // ip -> vencimiento (ms)
+// 📱 Dispositivos vinculados: cada celu/PC tiene su "dev" (id guardado en el navegador). Los que la persona vinculó
+// con un código comparten un id de grupo, y el chat los trata como el MISMO dispositivo (mismo perfil, mismo apodo).
+const devLinks = new Map(); // dev del aparato -> id del grupo ("g…")
+const canonDev = (d) => (d && devLinks.get(d)) || d;
 const reports = new Map(); // apodo minúsc -> Map(reportante -> ts)
 const messages = new Map(); // id -> { chat, from, to, reactions: {emoji: Set} }
 let pinned = "";
@@ -531,15 +535,26 @@ function runCommand(c, id, text, room = "general") {
   }
   if (cmd === "radio") {
     if (!arg) { io.to(id).emit("dj-open", "radio"); return; }
-    if (!c.owner) return notice(id, "La radio la configura el dueño.", "warn");
+    if (!c.owner) return notice(id, "📻 La radio la configura el dueño. ¿Querés salir al aire? Escribí /radio ayuda (o tocá 🎙️ en la barra de la radio).", "help");
+    if (/^(off|no|borrar)$/i.test(arg.trim())) { radio = { url: "", name: "" }; dirty(); djEmit(); logMod(c.nick, "📻 sacó la radio"); return notice(id, "📻 Radio desactivada.", "mod"); }
+    if (/^(config|configurar)$/i.test(arg.trim())) { io.to(id).emit("radio-config"); return; }
+    // "/radio <link> Nombre" (link directo o de Caster.fm). Para pegar el código del reproductor, mejor 👑 Panel → 📻 Configurar radio.
     const [u, ...nm] = arg.split(" ");
-    if (/^(off|no|borrar)$/i.test(u)) { radio = { url: "", name: "" }; dirty(); djEmit(); logMod(c.nick, "📻 sacó la radio"); return notice(id, "📻 Radio desactivada.", "mod"); }
-    if (!/^https:\/\/[^\s]+$/i.test(u)) return notice(id, "Uso: /radio https://stream.zeno.fm/tucodigo Nombre de la radio · /radio off", "warn");
-    radio = { url: u.slice(0, 300), name: nm.join(" ").slice(0, 40) || "Radio Gente Rota" }; dirty(); djEmit();
-    logMod(c.nick, `📻 configuró la radio: ${radio.name}`);
-    return notice(id, `📻 Listo: «${radio.name}» configurada. Todos la van a ver en el botón 📻.`, "mod");
+    const r = radioSet(c, u, nm.join(" "));
+    return notice(id, r.ok ? r.msg : r.error + "\nUso: /radio <link> Nombre · /radio off · o 👑 Panel → 📻 Configurar radio", r.ok ? "mod" : "warn");
   }
   if (cmd === "invitar") { io.to(id).emit("open-invite"); return; }
+  if (cmd === "novedad") return chlogCommand(c, id, arg);
+  if (cmd === "novedades") { io.to(id).emit("open-changelog"); return; }
+  if (cmd === "tiempo" || cmd === "descanso" || cmd === "limite" || cmd === "límite") { io.to(id).emit("open-well"); return; }
+  // 👑 Levantar un descanso voluntario (por si alguien se equivocó). Solo el dueño.
+  if (cmd === "quitardescanso") {
+    if (!c.owner) return notice(id, "Solo el dueño puede levantar un descanso.", "warn");
+    const n = arg.trim().toLowerCase(); if (!n) return notice(id, "Uso: /quitardescanso Apodo", "warn");
+    let k = 0; for (const [key, b] of breaks) if (b.nick.toLowerCase() === n || key === "nick:" + n) { breaks.delete(key); k++; }
+    if (k) dirty();
+    return notice(id, k ? `🌿 Listo: ${arg.trim()} ya puede volver a entrar.` : `No encontré un descanso activo de ${arg.trim()}.`, "mod");
+  }
   if (cmd === "piezas") { const p = profiles.get(c.pkey); return notice(id, `🧩 Tenés ${p?.pz || 0} piezas. Gastalas en ✏️ Mi perfil → 🛒 Tienda.`, "help"); }
   if (cmd === "sintitulo") {
     if (!c.admin) return notice(id, "No tenés permiso para usar ese comando.", "warn");
@@ -565,8 +580,8 @@ function runCommand(c, id, text, room = "general") {
     return;
   }
   if (cmd === "ayuda") {
-    let help = "Comandos: /ayuda · /reglas · /logros (los de más nivel) · /admin <clave> · /juegos (en las salas de Juegos)";
-    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
+    let help = "Comandos: /ayuda · /reglas · /novedades (lo nuevo del chat) · /tiempo (tu límite y descanso) · /logros (los de más nivel) · /admin <clave> · /juegos (en las salas de Juegos)";
+    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /quitardescanso <apodo> (si alguien se bloqueó por error) · /novedad 📻 | Título | Texto (anunciar un cambio) · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
       "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué) · /liberar Apodo (suelta un apodo 💤 trabado)" +
@@ -1136,6 +1151,63 @@ const AI_ON = !!(GROQ_KEY || GEMINI_KEY);
 const TOPICS = ["historia argentina", "geografía del mundo", "ciencia", "fútbol", "música argentina", "cine", "series", "videojuegos", "animales",
   "comida", "literatura", "historia universal", "deportes", "tecnología", "cuerpo humano", "espacio y astronomía", "rock nacional", "mitología", "arte", "idiomas"];
 const recentQs = [];
+// Subtemas: cada pregunta de un tema sale de un rincón distinto (si no, la IA siempre elige "la más famosa").
+const SUBTOPICS = {
+  "historia argentina": ["pueblos originarios", "época colonial", "próceres y sus apodos", "inmigración", "inventos argentinos", "ciudades y provincias", "costumbres de antes", "símbolos patrios", "personajes populares", "historia del tango", "historia del fútbol argentino", "historia de la TV argentina"],
+  "geografía del mundo": ["capitales", "ríos", "montañas", "islas", "desiertos", "banderas", "países chicos", "lagos", "ciudades curiosas", "límites entre países", "volcanes", "océanos y mares", "idiomas de cada país", "monedas"],
+  "ciencia": ["química cotidiana", "física simple", "elementos de la tabla", "inventos", "científicos famosos", "plantas", "microbios", "el clima", "electricidad", "luz y colores", "sonido", "geología", "unidades de medida"],
+  "fútbol": ["mundiales", "apodos de clubes", "estadios", "camisetas", "reglas del juego", "jugadores legendarios", "clubes europeos", "selecciones", "copas sudamericanas", "posiciones y jugadas", "clásicos"],
+  "música argentina": ["tango", "folklore", "cumbia", "cuarteto", "pop", "apodos de músicos", "instrumentos", "festivales", "bandas de los 80", "solistas"],
+  "cine": ["animación", "directores", "personajes famosos", "cine argentino", "premios Oscar muy conocidos", "frases célebres", "sagas", "efectos especiales", "cine de terror", "comedias", "películas de los 80 y 90"],
+  "series": ["sitcoms", "series argentinas", "animadas", "policiales", "de fantasía", "personajes", "ciudades donde transcurren", "series de los 90", "telenovelas", "dibujitos clásicos"],
+  "videojuegos": ["Nintendo", "consolas", "personajes", "juegos de los 90", "arcade", "juegos de pelea", "juegos de deportes", "estudios y empresas", "juegos de celular", "juegos online"],
+  "animales": ["mamíferos", "aves", "insectos", "animales marinos", "reptiles", "animales de Argentina", "crías y nombres de crías", "récords animales", "comportamiento", "dinosaurios", "mascotas", "animales venenosos"],
+  "comida": ["platos del mundo", "comida argentina", "frutas", "verduras", "especias", "bebidas", "postres", "quesos", "origen de comidas", "panes", "golosinas", "cocina italiana", "cocina asiática"],
+  "literatura": ["escritores argentinos", "personajes de libros", "poesía", "cuentos infantiles", "mitos y leyendas", "historietas", "seudónimos", "clásicos universales", "ciencia ficción", "terror"],
+  "historia universal": ["Egipto", "Grecia", "Roma", "Edad Media", "exploradores", "inventos", "imperios", "guerras mundiales", "revoluciones", "reyes y reinas", "arqueología", "la Guerra Fría"],
+  "deportes": ["tenis", "básquet", "rugby", "boxeo", "automovilismo", "Juegos Olímpicos", "natación", "hockey", "deportes raros", "reglas", "apodos de deportistas", "golf", "ciclismo"],
+  "tecnología": ["internet", "celulares", "empresas tech", "inventores", "computadoras viejas", "redes sociales", "siglas", "robots", "inteligencia artificial", "logos y marcas", "electrodomésticos"],
+  "cuerpo humano": ["huesos", "órganos", "sentidos", "sangre", "músculos", "dientes", "cerebro", "piel", "nombres científicos de partes", "curiosidades"],
+  "espacio y astronomía": ["planetas", "lunas", "estrellas", "constelaciones", "astronautas", "misiones espaciales", "el Sol", "cometas y asteroides", "galaxias", "fenómenos"],
+  "rock nacional": ["bandas de los 80", "bandas de los 90", "solistas", "apodos", "discos MUY conocidos", "recitales históricos", "rock barrial", "integrantes de bandas", "canciones himno"],
+  "mitología": ["griega", "nórdica", "egipcia", "romana", "guaraní", "criaturas", "héroes", "dioses del mar", "leyendas argentinas", "mitología japonesa"],
+  "arte": ["pintores", "esculturas", "museos", "movimientos artísticos", "arquitectura", "pintores argentinos", "colores", "técnicas", "fotografía", "obras famosas"],
+  "idiomas": ["origen de palabras", "lunfardo", "palabras de otros idiomas", "alfabetos", "refranes", "idiomas del mundo", "palabras raras del español", "abreviaturas", "gentilicios"],
+  "cultura general": ["inventos", "marcas", "países", "animales", "comida", "deportes", "música", "cine", "ciencia", "cuerpo humano", "historia", "objetos cotidianos", "récords"],
+};
+// Enfoques: obligan a variar el TIPO de pregunta, no solo el tema.
+const Q_ANGLES = ["un récord (el más grande / rápido / chico…)", "el origen de un nombre o una palabra", "un apodo conocido", "algo que sea \"el único\" en su tipo", "un lugar", "una persona conocida",
+  "un objeto o invento", "una costumbre", "un mito común que es falso (preguntá por lo verdadero)", "algo de la vida cotidiana", "una conexión con Argentina", "un color, forma o material",
+  "algo que casi nadie sabe pero que es fácil de confirmar", "una comparación (cuál de los dos…)", "un nombre científico o técnico simple"];
+// Memoria de preguntas de la IA: se guarda en la base (sobrevive a reinicios de Render) y descarta repetidas.
+const AIQ_KEY = "ia:trivia", AIQ_MAX = 600;
+const Q_STOP = new Set(["cual", "cuales", "como", "quien", "quienes", "donde", "cuando", "cuanto", "cuantos", "cuantas", "nombre", "llama", "llaman", "tiene", "tienen", "esta", "este", "estos", "esas", "esos", "sobre", "entre", "puede", "segun", "conoce", "conocido", "conocida", "famoso", "famosa", "unico", "unica", "pais", "para", "desde", "hasta", "porque", "tambien", "mismo", "misma"]);
+const qWords = (q) => new Set(plain(q).split(" ").filter((w) => w.length > 3 && !Q_STOP.has(w)));
+const aiqList = () => usedBags[AIQ_KEY] || []; // "tema¦respuesta¦pregunta"
+function aiqRemember(tema, answer, q) {
+  const arr = (usedBags[AIQ_KEY] ||= []);
+  arr.push([plain(tema).slice(0, 40), plain(answer).slice(0, 40), String(q).replace(/¦/g, " ").slice(0, 160)].join("¦"));
+  if (arr.length > AIQ_MAX) arr.splice(0, arr.length - AIQ_MAX);
+  dirty();
+}
+// ¿Ya salió? Misma respuesta (= casi seguro la misma pregunta con otras palabras) o pregunta casi igual.
+function aiqRepeated(answers, q, strictAnswers = true) {
+  const w = qWords(q);
+  for (const line of aiqList()) {
+    const [, a, oq] = line.split("¦");
+    if (strictAnswers && a && answers.some((x) => stripArt(x) === stripArt(a))) return true;
+    const ow = qWords(oq); if (!w.size || !ow.size) continue;
+    let inter = 0; for (const x of w) if (ow.has(x)) inter++;
+    if (inter / Math.min(w.size, ow.size) >= 0.75) return true;
+  }
+  return false;
+}
+// Respuestas ya usadas para ese tema (y algunas generales), para decirle a la IA que no las use
+function aiqUsedAnswers(tema) {
+  const t = plain(tema).slice(0, 40), mine = [], other = [];
+  for (const line of aiqList().slice().reverse()) { const [lt, a] = line.split("¦"); if (!a) continue; (lt === t ? mine : other).push(a); }
+  return [...new Set([...mine.slice(0, 80), ...other.slice(0, 25)])];
+}
 
 let aiLastError = "";
 let aiWorkingModel = "";
@@ -1225,6 +1297,19 @@ async function aiVerify(pregunta, answers) {
   return isCorrect(plain(a), answers) ? true : false;
 }
 async function aiQuestion(tema, userChosen = false) {
+  // Hasta 3 intentos: si sale repetida, pide otra con otro subtema/enfoque
+  for (let i = 0; i < 3; i++) {
+    const q = await aiQuestionOnce(tema, userChosen, i === 2);
+    if (q !== "rep") return q;
+  }
+  aiLastError = "a la IA solo se le ocurrían preguntas que ya salieron";
+  return null;
+}
+async function aiQuestionOnce(tema, userChosen, last) {
+  const subs = SUBTOPICS[plain(tema)] || SUBTOPICS[tema];
+  const sub = subs ? freshPick("sub:" + plain(tema), subs) : "";
+  const angle = freshPick("angle", Q_ANGLES);
+  const used = aiqUsedAnswers(tema);
   const prompt = `Generá UNA pregunta de trivia en español rioplatense sobre el tema "${tema}". La pregunta TIENE que ser sobre ese tema. Dificultad media, apta para un chat de amigos adultos.
 La respuesta tiene que ser corta (1 a 3 palabras), indiscutible y fácil de verificar. Nada de preguntas de opinión ni con varias respuestas válidas.
 MUY IMPORTANTE — la respuesta NO puede ser un año, una fecha ni un número de muchos dígitos (nadie sabe los años exactos y es aburrido ponerse a tipear números). PROHIBIDO empezar con "¿En qué año..." o "¿En qué fecha...". La respuesta tiene que ser un NOMBRE, un lugar, una persona, un animal, un objeto o una palabra (no un número). Solo se permite un número si es chico y adivinable (del 1 al 20, por ejemplo "cuántas patas tiene una araña").
@@ -1232,9 +1317,11 @@ Preferí preguntas CURIOSAS y entretenidas: cosas sorprendentes, récords, oríg
 REGLA DE ORO — SOLO datos que sepas con CERTEZA ABSOLUTA. Si dudás aunque sea un poco, elegí OTRA pregunta más segura. Es mejor una pregunta fácil y correcta que una original y equivocada.
 EVITÁ los datos que se confunden fácil (son la causa de los errores): qué álbum/canción es de qué artista, en qué película actuó alguien, qué autor escribió qué libro específico, estadísticas exactas, quién ganó qué premio. Si hacés una de esas, que sea SÚPER conocida (ej: "Thriller" es de Michael Jackson), nunca algo de nicho.
 TEMAS DE NICHO: si el tema es un videojuego, anime, serie, cómic o fandom ESPECÍFICO (ej: Summoners War, Genshin, un anime puntual) donde NO podés garantizar que el dato sea exacto, hacé la pregunta igual sobre ese tema, pero marcá "nicho": true y sé lo más conservador posible. Para temas de conocimiento general (geografía, ciencia, historia conocida, deportes mainstream) marcá "nicho": false.
-No repitas estas preguntas: ${recentQs.slice(-15).join(" | ") || "(ninguna)"}
+PARA VARIAR (obligatorio): ${sub ? `que sea sobre "${sub}" (dentro de ${tema}), ` : ""}con este enfoque: ${angle}. Si con ese enfoque no se te ocurre nada 100% seguro, usá otro enfoque, pero NO caigas en la pregunta más obvia del tema.
+Estas respuestas YA SALIERON, así que NO pueden ser la respuesta de tu pregunta: ${used.join(", ") || "(ninguna)"}
+Preguntas recientes (no repitas ni hagas parecidas): ${recentQs.slice(-10).join(" | ") || "(ninguna)"}
 Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["variantes válidas de la respuesta, sin tildes, en minúscula (si es un número, también escrito en letras)"],"nicho":true o false,"pista":"una pista corta que ayude a adivinar SIN decir la respuesta ni parte de ela","dato":"un dato curioso breve sobre la respuesta"}`;
-  const q = await aiCall(prompt, true, 0.5); // menos "creatividad" = menos inventos
+  const q = await aiCall(prompt, true, 0.6); // poca "creatividad" = menos inventos (la variedad la dan el subtema y el enfoque)
   if (!q) return null;
   if (!q.pregunta || !q.respuesta) { aiLastError = "la IA respondió algo incompleto"; return null; }
   // Red de seguridad: descartar preguntas de año/fecha o con respuesta de números largos (aburren y nadie las sabe)
@@ -1242,6 +1329,8 @@ Devolvé SOLO un JSON así: {"pregunta":"...","respuesta":"...","aceptadas":["va
   const esAnioOFecha = /^\s*(en|el|hacia|cerca de|alrededor de)?\s*(que\s+)?(a[ñn]o|fecha|siglo|d[ií]a)\b/i.test(String(q.pregunta)) || /^-?\d{3,}$/.test(plain(rawA).replace(/\D/g, "")) || /\b(1\d{3}|20\d{2})\b/.test(rawA);
   if (esAnioOFecha) { aiLastError = "pregunta de fecha descartada"; return null; }
   const answers = [...new Set([q.respuesta, ...(Array.isArray(q.aceptadas) ? q.aceptadas : [])].map((x) => plain(String(x))).filter(Boolean))];
+  // ¿Ya salió? (en el último intento solo se descarta si la PREGUNTA es casi igual: en temas chicos se repiten respuestas)
+  if (aiqRepeated(answers, q.pregunta, !last)) { aiLastError = "pregunta repetida"; return "rep"; }
   // ¿Es un tema de nicho (juego/anime/fandom) donde la IA puede equivocarse? Solo si el usuario eligió el tema.
   const niche = userChosen && q.nicho === true;
   // VERIFICACIÓN: en temas generales, otra consulta vuelve a responder en frío y descarta si no coincide.
@@ -1450,7 +1539,7 @@ function freshPick(key, arr, avoid = []) {
   return it;
 }
 // Lo último que inventó la IA en cada juego, para pedirle que no lo repita
-function aiSeen(key, item) { if (item) { (usedBags["ia:" + key] ||= []).push(String(item).slice(0, 80)); usedBags["ia:" + key] = usedBags["ia:" + key].slice(-40); dirty(); } return (usedBags["ia:" + key] || []).slice(-25); }
+function aiSeen(key, item) { if (item) { (usedBags["ia:" + key] ||= []).push(String(item).slice(0, 80)); usedBags["ia:" + key] = usedBags["ia:" + key].slice(-150); dirty(); } return (usedBags["ia:" + key] || []).slice(-60); }
 const freshPickN = (key, arr, n) => { const out = []; for (let i = 0; i < n && i < arr.length; i++) out.push(freshPick(key, arr, out)); return out; };
 
 function makeEngine(ROOM, KIND) {
@@ -1467,12 +1556,13 @@ function makeEngine(ROOM, KIND) {
     const t = tema || pick(TOPICS);
     const custom = triviaRound?.custom?.length ? triviaRound.custom.shift() : null;
     let q = custom ? { q: custom.q, shown: custom.a[0], answers: custom.a.map(plain).filter(Boolean), dato: "", ai: false, custom: true } : await aiQuestion(t, !!tema);
-    if (!q && !custom) q = await aiQuestion(t, !!tema); // un reintento (por si descartó una pregunta de fecha)
+    if (!q && !custom && !/ya salieron/.test(aiLastError)) q = await aiQuestion(t, !!tema); // un reintento (por si descartó una pregunta de fecha)
     if (!q) {
       q = bankQuestion();
       if (tema) gameSay(`⚠️ No pude hacer una pregunta de "${tema}": ${aiLastError}. Va una general.`);
     }
     recentQs.push(q.q); if (recentQs.length > 40) recentQs.shift();
+    if (!q.custom) aiqRemember(q.ai ? t : "banco", q.shown, q.q); // la IA no va a usar esta respuesta de nuevo
     const n = triviaRound ? `[${triviaRound.total - triviaRound.left + 1}/${triviaRound.total}] ` : "";
     const secs = triviaRound?.secs || 40;
     game = { type: "trivia", answers: q.answers, shown: q.shown, dato: q.dato, only: triviaRound?.duel ? [triviaRound.duel.a, triviaRound.duel.b] : null, excl: triviaRound?.creator || null,
@@ -2830,18 +2920,19 @@ io.on("connection", (socket) => {
     } catch (e) { console.error(`Error en "${ev}":`, e); }
   });
   const ip = realIp(socket.handshake.headers, socket.handshake.address);
-  const banHit = banFind(null, String(socket.handshake.auth?.dev || "").slice(0, 40));
+  const devRaw = String(socket.handshake.auth?.dev || "").slice(0, 40);
+  const banHit = banFind(null, devRaw) || banFind(null, canonDev(devRaw));
   if (banHit) {
     socket.emit("kicked", { reason: banHit.reason || "Estás baneado/a.", ban: true, mins: banHit.until >= FOREVER / 2 ? -1 : Math.ceil((banHit.until - now()) / 60000) });
     return setTimeout(() => socket.disconnect(true), 300);
   }
 
   const c = {
-    nick: "", status: "disponible", admin: false, owner: false, ip, dev: String(socket.handshake.auth?.dev || "").slice(0, 40), joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
+    nick: "", status: "disponible", admin: false, owner: false, ip, dev: canonDev(devRaw), devRaw, joinedAt: 0, strikes: [], mutes: 0, mutedUntil: 0,
     msgTimes: [], lastText: "", repeat: 0, lastMsgAt: 0, lastMediaAt: 0, lastCrisis: 0, adminTries: 0, blocked: new Set(),
     sid: socket.id, inv: String(socket.handshake.auth?.inv || "").slice(0, 12),
   };
-  if (passOk(c.dev, socket.handshake.auth?.pass)) c.human = true;
+  if (passOk(c.devRaw, socket.handshake.auth?.pass)) c.human = true;
   clients.set(socket.id, c);
   muroHandlers(socket, c);
   logrosHandlers(socket, c);
@@ -2852,6 +2943,9 @@ io.on("connection", (socket) => {
   djHandlers(socket, c);
   actHandlers(socket, c);
   trHandlers(socket, c);
+  wellHandlers(socket, c);
+  linkHandlers(socket, c);
+  chlogHandlers(socket, c);
   for (const E of ENGINES) E.bind(socket, c);
   socket.on("game-custom", (o = {}, cb) => { if (!Object.values(CUSTOM_OF).flat().includes(o.type)) cb && cb({ ok: false, error: "Juego desconocido." }); });
 
@@ -2866,14 +2960,22 @@ io.on("connection", (socket) => {
   // Recupera una sesión (desde la "llave" guardada o porque volvió desde el mismo celu escribiendo su apodo)
   function doResume(ses, cb) {
     const old = ses.c, oldId = ses.id;
+    // la "llave" de sesión solo sirve desde el mismo aparato (o uno vinculado): si lo desvincularon, no vuelve a entrar
+    if (old.dev && c.dev && old.dev !== c.dev) return cb({ ok: false });
     const pu = penUntil(chatPenalties, c, old.nick);
     if (pu) return cb({ ok: false });
+    { const wb = wellBlock(old.nick, c.dev || old.dev || c.ip, old.admin); if (wb) return cb({ ok: false, error: wb.msg, rest: wb }); }
     clearTimeout(ses.timer); ses.timer = null; clearTimeout(ses.byeTimer);
     ghostIds.delete(oldId);
     // si la conexión vieja seguía abierta (volvió antes de que el servidor notara el corte), la cerramos sin despedirlo
     const oldSock = io.sockets.sockets.get(oldId);
-    if (oldSock && oldSock.id !== socket.id) { old.replaced = true; oldSock.disconnect(true); }
-    const keep = { ip: c.ip, dev: c.dev || old.dev };
+    if (oldSock && oldSock.id !== socket.id) {
+      old.replaced = true;
+      // Lo abrió en OTRO aparato (vinculado): al viejo le mostramos "Usar acá" en vez de que se reconecte solo y se lo robe de vuelta
+      if (old.devRaw && c.devRaw && old.devRaw !== c.devRaw) oldSock.emit("taken-over", { msg: "📱 Abriste Gente Rota en otro dispositivo." });
+      oldSock.disconnect(true);
+    }
+    const keep = { ip: c.ip, dev: c.dev || old.dev, devRaw: c.devRaw };
     Object.assign(c, old, keep, { away: false, replaced: false, msgTimes: [] });
     clients.delete(oldId); clients.set(socket.id, c);
     users.set(c.nick.toLowerCase(), socket.id);
@@ -2892,10 +2994,10 @@ io.on("connection", (socket) => {
   socket.on("verify", async (token, cb) => {
     if (typeof cb !== "function") return;
     if (!TURNSTILE_SECRET) return cb({ ok: true });
-    if (c.human) return cb({ ok: true, pass: c.dev ? makePass(c.dev) : "" });
+    if (c.human) return cb({ ok: true, pass: c.devRaw ? makePass(c.devRaw) : "" });
     if (tooMany("verify", c.ip, 20)) return cb({ ok: false });
     c.human = await verifyHuman(token, c.ip);
-    cb({ ok: c.human, pass: c.human && c.dev ? makePass(c.dev) : "" });
+    cb({ ok: c.human, pass: c.human && c.devRaw ? makePass(c.devRaw) : "" });
   });
 
   socket.on("join", (rawNick, cb) => {
@@ -2921,6 +3023,7 @@ io.on("connection", (socket) => {
       return cb({ ok: false, error: "Ese apodo lo está usando alguien conectado ahora. Elegí otro." });
     }
     if (banFind(null, null, nick)) return cb({ ok: false, error: "Ese apodo está baneado." });
+    { const wb = wellBlock(nick, c.dev || c.ip, c.admin); if (wb) return cb({ ok: false, error: wb.msg, rest: wb }); }
     // Baneo por IP: frena a los que vuelven con otro apodo y celu "limpio", pero no a los habituales
     // que comparten IP con la persona baneada (en los celus pasa seguido).
     if (!c.admin && banFind(c.ip)) { const old = profiles.get(pkeyOf(nick, c.dev || c.ip)); if (!old || (old.xp || 0) < 30) return cb({ ok: false, error: "No se puede entrar desde esta conexión por un rato. Si sos habitual del chat, probá más tarde." }); }
@@ -3681,6 +3784,7 @@ function invHandlers(socket, c) {
 function achJoin(c) {
   const isNew = !profiles.has(pkeyOf(c.nick, c.dev || c.ip));
   c.pkey = pkeyOf(c.nick, c.dev || c.ip);
+  if (c.newProf === undefined) c.newProf = isNew; // ¿es su primera vez con este apodo? (para no abrumarlo con "novedades")
   { const old = profiles.get(c.pkey); c.veteran = !!old && (old.xp || 0) >= 30; }
   if (!c.veteran && !c.admin) {
     const t = now(); newJoins.push(t); while (newJoins.length && t - newJoins[0] > 2 * 60000) newJoins.shift();
@@ -4073,6 +4177,7 @@ function bdayHandlers(socket, c) {
     if (!c.admin) return;
     const m = messages.get(String(id));
     if (!m || !FRASE_ROOMS[m.chat]) return cb && cb({ ok: false, error: "Ese mensaje no se puede marcar (solo de salas públicas)." });
+    if (m.media) return cb && cb({ ok: false, error: "Las frases célebres tienen que ser de texto (no fotos ni audios)." });
     const r = addFrase({ id: String(id), text: m.fullText || m.text, by: m.from, pkey: m.pkey, at: m.ts, src: FRASE_ROOMS[m.chat], score: 5, kind: "chat" }, true);
     if (r.ok) m.famous = true;
     cb && cb(r);
@@ -4080,14 +4185,61 @@ function bdayHandlers(socket, c) {
 }
 
 // ================== 📻 Radio + 🎵 Rocola ==================
-// Radio: un link de transmisión (ej. Zeno.fm) que configura el dueño con /radio <link> [nombre].
+// Radio: la configura el dueño. Dos formas:
+//  · "audio": link directo de transmisión (https://…mp3, Zeno pago, Caster.fm Cloud Plus…) que suena en un <audio>.
+//  · "embed": el reproductor de Caster.fm gratis (no da link directo): se muestra su reproductor en un recuadro.
 // Rocola: la gente pega links de YouTube, se arma una fila y todos escuchan lo mismo al mismo tiempo.
-let radio = { url: "", name: "" };
+let radio = { url: "", name: "" }; // + kind: "audio" | "embed", embed: { type: "iframe", src } | { type: "widget", token, ch }
+const CASTER_HOST = /(^|\.)caster\.fm$/i;
+const decodeEnt = (t) => String(t).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'");
+// Entiende lo que pegue el dueño: código <iframe>, código del widget (publicToken/channelId) o un link
+function parseRadio(input) {
+  const t = String(input || "").trim().slice(0, 3000);
+  if (!t) return { error: "Pegá el link o el código del reproductor." };
+  const host = (u) => { try { const x = new URL(u); return x.protocol === "https:" ? x.hostname : ""; } catch { return ""; } };
+  const ifr = t.match(/<iframe[^>]*\ssrc\s*=\s*["']([^"']+)["']/i);
+  if (ifr) {
+    const src = decodeEnt(ifr[1]).trim();
+    if (!CASTER_HOST.test(host(src))) return { error: "Ese reproductor no es de Caster.fm (o no es https). Por seguridad solo acepto reproductores de caster.fm." };
+    const hm = t.match(/\sheight\s*=\s*["']?(\d{2,3})/i);
+    return { kind: "embed", url: src.slice(0, 600), embed: { type: "iframe", src: src.slice(0, 600), h: hm ? Math.max(60, Math.min(400, +hm[1])) : 0 } };
+  }
+  // Código del reproductor de Caster.fm: <div data-type="newStreamPlayer" data-publicToken="…" …></div><script src="…/embed.js"></script>
+  const div = t.match(/<div\b([^>]*\bdata-publicToken\b[^>]*)>/i);
+  if (div) {
+    const attrs = {};
+    for (const m of div[1].matchAll(/\b(data-[\w-]{1,30})\s*=\s*["']([^"']{0,120})["']/gi)) if (/^[\w\-#.:, ]*$/.test(m[2]) && Object.keys(attrs).length < 15) attrs[m[1]] = m[2];
+    const token = Object.entries(attrs).find(([k]) => /^data-publictoken$/i.test(k))?.[1];
+    if (!token) return { error: "El código del reproductor no tiene el publicToken." };
+    const cls = ((div[1].match(/\bclass\s*=\s*["']([\w\- ]{1,60})["']/i) || [])[1] || "cstrEmbed").trim();
+    const sm = t.match(/<script[^>]*\ssrc\s*=\s*["']([^"']+)["']/i);
+    const sSrc = sm ? decodeEnt(sm[1]).trim() : "";
+    const script = sSrc && CASTER_HOST.test(host(sSrc)) ? sSrc.slice(0, 300) : "https://cdn.cloud.caster.fm/widgets/embed.js";
+    const kind = Object.entries(attrs).find(([k]) => /^data-type$/i.test(k))?.[1] || "";
+    return { kind: "embed", url: `caster:${token}:${kind}`, embed: { type: "widget", attrs, cls, script } };
+  }
+  const link = (t.match(/https:\/\/[^\s"'<>]+/i) || [])[0];
+  if (!link) return { error: "No encontré ningún link https ni código de reproductor en lo que pegaste." };
+  const h = host(link);
+  if (!h) return { error: "El link tiene que empezar con https://" };
+  // Página o widget de Caster.fm (no es el audio directo) → se muestra como reproductor
+  if (CASTER_HOST.test(h) && !/\.(mp3|aac|ogg|opus|m3u8?)(\?|$)/i.test(link) && !/^(stream|live|sapircast|s\d+)\b/i.test(h)) return { kind: "embed", url: link.slice(0, 600), embed: { type: "iframe", src: link.slice(0, 600), h: 0 } };
+  return { kind: "audio", url: link.slice(0, 600) };
+}
+function radioSet(c, input, name) {
+  if (!c.owner) return { ok: false, error: "📻 La radio la configura el dueño." };
+  const r = parseRadio(input);
+  if (r.error) return { ok: false, error: "📻 " + r.error };
+  radio = { ...r, name: String(name || "").replace(/\s+/g, " ").trim().slice(0, 40) || radio.name || "Radio Gente Rota" };
+  dirty(); djEmit();
+  logMod(c.nick, `📻 configuró la radio: ${radio.name} (${r.kind === "embed" ? "reproductor de Caster.fm" : "link directo"})`);
+  return { ok: true, msg: `📻 Listo: «${radio.name}» configurada ${r.kind === "embed" ? "con el reproductor de Caster.fm" : "con link directo"}. Todos la ven en el botón 📻.` };
+}
 const DJ_MAX_DUR = 10 * 60, DJ_MAX_QUEUE = 20;
 const dj = { on: true, cur: null, queue: [], skips: new Set(), timer: null, hist: [] };
 const djListeners = new Map(); // socket.id -> "radio" | "rocola"
 const djCount = () => { let r = 0, k = 0; for (const m of djListeners.values()) m === "radio" ? r++ : k++; return { radio: r, rocola: k }; };
-const djPublic = () => ({ radio: radio.url ? { url: radio.url, name: radio.name || "Radio Gente Rota" } : null, on: dj.on,
+const djPublic = () => ({ radio: radio.url ? { url: radio.url, name: radio.name || "Radio Gente Rota", kind: radio.kind || "audio", embed: radio.embed || null } : null, on: dj.on,
   cur: dj.cur && { id: dj.cur.id, title: dj.cur.title, by: dj.cur.by, start: dj.cur.start, dur: dj.cur.dur },
   queue: dj.queue.map((q) => ({ id: q.id, title: q.title, by: q.by })), listeners: djCount(), now: now() });
 let djEmitT = null;
@@ -4129,6 +4281,12 @@ function djSetDur(d) {
 }
 function djHandlers(socket, c) {
   socket.on("dj-state", (_, cb) => { if (typeof cb === "function") cb(djPublic()); });
+  socket.on("radio-set", ({ code, name, off } = {}, cb) => {
+    if (typeof cb !== "function") return;
+    if (!c.owner) return cb({ ok: false, error: "📻 La radio la configura el dueño." });
+    if (off) { radio = { url: "", name: "" }; dirty(); djEmit(); logMod(c.nick, "📻 sacó la radio"); return cb({ ok: true, msg: "📻 Radio desactivada." }); }
+    cb(radioSet(c, code, name));
+  });
   socket.on("dj-listen", (mode) => {
     if (mode === "radio" || mode === "rocola") djListeners.set(socket.id, mode); else djListeners.delete(socket.id);
     djEmit();
@@ -4264,6 +4422,246 @@ function trHandlers(socket, c) {
   });
 }
 
+// ---------- ✨ Novedades del chat (cambios nuevos, para que la gente se entere) ----------
+// Al entrar, a cada uno le aparece una ventana con lo nuevo que todavía no vio. El dueño puede sumar las suyas con /novedad.
+// act = qué abre el botón "Probar" en el celu (well, link, saved, radio, profile)
+const CHANGELOG_SEED = [
+  { id: 1795280000001, ico: "🔔", title: "Te avisamos si comentan tu publicación", text: "Si alguien comenta o le da ❤️ a lo que publicaste en 📰 Comunidad, te avisamos cuando entrás (en el ⌛ de Comunidad)." },
+  { id: 1795280000002, ico: "⏩", title: "Audios más rápidos y en texto", text: "En los audios ahora podés poner ⏩ x1.5 o x2, y tocar 📝 Texto para leerlo en vez de escucharlo." },
+  { id: 1795280000003, ico: "🔖", title: "Guardados", text: "Mantené apretado un mensaje y tocá 🔖 para guardarlo (también fotos y audios). Quedan en tu celu, en ✏️ Mi perfil → 🔖 Guardados. Nadie más los ve.", act: "saved", btn: "Ver mis guardados" },
+  { id: 1795280000004, ico: "⏳", title: "Mi tiempo: límite diario y descanso", text: "Elegí cuánto tiempo por día querés estar en el chat y te avisamos (y te sacamos) cuando llegás. Si necesitás cortar, podés tomarte un descanso de 1 día, 3 días o 1 semana. Es privado: nadie más lo ve.", act: "well", btn: "Ponerme un límite" },
+  { id: 1795280000005, ico: "📱", title: "Tu apodo en la PC y en el celu", text: "Ahora podés usar el mismo apodo (con tus piezas y logros) en varios dispositivos. Generá un código en ✏️ Mi perfil → 📱 y ponelo en el otro.", act: "link", btn: "Vincular otro dispositivo" },
+];
+let changelog = CHANGELOG_SEED.slice();
+function changelogPublic() { return changelog.slice(-20); }
+function chlogHandlers(socket, c) {
+  socket.on("changelog-get", (_, cb) => { if (typeof cb === "function") cb(changelogPublic(), { old: c.nick ? !c.newProf : true }); });
+}
+function chlogCommand(c, id, arg) {
+  if (!c.owner) return notice(id, "Solo el dueño puede publicar novedades.", "warn");
+  const a = arg.trim();
+  if (!a) return notice(id, "Uso: /novedad 📻 | Título | Texto que explica la novedad\n/novedad borrar (saca la última)", "help");
+  if (/^(borrar|quitar|deshacer)$/i.test(a)) {
+    const x = changelog.pop(); dirty(); io.emit("changelog", changelogPublic());
+    return notice(id, x ? `✨ Saqué la novedad «${x.title}».` : "No hay novedades.", "mod");
+  }
+  const parts = a.split("|").map((t) => t.trim());
+  let ico = "✨", title, text;
+  if (parts.length >= 3) [ico, title, text] = [parts[0] || "✨", parts[1], parts.slice(2).join(" | ")];
+  else if (parts.length === 2) [title, text] = parts;
+  else { title = a.slice(0, 60); text = ""; }
+  if (!title) return notice(id, "Falta el título. Uso: /novedad 📻 | Título | Texto", "warn");
+  const e = { id: now(), ico: [...ico].slice(0, 2).join(""), title: title.slice(0, 70), text: (text || "").slice(0, 400) };
+  changelog.push(e); if (changelog.length > 40) changelog = changelog.slice(-40);
+  dirty();
+  io.emit("changelog", changelogPublic(), e.id);
+  logMod(c.nick, `✨ publicó la novedad «${e.title}»`);
+  return notice(id, `✨ Novedad publicada: «${e.title}». La ven todos (los conectados ahora, con un aviso; el resto, al entrar).`, "mod");
+}
+
+// ---------- 📱 Usar el mismo apodo en varios dispositivos (código de vinculación) ----------
+// En el aparato donde ya está: "Usar en otro dispositivo" → código de 6 números (10 min).
+// En el otro: apodo + código. Desde ahí los dos son "el mismo dispositivo": mismo perfil, piezas, logros, límite y descanso.
+// Si está abierto en los dos, gana el último (el otro ve "Usar acá").
+const linkCodes = new Map(); // código -> { nick, dev, until }
+const linkTries = new Map(); // ip -> [tiempos de intentos fallidos]
+const LINK_MAX_DEVS = 6;
+const groupSize = (g) => { let n = 0; for (const v of devLinks.values()) if (v === g) n++; return n; };
+// Pasa todo lo guardado con la clave de un dev a otra (perfiles de cada apodo, descansos, minutos de hoy)
+function moveDevData(from, to) {
+  if (!from || !to || from === to) return;
+  for (const [k, p] of [...profiles]) {
+    if (!k.endsWith("|" + from)) continue;
+    const nk = k.slice(0, -from.length) + to, q = profiles.get(nk);
+    if (!q) profiles.set(nk, p);
+    else {
+      // los dos aparatos ya tenían perfil con ese apodo: queda el de más experiencia y se suman las piezas
+      const [win, lose] = (p.xp || 0) > (q.xp || 0) ? [p, q] : [q, p];
+      win.pz = (win.pz || 0) + (lose.pz || 0);
+      if (Array.isArray(win.inv) && Array.isArray(lose.inv)) win.inv = [...new Set([...win.inv, ...lose.inv])];
+      profiles.set(nk, win);
+    }
+    profiles.delete(k); profDirty.add(nk);
+  }
+  const b = breaks.get("dev:" + from); if (b) { breaks.delete("dev:" + from); if (!breaks.has("dev:" + to)) breaks.set("dev:" + to, b); }
+  for (const [k, u] of [...useToday]) if (k.endsWith("|" + from)) { const nk = k.slice(0, -from.length) + to, o = useToday.get(nk); useToday.delete(k); useToday.set(nk, o && o.day === u.day ? { ...u, ms: o.ms + u.ms } : u); }
+  for (const cc of clients.values()) if (cc.dev === from) { cc.dev = to; if (cc.nick) cc.pkey = pkeyOf(cc.nick, to); }
+}
+function linkHandlers(socket, c) {
+  socket.on("link-code", (_, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    if (!c.devRaw) return cb({ ok: false, error: "Este navegador no guarda datos (¿modo incógnito?). Probá desde uno normal." });
+    if (tooMany("linkcode", c.ip, 5)) return cb({ ok: false, error: "Pediste muchos códigos. Esperá un minuto." });
+    for (const [k, v] of linkCodes) if (v.until < now() || (v.nick === c.nick.toLowerCase() && v.dev === c.dev)) linkCodes.delete(k);
+    let code; do code = String(100000 + Math.floor(Math.random() * 900000)); while (linkCodes.has(code));
+    linkCodes.set(code, { nick: c.nick.toLowerCase(), dev: c.dev, raw: c.devRaw, until: now() + 10 * 60e3 });
+    cb({ ok: true, code, mins: 10, devs: groupSize(c.dev) || 1 });
+  });
+  socket.on("link-info", (_, cb) => { if (c.nick && typeof cb === "function") cb({ devs: groupSize(c.dev) || 1 }); });
+  socket.on("link-claim", ({ nick, code } = {}, cb) => {
+    if (typeof cb !== "function" || c.nick) return;
+    if (TURNSTILE_SECRET && !c.human) return cb({ ok: false, captcha: true });
+    if (!c.devRaw) return cb({ ok: false, error: "Este navegador no guarda datos (¿modo incógnito?). Probá desde uno normal." });
+    const t = now(), tries = (linkTries.get(c.ip) || []).filter((x) => t - x < 10 * 60e3);
+    if (tries.length >= 6) return cb({ ok: false, error: "Demasiados códigos equivocados. Esperá 10 minutos." });
+    const k = String(code || "").replace(/\D/g, ""), rec = linkCodes.get(k);
+    if (!rec || rec.until < t || rec.nick !== String(nick || "").trim().replace(/\s+/g, " ").toLowerCase()) {
+      tries.push(t); linkTries.set(c.ip, tries);
+      return cb({ ok: false, error: "El código no es correcto o ya venció (dura 10 minutos). Fijate que el apodo sea el mismo y pedí uno nuevo." });
+    }
+    linkCodes.delete(k);
+    // el aparato de origen todavía no estaba en un grupo: se crea uno y se le pasan sus datos
+    let g = canonDev(rec.raw);
+    if (!g.startsWith("g")) { const ng = "g" + newToken().slice(0, 14); devLinks.set(rec.raw, ng); moveDevData(g, ng); g = ng; }
+    if (canonDev(c.devRaw) === g) return cb({ ok: true, already: true });
+    if (groupSize(g) >= LINK_MAX_DEVS) return cb({ ok: false, error: `Ya tenés ${LINK_MAX_DEVS} dispositivos vinculados. Desvinculá los otros desde ✏️ Mi perfil y probá de nuevo.` });
+    const mine = canonDev(c.devRaw);
+    devLinks.set(c.devRaw, g);
+    // si este aparato era el único de su grupo viejo (o no tenía grupo), sus datos se suman al grupo nuevo
+    if (mine === c.devRaw || !groupSize(mine)) moveDevData(mine, g);
+    c.dev = g;
+    dirty();
+    cb({ ok: true });
+  });
+  // Desvincular a los demás (por si vinculaste una PC prestada). Este se queda con todo.
+  socket.on("link-unlink", (_, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    const g = c.dev; if (!g?.startsWith("g")) return cb({ ok: true, n: 0 });
+    let n = 0;
+    for (const [d, v] of [...devLinks]) if (v === g && d !== c.devRaw) {
+      devLinks.delete(d); n++;
+      for (const [sid, cc] of clients) if (cc.devRaw === d) {
+        cc.dev = d; cc.gone = true;
+        io.to(sid).emit("taken-over", { msg: "📱 Este dispositivo fue desvinculado de tu apodo.", unlinked: true });
+        setTimeout(() => io.sockets.sockets.get(sid)?.disconnect(true), 300);
+      }
+    }
+    for (const [k, v] of linkCodes) if (v.dev === g) linkCodes.delete(k);
+    if (n) dirty();
+    cb({ ok: true, n });
+  });
+}
+
+// ---------- ⏳ Bienestar: límite diario personal y "me tomo un descanso" ----------
+// Límite: cada uno elige el suyo. Bajarlo rige ya; subirlo o sacarlo rige desde mañana (así cuesta más hacerse trampa).
+// Descanso (1 día / 3 días / 1 semana): no se puede deshacer. Se ata al apodo Y al celu. Solo el dueño lo puede levantar.
+// Nada de esto se avisa a los mods: es privado de cada persona.
+const LIM_OPTS = [0, 30, 60, 90, 120, 180, 240];
+const BREAK_DAYS = { "1d": 1, "3d": 3, "7d": 7 };
+const WELL_TICK = +process.env.WELL_TICK_MS || 30e3;
+let wellLast = now();
+const USE_KEY = "genterota:uso";
+const useToday = new Map(); // pkey -> { day, ms, w }  (minutos de hoy, w = avisos ya mandados)
+const breaks = new Map();   // "dev:<dev>" | "nick:<apodo>" -> { until, nick, at }
+let useDirty = false;
+const nextArMidnight = (t = now()) => Date.parse(arDay(t)) + 86400e3 + 3 * 3600e3;
+const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}` : `${m} min`;
+const fmtArDate = (t) => { const d = new Date(t - 3 * 3600e3); const dias = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]; return `el ${dias[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1} a las ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
+function limitOf(p, pkey) {
+  if (!p) return 0;
+  if (p.limNext && p.limNext.day <= arDay()) { p.lim = p.limNext.v; delete p.limNext; if (pkey) profDirty.add(pkey); }
+  return p.lim || 0;
+}
+function usedMs(pkey) { const u = useToday.get(pkey); return u && u.day === arDay() ? u.ms : 0; }
+function breakFind(dev, nick) {
+  const t = now();
+  for (const k of [dev && "dev:" + dev, nick && "nick:" + String(nick).toLowerCase()]) {
+    if (!k) continue;
+    const b = breaks.get(k);
+    if (b && b.until > t) return b;
+    if (b) { breaks.delete(k); dirty(); }
+  }
+  return null;
+}
+// ¿Puede entrar? (se usa al entrar y al volver con la sesión guardada)
+function wellBlock(nick, dev, admin) {
+  const br = !admin && breakFind(dev, nick);
+  if (br) return { kind: "break", until: br.until, msg: `🌿 Te tomaste un descanso del chat. Podés volver ${fmtArDate(br.until)}.` };
+  const pkey = pkeyOf(nick, dev), lim = limitOf(profiles.get(pkey), pkey);
+  if (lim && usedMs(pkey) >= lim * 60000) return { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Llegaste a tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` };
+  return null;
+}
+function wellInfo(c) {
+  const p = profiles.get(c.pkey), lim = limitOf(p, c.pkey);
+  return { used: Math.floor(usedMs(c.pkey) / 60000), lim, next: p?.limNext ? p.limNext.v : null, opts: LIM_OPTS, owner: !!c.owner };
+}
+// Saca del chat a todas las conexiones de esa persona (con la pantalla de descanso)
+function wellKick(match, rest) {
+  for (const [sid, cc] of clients) {
+    if (!cc.nick || !match(cc)) continue;
+    io.to(sid).emit("rest", rest);
+    cc.gone = true; // se va sin quedar 💤
+    setTimeout(() => io.sockets.sockets.get(sid)?.disconnect(true), 400);
+  }
+}
+setInterval(() => {
+  const day = arDay(), seen = new Set(), t = now(), step = Math.max(0, Math.min(t - wellLast, 5 * 60e3)); wellLast = t;
+  for (const [sid, c] of clients) {
+    if (!c.nick || !c.pkey || c.gone || c.away || seen.has(c.pkey)) continue;
+    seen.add(c.pkey);
+    let u = useToday.get(c.pkey);
+    if (!u || u.day !== day) { u = { day, ms: 0, w: 0 }; useToday.set(c.pkey, u); }
+    u.ms += step; useDirty = true;
+    const lim = limitOf(profiles.get(c.pkey), c.pkey);
+    if (!lim) continue;
+    const left = lim * 60000 - u.ms;
+    if (left <= 0) wellKick((x) => x.pkey === c.pkey, { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Llegaste a tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` });
+    else if (left <= 60e3 && u.w < 2) { u.w = 2; io.to(sid).emit("limit-warn", { left: 1 }); }
+    else if (left <= 10 * 60e3 && u.w < 1) { u.w = 1; io.to(sid).emit("limit-warn", { left: Math.ceil(left / 60000) }); }
+  }
+  for (const [k, u] of useToday) if (u.day !== day) useToday.delete(k);
+}, WELL_TICK).unref();
+// Los minutos de hoy se guardan aparte cada 3 min (es poquito y no conviene reescribir todo el estado cada 30 s)
+setInterval(async () => {
+  if (!db.on || !useDirty) return;
+  useDirty = false;
+  const day = arDay(), rows = [...useToday].filter(([, u]) => u.day === day).map(([k, u]) => [k, u.ms, u.w]);
+  try { await redis(["SET", USE_KEY, JSON.stringify({ day, rows }), "EX", "172800"]); } catch { useDirty = true; }
+}, 180e3).unref();
+async function loadUsage() {
+  if (!db.on) return;
+  try {
+    const raw = await redis(["GET", USE_KEY]); if (!raw) return;
+    const st = JSON.parse(raw); if (st.day !== arDay()) return;
+    for (const [k, ms, w] of st.rows || []) useToday.set(k, { day: st.day, ms: +ms || 0, w: +w || 0 });
+  } catch {}
+}
+function wellHandlers(socket, c) {
+  socket.on("well-get", (_, cb) => { if (c.nick && typeof cb === "function") cb(wellInfo(c)); });
+  socket.on("limit-set", (v, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    const n = Number(v);
+    if (!LIM_OPTS.includes(n)) return cb({ ok: false, error: "Elegí una de las opciones." });
+    const p = profK(c.pkey, c.nick), cur = limitOf(p, c.pkey);
+    let msg;
+    if (!cur || (n && n < cur)) { p.lim = n; delete p.limNext; msg = n ? `⏳ Listo: tu límite es de ${fmtMin(n)} por día. Ya rige desde hoy.` : "Sin límite."; }
+    else if (n === cur) { delete p.limNext; msg = `⏳ Tu límite sigue en ${fmtMin(n)} por día.`; }
+    else {
+      const tm = arDay(nextArMidnight() + 60e3);
+      p.limNext = { v: n, day: tm };
+      msg = n ? `⏳ Lo cambiaste a ${fmtMin(n)}: rige desde mañana. Hoy sigue el de ${fmtMin(cur)}.` : `⏳ Mañana te quedás sin límite. Hoy sigue el de ${fmtMin(cur)}.`;
+    }
+    profDirty.add(c.pkey);
+    const u = useToday.get(c.pkey); if (u) u.w = 0; // que vuelva a avisar con el límite nuevo
+    cb({ ok: true, msg, info: wellInfo(c) });
+    // si el límite nuevo ya está superado, se va ahora
+    const lim = limitOf(p, c.pkey);
+    if (lim && usedMs(c.pkey) >= lim * 60000) wellKick((x) => x.pkey === c.pkey, { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Ya pasaste tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` });
+  });
+  socket.on("break-take", (d, cb) => {
+    if (!c.nick || typeof cb !== "function") return;
+    const days = BREAK_DAYS[d];
+    if (!days) return cb({ ok: false, error: "Elegí cuánto tiempo." });
+    if (c.owner) return cb({ ok: false, error: "Como dueño/a no podés bloquearte: no habría nadie para levantarlo si te equivocás." });
+    const until = now() + days * 86400e3, b = { until, nick: c.nick, at: now() };
+    if (c.dev) breaks.set("dev:" + c.dev, b);
+    breaks.set("nick:" + c.nick.toLowerCase(), b);
+    dirty();
+    cb({ ok: true });
+    wellKick((x) => x.nick === c.nick || (c.dev && x.dev === c.dev), { kind: "break", until, msg: `🌿 Te tomaste un descanso del chat. Podés volver ${fmtArDate(until)}.` });
+  });
+}
+
 // Mantener despierto en Render (plan gratis)
 const SELF_URL = process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL && typeof fetch === "function") {
@@ -4288,6 +4686,7 @@ function snapshot() {
     v: 1,
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
     bans: [...bans].filter(([, b]) => b.until > t), modLog, usedBags, radio, djOn: dj.on,
+    breaks: [...breaks].filter(([, b]) => b.until > t), devLinks: [...devLinks], changelog, chlogSeeded: true,
     points: [...points],
     pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events, approvalMode,
     weekly: { start: weekly.start, points: [...weekly.points] }, champions,
@@ -4322,7 +4721,14 @@ async function loadState() {
         if (b?.until > now()) bans.set(k, b);
       });
       if (Array.isArray(st.modLog)) modLog = st.modLog.slice(-200);
-      if (st.radio?.url) radio = { url: String(st.radio.url), name: String(st.radio.name || "") };
+      (st.breaks || []).forEach(([k, b]) => { if (b?.until > now()) breaks.set(k, b); });
+      (st.devLinks || []).forEach(([d, g]) => { if (typeof d === "string" && typeof g === "string") devLinks.set(d, g); });
+      // la primera vez quedan las de esta semana (CHANGELOG_SEED); después, lo guardado (incluye las del dueño)
+      if (st.chlogSeeded && Array.isArray(st.changelog)) changelog = st.changelog.filter((x) => x && x.id && x.title).slice(-40);
+      if (st.radio?.url) {
+        const k = st.radio.kind === "embed" && st.radio.embed ? "embed" : "audio";
+        radio = { url: String(st.radio.url), name: String(st.radio.name || ""), kind: k, embed: k === "embed" ? st.radio.embed : undefined };
+      }
       if (st.djOn === false) dj.on = false;
       if (st.usedBags && typeof st.usedBags === "object") for (const [k, v] of Object.entries(st.usedBags)) if (Array.isArray(v)) usedBags[k] = v.slice(-1000);
       (st.points || []).forEach(([n, p]) => points.set(n, p));
@@ -4350,5 +4756,5 @@ process.on("unhandledRejection", (e) => console.error("Promesa rechazada (el ser
 process.on("SIGTERM", async () => { if (saveTimer) clearTimeout(saveTimer); db.pending = true; await Promise.all([saveNow().catch(() => {}), saveLogros().catch(() => {})]); process.exit(0); });
 
 const PORT = process.env.PORT || 3000;
-Promise.race([Promise.all([loadState(), loadMuro(), loadLogros(), loadFrases(), loadCards()]), new Promise((ok) => setTimeout(ok, 8000))]).finally(() =>
+Promise.race([Promise.all([loadState(), loadMuro(), loadLogros(), loadFrases(), loadCards(), loadUsage()]), new Promise((ok) => setTimeout(ok, 8000))]).finally(() =>
   server.listen(PORT, () => console.log(`Gente Rota en http://localhost:${PORT}`)));
