@@ -157,6 +157,16 @@
   #djLis { flex: none; font-size: 12px; color: var(--muted); }
   #ytBox { position: fixed; right: 8px; bottom: 84px; z-index: 30; width: 200px; background: #000; border: 1px solid var(--accent); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 28px #000a; }
   #ytBox[hidden] { display: none; }
+  #radioBox { position: fixed; right: 8px; bottom: 84px; z-index: 31; width: min(320px, calc(100vw - 16px)); background: #111; border: 1px solid var(--accent); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 28px #000a; }
+  #radioBox[hidden] { display: none; }
+  #radioBox.left { right: auto; left: 8px; }
+  #radioBox .rb-head { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #ddd; padding: 3px 4px 3px 8px; }
+  #rbTitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #radioBox .rb-head button { background: none; border: 0; color: #eee; font-size: 15px; padding: 2px 6px; }
+  #rbFrame iframe { display: block; width: 100%; border: 0; background: #111; }
+  #radioBox .rb-hint { font-size: 11px; color: #999; padding: 3px 8px 5px; }
+  #sheet textarea.rc-code { width: 100%; min-height: 110px; font: 12px/1.35 ui-monospace, monospace; background: var(--panel2, #1a1a1a); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 8px; box-sizing: border-box; margin: 4px 0 8px; }
+  #sheet input.rc-name { width: 100%; box-sizing: border-box; margin: 4px 0 8px; }
   #ytBox.left { right: auto; left: 8px; }
   #ytBox .yt-head { font-size: 11.5px; color: #ddd; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #111; }
   #ytBox iframe, #ytFrame { display: block; width: 200px; height: 200px; border: 0; background: #000; }
@@ -178,6 +188,13 @@
   .notice.act-link { cursor: pointer; text-decoration: underline dotted; }
   .mpost.flash { animation: postflash 1.6s ease; }
   @keyframes postflash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } }
+  .saved-mark { font-size: 11px; }
+  .saved-card { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin: 8px 0; background: var(--panel2); display: flex; flex-direction: column; gap: 6px; }
+  .saved-head { font-size: 12px; color: var(--muted); }
+  .saved-img { max-width: 100%; max-height: 260px; border-radius: 8px; object-fit: contain; align-self: flex-start; }
+  .saved-text { font-size: 14.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+  .saved-card audio { width: 100%; }
+  #sheet .saved-del { width: auto; align-self: flex-end; margin: 0; padding: 4px 10px; font-size: 12.5px; background: none; }
   .lost-media { font-size: 13px; font-style: italic; opacity: .7; padding: 6px 2px; }
   #newsWrap { position: relative; height: 0; z-index: 6; }
   #newsBar { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; align-items: center; gap: 8px; background: #0b0b0b; color: #f2f2f2; border: 1px solid var(--accent); border-radius: 12px; padding: 7px 10px; font-size: 13.5px; text-align: left; box-shadow: 0 6px 20px #0008; animation: newsIn .35s cubic-bezier(.2,1.3,.4,1); }
@@ -529,8 +546,9 @@
   #replyCancel { background: none; border: 0; color: var(--muted); font-size: 18px; padding: 4px 6px; }
   /* Selección estilo WhatsApp */
   #selBar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--accent); min-height: 49px; }
-  #selBar button { background: none; border: 0; font-size: 19px; padding: 6px 6px; border-radius: 10px; color: var(--ink); flex: none; }
+  #selBar button { background: none; border: 0; font-size: 19px; padding: 6px 4px; border-radius: 10px; color: var(--ink); flex: 0 1 auto; min-width: 30px; white-space: nowrap; }
   #selBar button:active { background: var(--panel2); }
+  @media (max-width: 420px) { #selBar { gap: 0; padding: 6px 4px; } #selBar button { font-size: 17px; padding: 6px 2px; min-width: 26px; } }
   #selBar #selN { flex: 1; font-weight: 800; font-size: 16px; padding-left: 2px; min-width: 0; }
   .msg.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 10px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
   .msg::before { content: "↩️"; position: absolute; left: 4px; top: 50%; transform: translateY(-50%) scale(calc(.5 + var(--sw, 0) * .5)); opacity: var(--sw, 0); font-size: 18px; pointer-events: none; }
@@ -577,6 +595,47 @@
   #sheet { background: var(--panel); border-top: 3px solid var(--accent); width: 100%; max-width: 480px; border-radius: 16px 16px 0 0; padding: 16px; }
   #sheet h4 { margin: 0 0 2px; font-size: 18px; }
   #sheet .stline { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .rest-card { text-align: center; max-width: 380px; }
+  .chl-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .chl-card:last-of-type { border-bottom: 0; }
+  .chl-ico { font-size: 30px; line-height: 1; flex: none; width: 38px; text-align: center; }
+  .chl-body { flex: 1; min-width: 0; }
+  .chl-body b { display: block; font-size: 15.5px; margin-bottom: 3px; }
+  .chl-body p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.4; }
+  .chl-new { font-size: 10.5px; font-weight: 800; background: var(--accent); color: #111; border-radius: 6px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+  #sheet .chl-body button { width: auto; margin: 7px 0 0; padding: 6px 12px; font-size: 13px; }
+  .link-toggle { display: block; margin: 8px auto 0; background: none; border: 0; color: var(--muted); font-size: 13px; text-decoration: underline; cursor: pointer; padding: 4px; }
+  .link-code { font: 800 38px/1.1 ui-monospace, monospace; letter-spacing: 6px; text-align: center; color: var(--accent); margin: 10px 0 2px; }
+  .link-steps { font-size: 14px; padding-left: 20px; margin: 8px 0; }
+  .link-steps li { margin: 5px 0; }
+  .rest-ico { font-size: 54px; line-height: 1; margin-bottom: 6px; }
+  .rest-when { font-weight: 700; color: var(--accent); margin: 10px 0; }
+  .rest-ideas { text-align: left; list-style: none; padding: 0; margin: 14px auto; font-size: 14px; display: inline-block; }
+  .rest-ideas li { margin: 6px 0; }
+  .well-used { font-size: 30px; font-weight: 800; text-align: center; margin: 4px 0 2px; }
+  .well-bar { height: 8px; border-radius: 6px; background: var(--border); overflow: hidden; margin: 6px 0 4px; }
+  .well-bar > i { display: block; height: 100%; background: var(--accent); }
+  .well-opts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 10px; }
+  #sheet .well-opts button { margin: 0; padding: 9px 2px; font-size: 13px; }
+  #sheet .well-opts button.on { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 800; }
+  .well-sub { text-align: center; }
+  .well-sep { border-top: 1px solid var(--border); margin: 14px 0 10px; }
+  .rg { font-size: 14px; line-height: 1.45; }
+  .rg details { border: 1px solid var(--line, #333); border-radius: 10px; margin: 0 0 8px; padding: 0 10px; background: var(--panel2, rgba(255,255,255,.03)); }
+  .rg summary { font-weight: 700; padding: 10px 0; cursor: pointer; list-style: none; }
+  .rg summary::-webkit-details-marker { display: none; }
+  .rg summary::after { content: "▾"; float: right; opacity: .6; }
+  .rg details[open] summary::after { content: "▴"; }
+  .rg details > :last-child { margin-bottom: 10px; }
+  .rg p { margin: 0 0 8px; }
+  .rg ul { margin: 0 0 8px; padding-left: 18px; }
+  .rg li { margin-bottom: 4px; }
+  .rg .rg-f { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0 0 8px; font-size: 13px; }
+  .rg .rg-f b { white-space: nowrap; }
+  .rg code { background: rgba(127,127,127,.18); border-radius: 5px; padding: 0 4px; font-size: 13px; word-break: break-all; }
+  .rg .rg-warn { border-left: 3px solid #ffb02e; padding: 6px 10px; margin: 0 0 10px; background: rgba(255,176,46,.08); border-radius: 0 8px 8px 0; font-size: 13px; }
+  .rg .rg-own { border-color: #ffd400; }
+  .rg a { color: inherit; text-decoration: underline; }
   #sheet button { display: block; width: 100%; text-align: left; padding: 12px; margin-bottom: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; }
   #sheet button.danger { color: var(--danger); }
   #sheet .count-row { display: flex; gap: 6px; margin-bottom: 4px; }
@@ -652,6 +711,8 @@
     <h2>Entrar</h2>
     <p class="sub">Sin registro. Elegí un apodo y listo.</p>
     <input class="field" id="nick" maxlength="20" placeholder="Tu apodo" autocomplete="off">
+    <input class="field" id="linkCode" hidden maxlength="7" inputmode="numeric" autocomplete="one-time-code" placeholder="Código de 6 números" style="margin-top:8px">
+    <button type="button" class="link-toggle" id="haveCode">📱 Ya uso este apodo en otro dispositivo</button>
     <div id="captcha" style="display:flex;justify-content:center;margin:10px 0 0"></div>
     <div id="err"></div>
     <button class="primary" style="width:100%">Entrar al chat</button>
@@ -675,6 +736,22 @@
     <h2 id="kickTitle">Fuiste expulsado/a</h2>
     <p class="sub" id="kickReason"></p>
     <button class="primary" id="kickBtn" onclick="location.reload()">Volver a entrar</button>
+  </div>
+</div>
+
+<div class="screen" id="restScreen" hidden>
+  <div class="card rest-card">
+    <div class="rest-ico" id="restIco">🌿</div>
+    <h2 id="restTitle">Hora de descansar</h2>
+    <p class="sub" id="restMsg"></p>
+    <p class="rest-when" id="restWhen"></p>
+    <ul class="rest-ideas">
+      <li>💧 Tomá un vaso de agua</li>
+      <li>🚶 Salí a caminar aunque sean 10 minutos</li>
+      <li>📞 Escribile o llamá a alguien que quieras</li>
+      <li>😴 Si es tarde, dormí: mañana el chat sigue acá</li>
+    </ul>
+    <button class="primary" id="restBtn" hidden onclick="try{localStorage.removeItem('gr-rest')}catch{};location.reload()">Volver a entrar</button>
   </div>
 </div>
 
@@ -708,16 +785,17 @@
     <div id="selBar" hidden>
       <button type="button" id="selX" aria-label="Cancelar">←</button><span id="selN">1</span>
       <button type="button" id="selReply" aria-label="Responder" title="Responder">↩️</button>
-      <button type="button" id="selStar" aria-label="Frase célebre" title="Guardar como frase célebre">⭐</button>
+      <button type="button" id="selStar" aria-label="Frase célebre" title="Frase célebre (para el juego ¿Quién dijo esto?)">🗣️</button>
       <button type="button" id="selEdit" aria-label="Editar" title="Editar">✏️</button>
       <button type="button" id="selCopy" aria-label="Copiar" title="Copiar">📋</button>
+      <button type="button" id="selSave" aria-label="Guardar" title="Guardar en este celu (🔖 Guardados)">🔖</button>
       <button type="button" id="selFwd" aria-label="Reenviar" title="Reenviar">↪️</button>
       <button type="button" id="selDel" aria-label="Eliminar" title="Eliminar">🗑️</button>
     </div>
     <div id="newsWrap"><button type="button" id="newsBar" hidden></button></div>
     <div id="djBar" hidden>
       <div class="dj-tabs"><button type="button" class="dj-tab" data-t="radio">📻 Radio</button><button type="button" class="dj-tab" data-t="rocola">🎵 Rocola</button></div>
-      <div class="dj-main"><button type="button" id="djPlay">▶️</button><span id="djLabel"></span><span id="djLis"></span><button type="button" id="djAdd" title="Poner un tema">➕</button><button type="button" id="djClose" title="Apagar y cerrar">✕</button></div>
+      <div class="dj-main"><button type="button" id="djPlay">▶️</button><span id="djLabel"></span><span id="djLis"></span><button type="button" id="djAdd" title="Poner un tema">➕</button><button type="button" id="djGuide" title="¿Querés hacer radio? Guía para salir al aire">🎙️</button><button type="button" id="djClose" title="Apagar y cerrar">✕</button></div>
     </div>
     <div id="voicePanel" hidden>
       <div class="vp-grid" id="vpGrid"></div>
@@ -836,6 +914,11 @@
   </div>
 </div>
 <div id="viewer" hidden><img alt=""></div>
+<div id="radioBox" hidden>
+  <div class="rb-head"><span id="rbTitle">📻</span><button type="button" id="rbSide" title="Cambiar de lado">⇆</button><button type="button" id="rbClose" title="Apagar la radio">✕</button></div>
+  <div id="rbFrame"></div>
+  <div class="rb-hint">Si no arranca solo, tocá ▶ en el reproductor.</div>
+</div>
 <div id="ytBox" hidden>
   <div class="yt-head"><span id="ytTitle"></span></div>
   <div id="ytFrame"></div>
@@ -1087,6 +1170,7 @@ function restoreSession() {
   });
   if (!ss?.token) return fallback();
   socket.emit("resume", ss.token, (res) => {
+    if (!res?.ok && res?.rest) { restoring = false; return showRest(res.rest); }
     if (!res?.ok) return fallback();
     enterChat(res);
     const items = res.replay || [];
@@ -1100,6 +1184,7 @@ function restoreSession() {
 }
 function join(nick, onFail) {
   socket.emit("join", nick, (res) => {
+    if (!res.ok && res.rest) return showRest(res.rest);
     if (!res.ok) return onFail && onFail(res.error, res);
     enterChat(res);
     if (res.replay?.length) {
@@ -1159,6 +1244,8 @@ function enterChat(res) {
     restoring = false;
     setTimeout(armBack, 0);
     setTimeout(actCheck, 1500);
+    setTimeout(chlogCheck, 2600);
+    savedLoad();
     if (res.token) setSess({ nick: res.nick, token: res.token });
     if (me !== res.nick) loadHist(res.nick); // la pestaña se recargó: recuperamos lo que ya habías visto
     me = res.nick; online = res.users;
@@ -1204,12 +1291,30 @@ function mountCaptcha() {
   document.head.append(sc);
 }
 const configReady = fetch("/config").then((r) => r.json()).then((c) => { tsSite = c.turnstile || ""; if (tsSite && !$("login").hidden && !hasPass()) mountCaptcha(); }).catch(() => {});
+$("haveCode").onclick = () => {
+  const f = $("linkCode"), show = f.hidden;
+  f.hidden = !show; $("haveCode").textContent = show ? "Entrar sin código" : "📱 Ya uso este apodo en otro dispositivo";
+  if (show) { $("err").style.color = "var(--muted)"; $("err").textContent = "En el otro dispositivo: ✏️ Mi perfil → 📱 Usar en otro dispositivo. Poné acá el mismo apodo y el código que te da."; f.focus(); } else { $("err").textContent = ""; f.value = ""; }
+};
 function doLogin() {
-  const go = () => join($("nick").value, (err, res) => {
+  const code = $("linkCode").hidden ? "" : $("linkCode").value.replace(/\D/g, "");
+  if (!$("linkCode").hidden && code.length !== 6) { setJoinBusy(false); $("err").style.color = ""; return ($("err").textContent = "El código tiene 6 números."); }
+  const go0 = () => join($("nick").value, (err, res) => {
     setJoinBusy(false);
     if (res?.captcha) { try { localStorage.removeItem("gr-pass"); } catch {} tsToken = ""; mountCaptcha(); try { window.turnstile?.reset(tsWidget); } catch {} joinWaiting = true; setJoinBusy(true, "Verificando…"); return waitMsg("🤖 Un segundo: estamos verificando que no seas un bot…"); }
     $("err").textContent = err;
   });
+  // Con código: primero se vincula este dispositivo y después entra como siempre (y recupera su lugar si estaba abierto en el otro)
+  const go = () => {
+    if (!code) return go0();
+    socket.emit("link-claim", { nick: $("nick").value, code }, (r) => {
+      if (r?.captcha) { try { localStorage.removeItem("gr-pass"); } catch {} tsToken = ""; mountCaptcha(); joinWaiting = true; setJoinBusy(true, "Verificando…"); return waitMsg("🤖 Un segundo: estamos verificando que no seas un bot…"); }
+      if (!r?.ok) { setJoinBusy(false); $("err").style.color = ""; return ($("err").textContent = r?.error || "No se pudo vincular."); }
+      $("linkCode").value = ""; $("linkCode").hidden = true;
+      // el servidor ya nos trata como el mismo dispositivo: reconectamos para que todo use la vinculación
+      go0();
+    });
+  };
   if (!tsSite || hasPass()) { setJoinBusy(true, "Entrando…"); return go(); }
   if (!tsToken) {
     mountCaptcha(); joinWaiting = true; setJoinBusy(true, "Verificando…");
@@ -1268,7 +1373,7 @@ socket.on("kicked", ({ reason, ban, mins }) => {
   $("kicked").hidden = false;
   $("kickTitle").textContent = ban ? (mins === -1 ? "Fuiste baneado/a del chat" : mins ? `Quedaste afuera del chat por ${mins >= 2880 ? Math.round(mins / 1440) + " días" : mins >= 60 ? Math.round(mins / 60) + " h" : mins + " min"}` : "Fuiste baneado/a temporalmente") : "Fuiste expulsado/a del chat";
   $("kickReason").textContent = "Motivo: " + reason;
-  $("kickBtn").hidden = !!ban;
+  $("kickBtn").hidden = !!ban; $("kickBtn").textContent = "Volver a entrar";
 });
 let pendingKey = "";
 socket.on("admin", (v) => {
@@ -1375,7 +1480,7 @@ function setPinned(text) {
 }
 function renderMessage(m) {
   if (m.type === "sys") return el("div", "sys", m.text);
-  if (m.type === "notice") { const n = el("div", "notice " + (m.kind || "") + (m.act ? " act-link" : ""), m.text); if (m.act) n.onclick = (e) => { e.stopPropagation(); openActivity(); }; return n; }
+  if (m.type === "notice") { const n = el("div", "notice " + (m.kind || "") + (m.act || m.nov ? " act-link" : ""), m.text); if (m.act) n.onclick = (e) => { e.stopPropagation(); openActivity(); }; if (m.nov) n.onclick = (e) => { e.stopPropagation(); openChangelog(); }; return n; }
   if (m.type === "announce") { const d = el("div", "announce", "📢 " + m.text); d.append(el("small", null, "Anuncio de moderación · " + hhmm(m.ts))); return d; }
   if (isBlocked(m.from)) return null;
   const mine = isMine(m);
@@ -1387,6 +1492,7 @@ function renderMessage(m) {
   if (!m.anon && !m.bot && userInfo(m.from)?.champ) meta.append(el("span", "mod", "🏆"));
   if (m.realFrom) { const rf = el("span", "anon-real", "👁️ " + m.realFrom); rf.title = "Solo lo ven los moderadores"; rf.onclick = (e) => { e.stopPropagation(); openSheet(m.realFrom); }; meta.append(rf); }
   meta.append(el("span", null, hhmm(m.ts || Date.now())));
+  if (m.id && savedIds.has(m.id)) meta.append(el("span", "saved-mark", "🔖"));
   if (m.edited && !m.deleted) meta.append(el("span", "edited", "(editado)"));
   const b = el("div", "bubble");
   if (m.fwd && !m.deleted) b.append(el("div", "fwd", "↪️ Reenviado" + (m.fwd.from && m.fwd.from !== me ? ` · de ${m.fwd.from}` : m.fwd.from === me ? " · tuyo" : "") + (m.fwd.room ? ` en ${m.fwd.room}` : "")));
@@ -1609,7 +1715,8 @@ function selectMsg(m, msgEl) {
   const recent = Date.now() - (m.ts || 0) < 30 * 60000;
   $("selEdit").hidden = !(isMine(m) && !m.image && !m.gif && !m.audio && recent);
   $("selDel").hidden = !(isMine(m) || (isAdmin && isRoom(current) && !m.bot));
-  $("selStar").hidden = !(isAdmin && isRoom(current) && !m.bot && !m.anon && !m.alias && current !== CONF && current !== MODS);
+  $("selStar").hidden = !(isAdmin && isRoom(current) && !m.bot && !m.anon && !m.alias && current !== CONF && current !== MODS && !m.image && !m.gif && !m.audio && (m.text || "").length >= 15);
+  $("selSave").textContent = savedIds.has(m.id) ? "🔖✕" : "🔖"; $("selSave").title = savedIds.has(m.id) ? "Quitar de Guardados" : "Guardar en este celu (🔖 Guardados)";
   $("selCopy").hidden = !m.text;
   $("selFwd").hidden = current === MODS;
   $("title").hidden = true; $("selBar").hidden = false;
@@ -1684,6 +1791,7 @@ $("selStar").onclick = () => {
   socket.emit("frase-add", m.id, (r) => push(current, { type: "notice", kind: r?.ok ? "help" : "warn", text: r?.ok ? (r.already ? "⭐ Ya era frase célebre." : "⭐ Guardada como frase célebre. Puede salir en ¿Quién dijo esto?") : r?.error || "No se pudo." }));
 };
 $("selFwd").onclick = () => { const m = selMsg; clearSel(); if (m) openForward(m); };
+$("selSave").onclick = () => { const m = selMsg; clearSel(); if (m) saveMsg(m); };
 function floatMsg(t) { const f = el("div", "pz-float", t); document.body.append(f); setTimeout(() => f.remove(), 2700); }
 
 // ↪️ Reenviar a una o varias personas (hasta 5)
@@ -1853,7 +1961,8 @@ function openSheet(nick) {
   btn("Cancelar", () => {});
   $("sheetBg").hidden = false;
 }
-const closeSheet = () => $("sheetBg").hidden = true;
+const sheetCleanup = () => { const sh = $("sheet"); if (sh._cleanup) { try { sh._cleanup(); } catch {} sh._cleanup = null; } };
+const closeSheet = () => { $("sheetBg").hidden = true; sheetCleanup(); };
 $("sheetBg").onclick = (e) => { if (e.target.id === "sheetBg") closeSheet(); };
 $("titleMore").onclick = () => openSheet(current);
 const modRoom = () => (isRoom(current) && current !== MODS ? current : GENERAL);
@@ -2061,6 +2170,10 @@ function openProfile() {
   socket.emit("news-pref", null, (r) => { if (r) nChk.checked = r.on; });
   nChk.onchange = () => socket.emit("news-pref", nChk.checked, () => {});
   sbtn(sh, "🔗 Invitar amigos · ganás 🧩150", () => { closeSheet(); openInvite(); }, "primary");
+  sbtn(sh, `🔖 Guardados${savedIds.size ? ` (${savedIds.size})` : ""}`, () => { closeSheet(); openSaved(); });
+  sbtn(sh, "✨ Novedades del chat", () => { closeSheet(); openChangelog(); });
+  sbtn(sh, "📱 Usar en otro dispositivo", () => { closeSheet(); openLink(); });
+  sbtn(sh, "⏳ Mi tiempo (límite y descanso)", () => { closeSheet(); openWell(); });
   sbtn(sh, "📣 Ver novedades", () => { closeSheet(); openNews(); });
   sbtn(sh, `🛒 Tienda · tenés 🧩 ${myPz}`, () => { closeSheet(); openShop(); }, "primary");
   sbtn(sh, "🏅 Mis logros e insignias", () => { closeSheet(); openLogros(); });
@@ -2340,6 +2453,7 @@ setInterval(() => { for (const m of history[current] || []) if (m.poll && !m.pol
 
 // ---------- Duelos ----------
 function sheetOpen(kind, title, sub) {
+  sheetCleanup();
   const sh = $("sheet"); sh.dataset.kind = kind; sh.replaceChildren(el("h4", null, title));
   if (sub) sh.append(el("div", "stline", sub));
   $("sheetBg").hidden = false; return sh;
@@ -2917,6 +3031,69 @@ socket.on("muro-upd", (p) => { if (muroLoaded) muroUpdate(p); });
 socket.on("muro-del", (id) => {
   const w = muroCards.get(id); if (w) { w.card.remove(); muroCards.delete(id); muroPosts.delete(id); muroEmpty(); }
 });
+// ================== 🔖 Guardados (como los destacados de WhatsApp) ==================
+// Se guardan EN ESTE CELU (IndexedDB), con la foto o el audio incluidos: no dependen del servidor y nadie más los ve.
+const SAVED_MAX = 300;
+let savedIds = new Set();
+function savedDb() {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("sin IndexedDB"));
+    const r = indexedDB.open("gr-guardados", 1);
+    r.onupgradeneeded = () => { const s = r.result.createObjectStore("items", { keyPath: "key" }); s.createIndex("owner", "owner"); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function savedTx(mode, fn) {
+  const db = await savedDb();
+  return new Promise((res, rej) => { const tx = db.transaction("items", mode); const st = tx.objectStore("items"); const out = fn(st); tx.oncomplete = () => res(out?.result ?? out); tx.onerror = () => rej(tx.error); });
+}
+async function savedAll() {
+  const db = await savedDb();
+  return new Promise((res, rej) => { const q = db.transaction("items").objectStore("items").index("owner").getAll(me); q.onsuccess = () => res(q.result.sort((a, b) => b.savedAt - a.savedAt)); q.onerror = () => rej(q.error); });
+}
+async function savedLoad() { try { savedIds = new Set((await savedAll()).map((x) => x.id)); if (current) renderMessages(); } catch {} }
+const savedKey = (id) => me + "|" + id;
+async function fetchBlob(url) { try { const r = await fetch(url); if (!r.ok) return null; return await r.blob(); } catch { return null; } }
+async function saveMsg(m) {
+  if (savedIds.has(m.id)) {
+    try { await savedTx("readwrite", (st) => st.delete(savedKey(m.id))); } catch {}
+    savedIds.delete(m.id); refreshMsg(m); return floatMsg("🔖 Quitado de Guardados");
+  }
+  try {
+    if (savedIds.size >= SAVED_MAX) return floatMsg(`Llegaste al máximo de ${SAVED_MAX} guardados`);
+    const it = { key: savedKey(m.id), id: m.id, owner: me, savedAt: Date.now(), ts: m.ts || Date.now(), from: m.anon ? "🤫 Anónimo" : m.from === me ? "Vos" : m.from,
+      chat: current, text: m.text || "", gif: m.gif || "" };
+    if (m.image) { it.image = await fetchBlob(m.image); if (!it.image) it.lost = "📷 Foto"; }
+    if (m.audio) { it.audio = await fetchBlob(m.audio); if (!it.audio) it.lost = "🎤 Audio"; }
+    await savedTx("readwrite", (st) => st.put(it));
+    savedIds.add(m.id); refreshMsg(m);
+    floatMsg(it.lost ? `🔖 Guardado (sin el archivo: ${it.lost} ya no estaba disponible)` : "🔖 Guardado · lo ves en ✏️ Mi perfil");
+  } catch { floatMsg("No se pudo guardar en este celu"); }
+}
+const chatLabel = (c) => c?.startsWith("#") ? ({ "#general": "# General", "#j-trivia": "🧠 Trivia", "#j-ia": "🕵️ Engaño", "#j-fiesta": "🎉 Fiesta", "#j-duelos": "⚔️ Duelos", "#confesiones": "🤫 Confesiones", "#voz": "🎙️ Voz", "#mods": "🛡️ Moderación" }[c] || c) : `🔒 privado con ${c}`;
+async function openSaved() {
+  let items = [];
+  try { items = await savedAll(); } catch { return floatMsg("Este navegador no permite guardar mensajes"); }
+  const urls = [];
+  const sh = sheetOpen("saved", `🔖 Guardados (${items.length})`, "Solo se ven en este celu. Para quitar uno, tocá 🗑️.");
+  sh._cleanup = () => urls.forEach((u) => URL.revokeObjectURL(u));
+  if (!items.length) sh.append(el("div", "stline", "Todavía no guardaste nada. Mantené apretado un mensaje y tocá 🔖."));
+  for (const it of items) {
+    const card = el("div", "saved-card");
+    const d = new Date(it.ts);
+    card.append(el("div", "saved-head", `${it.from} · ${chatLabel(it.chat)} · ${d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })} ${hhmm(it.ts)}`));
+    if (it.image) { const u = URL.createObjectURL(it.image); urls.push(u); const im = el("img", "saved-img"); im.src = u; im.onclick = () => openViewer(u); card.append(im); }
+    if (it.gif) { const im = el("img", "saved-img"); im.src = it.gif; im.loading = "lazy"; card.append(im); }
+    if (it.audio) { const u = URL.createObjectURL(it.audio); urls.push(u); const au = el("audio"); au.controls = true; au.src = u; au.addEventListener("play", () => { au.playbackRate = voiceSpeed; }); card.append(au); }
+    if (it.lost) card.append(el("div", "lost-media", `${it.lost} · ya no estaba disponible al guardarlo`));
+    if (it.text) { const t = el("div", "saved-text"); linkify(t, it.text); card.append(t); }
+    const del = el("button", "saved-del", "🗑️ Quitar"); del.type = "button";
+    del.onclick = async () => { try { await savedTx("readwrite", (st) => st.delete(it.key)); } catch {} savedIds.delete(it.id); const m = byId.get(it.id); if (m) refreshMsg(m); card.remove(); };
+    card.append(del); sh.append(card);
+  }
+  sbtn(sh, "Cerrar", closeSheet);
+}
+
 // ================== 🔔 Actividad en tus publicaciones ==================
 let actN = 0; const actLive = new Set(); // lo que ya se avisó en vivo en esta pestaña
 const actKey = (x) => `${x.at}|${x.by}|${x.k}`;
@@ -3060,7 +3237,14 @@ let djS = null, djOff = 0, djMode = null, djPausedBySys = false, djLoaded = "", 
 const radioAudio = new Audio(); radioAudio.preload = "none";
 const djNow = () => Date.now() + djOff;
 const djTab = () => $("djBar").dataset.tab || (djS?.radio ? "radio" : "rocola");
-socket.on("dj", (s) => { djS = s; djOff = s.now - Date.now(); djRender(); if (djMode === "rocola") djSync(); });
+let djRadioKey = "";
+socket.on("dj", (s) => {
+  const key = s.radio ? s.radio.url + "|" + (s.radio.kind || "") : "";
+  const changed = djRadioKey && key !== djRadioKey; djRadioKey = key;
+  djS = s; djOff = s.now - Date.now();
+  if (changed && djMode === "radio") { djStop(); if (s.radio) push(current, { type: "notice", kind: "help", text: "📻 La radio cambió. Tocá ▶️ para escucharla de nuevo." }); }
+  djRender(); if (djMode === "rocola") djSync();
+});
 socket.on("dj-msg", (t) => push(current, { type: "notice", kind: "help", text: t }));
 socket.on("dj-open", (m) => djOpenBar(m));
 socket.on("dj-add-cmd", (u) => djAdd(u));
@@ -3087,10 +3271,11 @@ function djRender() {
   $("djPlay").textContent = playing ? "⏸️" : "▶️";
   $("djPlay").disabled = tab === "radio" ? !djS.radio : !djS.on;
   $("djAdd").hidden = tab !== "rocola" || !djS.on;
+  $("djGuide").hidden = tab !== "radio";
   $("ytTitle").textContent = djS.cur ? djS.cur.title : "Fila vacía";
 }
 function djStop() {
-  if (djMode === "radio") { radioAudio.pause(); radioAudio.removeAttribute("src"); radioAudio.load(); }
+  if (djMode === "radio") { radioAudio.pause(); radioAudio.removeAttribute("src"); radioAudio.load(); $("rbFrame").replaceChildren(); $("radioBox").hidden = true; }
   if (djMode === "rocola") { try { ytP?.stopVideo(); } catch {} $("ytBox").hidden = true; djLoaded = ""; }
   djMode = null; djPausedBySys = false; socket.emit("dj-listen", null); djRender();
 }
@@ -3099,6 +3284,7 @@ function djPlay(tab) {
   djStop();
   if (tab === "radio") {
     if (!djS?.radio) return;
+    if (djS.radio.kind === "embed") { radioEmbedOpen(djS.radio); djMode = "radio"; socket.emit("dj-listen", "radio"); djRender(); try { localStorage.setItem("gr-dj", tab); } catch {} return; }
     radioAudio.src = djS.radio.url;
     radioAudio.play().then(() => { djMode = "radio"; socket.emit("dj-listen", "radio"); djRender(); })
       .catch(() => push(current, { type: "notice", kind: "warn", text: "📻 No se pudo conectar con la radio. Probá en un ratito." }));
@@ -3108,6 +3294,54 @@ function djPlay(tab) {
     $("ytBox").hidden = false; djRender(); djSync();
   }
   try { localStorage.setItem("gr-dj", tab); } catch {}
+}
+// Reproductor de Caster.fm (plan gratis: no hay link directo, se usa su reproductor en un recuadro)
+function radioEmbedOpen(r) {
+  const e = r.embed || {}, f = document.createElement("iframe");
+  f.allow = "autoplay; encrypted-media"; f.referrerPolicy = "strict-origin-when-cross-origin"; f.title = r.name || "Radio";
+  if (e.type === "widget") {
+    // Se arma el mismo código que da Caster.fm, dentro de un iframe propio (se borra entero al cerrar la radio)
+    const safe = (v) => String(v || "").replace(/[^\w\-#.:, ]/g, "");
+    const attrs = e.attrs || { "data-type": "streamPlayer", "data-publicToken": e.token, "data-theme": "dark", "data-color": "ffd400", "data-channelId": e.ch };
+    const at = Object.entries(attrs).filter(([k]) => /^data-[\w-]{1,30}$/.test(k)).map(([k, v]) => `${k}="${safe(v)}"`).join(" ");
+    let src = "https://cdn.cloud.caster.fm/widgets/embed.js";
+    try { const u = new URL(e.script || src); if (u.protocol === "https:" && /(^|\.)caster\.fm$/i.test(u.hostname)) src = u.href; } catch {}
+    f.style.height = "180px";
+    f.srcdoc = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;background:#111}</style></head><body>` +
+      `<div ${at} class="${safe(e.cls || "cstrEmbed").replace(/[^\w\- ]/g, "")}">` +
+      `<a href="https://www.caster.fm">Shoutcast Hosting</a> <a href="https://www.caster.fm">Stream Hosting</a> <a href="https://www.caster.fm">Radio Server Hosting</a></div>` +
+      `<script src="${src.replace(/"/g, "")}"><\/script></body></html>`;
+    // Ajusta el alto al reproductor (el srcdoc es del mismo origen, así que se puede medir)
+    f.onload = () => {
+      let n = 0; const fit = () => { try { const h = f.contentDocument?.body?.scrollHeight || 0; if (h > 40) f.style.height = Math.min(320, h) + "px"; } catch {} if (++n < 20 && f.isConnected) setTimeout(fit, 500); };
+      fit();
+    };
+  } else {
+    f.src = e.src || r.url; f.style.height = (e.h || 170) + "px";
+  }
+  $("rbTitle").textContent = "📻 " + (r.name || "Radio");
+  $("rbFrame").replaceChildren(f); $("radioBox").hidden = false;
+}
+$("rbClose").onclick = () => djStop();
+$("rbSide").onclick = () => $("radioBox").classList.toggle("left");
+// 👑 Configurar la radio (pegar el código del reproductor de Caster.fm o un link)
+socket.on("radio-config", () => openRadioConfig());
+function openRadioConfig() {
+  if (!isOwner) return;
+  const r = djS?.radio;
+  const sh = sheetOpen("radioconf", "📻 Configurar la radio", r ? `Ahora: «${r.name}» · ${r.kind === "embed" ? "reproductor de Caster.fm" : "link directo"}` : "Todavía no hay radio configurada.");
+  sh.append(el("div", "hint", "En Caster.fm: panel → Widgets → copiá el código del reproductor y pegalo acá. También sirve un link directo de transmisión (https://…)."));
+  const code = el("textarea", "rc-code"); code.placeholder = "<iframe src=\"https://…caster.fm/…\"></iframe>  o  https://…";
+  const name = el("input", "rc-name"); name.placeholder = "Nombre de la radio (ej. Radio Gente Rota)"; name.maxLength = 40; name.value = r?.name || "";
+  const msg = el("div", "hint");
+  sh.append(el("b", null, "Código o link"), code, el("b", null, "Nombre"), name, msg);
+  sbtn(sh, "💾 Guardar", () => socket.emit("radio-set", { code: code.value, name: name.value }, (res) => {
+    if (res?.ok) { closeSheet(); push(current, { type: "notice", kind: "mod", text: res.msg }); djOpenBar("radio"); } else msg.textContent = res?.error || "No se pudo guardar.";
+  }));
+  if (r) sbtn(sh, "🔇 Desactivar la radio", () => { if (confirm("¿Sacar la radio del chat?")) socket.emit("radio-set", { off: true }, (res) => { closeSheet(); if (res?.msg) push(current, { type: "notice", kind: "mod", text: res.msg }); }); }, "danger");
+  sbtn(sh, "🎙️ Ver la guía de radio", () => openRadioGuide());
+  sbtn(sh, "Cancelar", closeSheet);
+  setTimeout(() => code.focus(), 50);
 }
 radioAudio.addEventListener("error", () => { if (djMode === "radio" && radioAudio.src) { push(current, { type: "notice", kind: "warn", text: "📻 Se cortó la radio. Tocá ▶️ para reconectar." }); djStop(); } });
 function ytLoad() {
@@ -3147,8 +3381,8 @@ setInterval(() => {
   if (!djMode) return;
   const busy = !!call || !!vRoom;
   const duck = [...document.querySelectorAll("audio")].some((a) => a !== radioAudio && !a.paused && !a.muted && a.currentTime > 0);
-  if (busy && !djPausedBySys) { djPausedBySys = true; if (djMode === "radio") radioAudio.pause(); else try { ytP?.pauseVideo(); } catch {} }
-  else if (!busy && djPausedBySys) { djPausedBySys = false; if (djMode === "radio") radioAudio.play().catch(() => {}); else { try { ytP?.playVideo(); } catch {} djSync(); } }
+  if (busy && !djPausedBySys) { djPausedBySys = true; if (djMode === "radio") { if (djS?.radio?.kind !== "embed") radioAudio.pause(); } else try { ytP?.pauseVideo(); } catch {} }
+  else if (!busy && djPausedBySys) { djPausedBySys = false; if (djMode === "radio") { if (djS?.radio?.kind !== "embed") radioAudio.play().catch(() => {}); } else { try { ytP?.playVideo(); } catch {} djSync(); } }
   radioAudio.volume = duck ? 0.15 : 1;
   try { ytP?.setVolume?.(duck ? 15 : 100); } catch {}
   if (djMode === "rocola" && !djPausedBySys && djS?.cur) djSync();
@@ -3182,6 +3416,7 @@ function djQueueSheet() {
 $("djBtn").onclick = () => { const b = $("djBar"); if (b.hidden) djOpenBar(); else if (!djMode) b.hidden = true; else djOpenBar(); };
 $("djBar").querySelectorAll(".dj-tab").forEach((b) => b.onclick = () => { $("djBar").dataset.tab = b.dataset.t; djRender(); });
 $("djPlay").onclick = () => djPlay(djTab());
+$("djGuide").onclick = () => openRadioGuide();
 $("djAdd").onclick = djQueueSheet;
 $("djClose").onclick = () => { djStop(); $("djBar").hidden = true; };
 $("ytList").onclick = djQueueSheet;
@@ -3516,6 +3751,17 @@ function openModPanel() {
     btn("👑 Ver moderadores y claves", () => cmd("/mods"));
     btn("🔑 Crear clave de moderador", () => { const n = prompt("Nombre de la persona (para identificar la clave):"); if (n && n.trim()) cmd(`/crearclave ${n.trim()}`); });
     btn("🗑️ Anular una clave", () => { const n = prompt("Nombre de la persona cuya clave querés anular:"); if (n && n.trim()) cmd(`/quitarclave ${n.trim()}`); }, "danger");
+    sheet.append(el("div", "modsep", "📻 Radio"));
+    btn("📻 Configurar radio", () => setTimeout(openRadioConfig, 0));
+    sheet.append(el("div", "modsep", "✨ Novedades"));
+    btn("✨ Publicar una novedad (la ven todos)", () => {
+      const title = prompt("Título de la novedad (corto). Ej: Radio en vivo los viernes"); if (!title || !title.trim()) return;
+      const text = prompt("Explicalo en una o dos oraciones:") || "";
+      const ico = prompt("Un emoji para la novedad:", "✨") || "✨";
+      cmd(`/novedad ${ico.trim()} | ${title.trim().replace(/\|/g, "/")} | ${text.trim().replace(/\|/g, "/")}`);
+    });
+    btn("↩️ Sacar la última novedad", () => { if (confirm("¿Sacar la última novedad publicada?")) cmd("/novedad borrar"); }, "danger");
+    btn("🎙️ Guía de radio (dueño y locutores)", () => setTimeout(openRadioGuide, 0));
   }
   btn("❔ Todos los comandos", () => cmd("/ayuda"));
   btn("Cerrar", () => {});
@@ -3586,9 +3832,236 @@ function openRoundSheet() {
   $("sheetBg").hidden = false;
 }
 
+// ---------- ✨ Novedades del chat ----------
+// Al entrar, si hay cambios que todavía no viste, aparece esta ventana (una sola vez por novedad).
+let chlog = [], chlogTries = 0;
+const chlogSeen = () => { try { return +localStorage.getItem("gr-chlog") || 0; } catch { return 0; } };
+const chlogMark = () => { const top = Math.max(0, ...chlog.map((x) => x.id)); try { if (top) localStorage.setItem("gr-chlog", String(top)); } catch {} };
+const CHLOG_ACT = { well: () => openWell(), link: () => openLink(), saved: () => openSaved(), radio: () => djOpenBar("radio"), profile: () => $("meTop").click() };
+function chlogCheck() {
+  socket.emit("changelog-get", null, (list, info) => {
+    if (!Array.isArray(list)) return;
+    chlog = list;
+    let seen = chlogSeen();
+    if (!seen) {
+      // gente que ya venía al chat: le mostramos lo nuevo. Alguien que entra por primera vez: todo es nuevo, no lo abrumamos.
+      if (!info?.old) return chlogMark(); // el servidor sabe si ya tenía perfil con ese apodo
+    }
+    const fresh = list.filter((x) => x.id > seen);
+    if (!fresh.length) return;
+    if (!$("sheetBg").hidden || !$("app") || $("app").style.display === "none") { if (++chlogTries < 6) setTimeout(chlogCheck, 6000); return; }
+    openChangelog(fresh, true);
+  });
+}
+function openChangelog(items, isNew) {
+  const all = !items;
+  const seen = chlogSeen();
+  const list = (items || chlog).slice().sort((a, b) => b.id - a.id);
+  if (all && !chlog.length) return socket.emit("changelog-get", null, (l) => { if (Array.isArray(l) && l.length) { chlog = l; openChangelog(); } });
+  const sh = sheetOpen("changelog", isNew ? "✨ ¡Hay novedades en Gente Rota!" : "✨ Novedades del chat", isNew ? "Lo nuevo desde la última vez que entraste:" : "Lo último que cambió en el chat.");
+  for (const x of list) {
+    const card = el("div", "chl-card"), body = el("div", "chl-body"), t = el("b", null, x.title);
+    if (!isNew && x.id > seen) t.append(el("span", "chl-new", "NUEVO"));
+    body.append(t); if (x.text) body.append(el("p", null, x.text));
+    if (x.act && CHLOG_ACT[x.act]) { const b = el("button", null, (x.btn || "Probar") + " →"); b.type = "button"; b.onclick = () => { chlogMark(); closeSheet(); setTimeout(CHLOG_ACT[x.act], 50); }; body.append(b); }
+    card.append(el("div", "chl-ico", x.ico || "✨"), body); sh.append(card);
+  }
+  if (!list.length) sh.append(el("div", "stline", "Todavía no hay novedades."));
+  sh._cleanup = chlogMark; // cerrarla de cualquier forma cuenta como "vista"
+  sbtn(sh, isNew ? "¡Entendido! 👍" : "Cerrar", closeSheet, "primary");
+}
+socket.on("changelog", (list, newId) => {
+  if (!Array.isArray(list)) return;
+  chlog = list;
+  const x = newId && list.find((e) => e.id === newId);
+  if (x && me) push(current, { type: "notice", kind: "help", nov: true, text: `✨ Novedad en el chat: ${x.ico || ""} ${x.title}. Tocá para ver.` });
+});
+socket.on("open-changelog", () => openChangelog());
+
+// ---------- ⏳ Mi tiempo: límite diario y descanso ----------
+const fmtM = (m) => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}` : `${m} min`;
+function showRest(r) {
+  if (!r) return;
+  try { localStorage.setItem("gr-rest", JSON.stringify({ kind: r.kind, until: r.until, msg: r.msg, lim: r.lim })); } catch {}
+  wasKicked = true; setSess(null);
+  socket.io.opts.reconnection = false;
+  try { closeSheet(); } catch {}
+  $("app").style.display = "none"; ["login", "rulesScreen", "kicked"].forEach((i) => { const e = $(i); if (e) e.hidden = true; });
+  $("restScreen").hidden = false;
+  const brk = r.kind === "break";
+  $("restIco").textContent = brk ? "🌿" : "⏳";
+  $("restTitle").textContent = brk ? "Te estás tomando un descanso" : "Por hoy es suficiente";
+  $("restMsg").textContent = r.msg || "";
+  const tick = () => {
+    const left = (r.until || 0) - Date.now();
+    if (left <= 0) { $("restWhen").textContent = "Ya podés volver 💛"; $("restBtn").hidden = false; return; }
+    const h = Math.floor(left / 3600e3), m = Math.ceil((left % 3600e3) / 60000);
+    $("restWhen").textContent = "Volvés en " + (h >= 48 ? `${Math.round(h / 24)} días` : h ? `${h} h ${m} min` : `${m} min`);
+    setTimeout(tick, 30000);
+  };
+  tick();
+  try { socket.disconnect(); } catch {}
+}
+socket.on("rest", (r) => showRest(r));
+// 📱 Se abrió en otro dispositivo vinculado (o este fue desvinculado)
+socket.on("taken-over", ({ msg, unlinked } = {}) => {
+  wasKicked = true; socket.io.opts.reconnection = false;
+  if (unlinked) setSess(null);
+  try { closeSheet(); } catch {}
+  $("app").style.display = "none"; ["login", "rulesScreen", "restScreen"].forEach((i) => { const e = $(i); if (e) e.hidden = true; });
+  $("kicked").hidden = false;
+  $("kickTitle").textContent = msg || "📱 Abriste Gente Rota en otro dispositivo.";
+  $("kickReason").textContent = unlinked ? "Si querés volver a usar tu apodo acá, pedí un código nuevo desde tu otro dispositivo." : "Se puede usar en un solo lugar a la vez. Si querés seguir acá, tocá «Usar acá» (y el otro se pausa).";
+  $("kickBtn").hidden = false; $("kickBtn").textContent = unlinked ? "Entrar de nuevo" : "Usar acá";
+});
+// ✏️ Mi perfil → 📱 Usar en otro dispositivo
+function openLink() {
+  const sh = sheetOpen("link", "📱 Usar en otro dispositivo", "Tu apodo, tus piezas y tus logros, en el celu y en la PC.");
+  const box = el("div");
+  box.innerHTML = `<ol class="link-steps">
+    <li>Tocá <b>Generar código</b> acá.</li>
+    <li>En el otro dispositivo abrí <b>genterotachat.com.ar</b> y tocá <b>"📱 Ya uso este apodo en otro dispositivo"</b>.</li>
+    <li>Poné tu apodo (<b>${escH(me)}</b>) y el código. ¡Listo!</li></ol>
+    <div class="hint">Se usa en un solo lugar a la vez: si lo abrís en el otro, este se pausa (y al revés). Solo hace falta hacerlo una vez por dispositivo.</div>`;
+  sh.append(box);
+  const out = el("div"); sh.append(out);
+  sbtn(sh, "🔢 Generar código", () => socket.emit("link-code", null, (r) => {
+    if (!r?.ok) return floatMsg(r?.error || "No se pudo.");
+    out.replaceChildren(el("div", "link-code", r.code.slice(0, 3) + " " + r.code.slice(3)), el("div", "hint well-sub", `Vence en ${r.mins} minutos. No se lo pases a nadie: con este código entran con tu apodo.`));
+  }));
+  socket.emit("link-info", null, (r) => {
+    if (!r || r.devs < 2) return;
+    sh.insertBefore(el("div", "hint", `🔗 Tenés ${r.devs} dispositivos vinculados.`), out);
+    const ub = sbtn(sh, "🔓 Desvincular los otros dispositivos", () => {
+      if (!confirm("¿Desvincular todos los demás dispositivos? Se van a salir y, para volver a usar tu apodo ahí, vas a necesitar un código nuevo.")) return;
+      socket.emit("link-unlink", null, (x) => { closeSheet(); floatMsg(x?.n ? `🔓 Listo: desvinculaste ${x.n} dispositivo${x.n === 1 ? "" : "s"}.` : "No había otros dispositivos."); });
+    }, "danger");
+    sh.insertBefore(ub, closeB);
+  });
+  const closeB = sbtn(sh, "Cerrar", closeSheet);
+}
+// Si ya estaba en descanso (o llegó al límite) y recarga la página, sigue viendo la pantalla
+try { const r = JSON.parse(localStorage.getItem("gr-rest") || "null"); if (r && r.until > Date.now()) setTimeout(() => showRest(r), 0); else localStorage.removeItem("gr-rest"); } catch {}
+socket.on("limit-warn", ({ left }) => {
+  const t = left <= 1 ? "⏳ Te queda 1 minuto de tu límite de hoy. ¡Despedite tranqui! 💛" : `⏳ Te quedan ${left} minutos de tu límite de hoy.`;
+  push(current, { type: "notice", kind: "warn", text: t }); floatMsg(t);
+});
+socket.on("open-well", () => openWell());
+function openWell() {
+  socket.emit("well-get", null, (w) => {
+    if (!w) return;
+    const sh = sheetOpen("well", "⏳ Mi tiempo", "Esto es solo tuyo: nadie más lo ve, ni los moderadores.");
+    sh.append(el("div", "well-used", fmtM(w.used)), el("div", "hint well-sub", "conectado/a hoy" + (w.lim ? ` de ${fmtM(w.lim)}` : "")));
+    if (w.lim) { const bar = el("div", "well-bar"), i = el("i"); i.style.width = Math.min(100, Math.round(w.used / w.lim * 100)) + "%"; bar.append(i); sh.append(bar); }
+    sh.append(el("div", "well-sep"), el("b", null, "Mi límite por día"),
+      el("div", "hint", "Cuando llegás, el chat te saca hasta mañana. Bajarlo rige ya; subirlo o sacarlo rige desde mañana."));
+    const opts = el("div", "well-opts");
+    for (const v of w.opts) {
+      const b = el("button", v === w.lim ? "on" : "", v ? fmtM(v).replace(" min", "m").replace(" h", "h") : "Sin límite");
+      b.type = "button";
+      b.onclick = () => socket.emit("limit-set", v, (res) => { if (res?.ok) { closeSheet(); floatMsg(res.msg); push(current, { type: "notice", kind: "help", text: res.msg }); } else floatMsg(res?.error || "No se pudo."); });
+      opts.append(b);
+    }
+    sh.append(opts);
+    if (w.next !== null && w.next !== undefined) sh.append(el("div", "hint", `📅 Desde mañana: ${w.next ? fmtM(w.next) : "sin límite"}.`));
+    if (!w.owner) {
+      sh.append(el("div", "well-sep"), el("b", null, "🌿 Tomarme un descanso"),
+        el("div", "hint", "Te saca del chat y no podés volver a entrar (con este apodo ni desde este celu) hasta que pase el tiempo. No se puede deshacer."));
+      const bo = el("div", "well-opts");
+      for (const [k, t] of [["1d", "1 día"], ["3d", "3 días"], ["7d", "1 semana"]]) {
+        const b = el("button", "", t); b.type = "button";
+        b.onclick = () => {
+          if (!confirm(`¿Tomarte un descanso de ${t}?\n\nNo vas a poder entrar hasta que pase, y no se puede deshacer.`)) return;
+          socket.emit("break-take", k, (res) => { if (!res?.ok) floatMsg(res?.error || "No se pudo."); });
+        };
+        bo.append(b);
+      }
+      sh.append(bo);
+    }
+    sbtn(sh, "Cerrar", closeSheet);
+  });
+}
+
+// ---------- 🎙️ Guía para hacer radio ----------
+// Explica cómo salir al aire en la 📻 (Caster.fm gratis) desde el celu o la compu. Se abre con 🎙️ en la barra de radio o /radio ayuda.
+const escH = (t) => String(t).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+function openRadioGuide() {
+  const sh = sheetOpen("radioguide", "🎙️ Cómo hacer radio", "La 📻 del chat es una sola: cuando alguien sale al aire, todos los que la tienen prendida lo escuchan. Alcanza con el celu y auriculares con micrófono.");
+  const radioName = djS?.radio?.name;
+  const own = isOwner ? `
+    <details class="rg-own" open><summary>👑 Para vos (dueño): armar la radio</summary>
+      <p>Estado: ${radioName ? `✅ configurada como «${escH(radioName)}»` : "❌ todavía no hay radio configurada"}</p>
+      <ul>
+        <li><b>Una sola vez:</b> creá una cuenta gratis en <a href="https://www.caster.fm" target="_blank" rel="noopener">caster.fm</a> (plan Free, no pide tarjeta) y elegí el nombre de la radio.</li>
+        <li>En el panel de Caster.fm, en <b>Streaming Server</b>, tocá <b>Start Server</b>. Ahí aparecen el servidor, el puerto, el mount y la contraseña: esos datos se los pasás <b>por privado</b> a cada locutor/a.</li>
+        <li>En el panel → <b>Widgets</b>, copiá el código del reproductor. Después, acá: 👑 Panel → <b>📻 Configurar radio</b> → pegalo y guardá. Listo, ya aparece en la 📻 para todos.</li>
+      </ul>
+      <div class="rg-warn">⏻ <b>Antes de cada programa:</b> en el plan gratis el servidor se apaga solo si pasan 15 minutos sin nadie al aire. Alguien con tu cuenta (vos) tiene que entrar al panel y tocar <b>Start Server</b> antes de que el locutor se conecte. Se puede hacer desde el celu.</div>
+      <p>Para sacar la radio: 👑 Panel → 📻 Configurar radio → Desactivar. Si se filtra la contraseña de transmisión, cambiala en el panel de Caster.fm y pasásela de nuevo solo a quienes sigan.</p>
+    </details>` : "";
+  const box = el("div", "rg");
+  box.innerHTML = own + `
+    <details open><summary>1️⃣ Pedí los datos para transmitir</summary>
+      <p>Escribile <b>por privado</b> al dueño del chat que querés hacer radio. Si te da el OK, te pasa estos datos: <b>servidor, puerto, mount, usuario y contraseña</b>.</p>
+      <p>⏻ <b>Antes de cada programa</b> avisale al dueño a qué hora salís: la radio usa un servidor gratis que se apaga solo y él lo tiene que prender.</p>
+      <div class="rg-warn">🔒 Son secretos: no los pegues en el chat ni se los pases a nadie. Con esos datos cualquiera puede salir al aire en nombre de Gente Rota.</div>
+    </details>
+    <details><summary>2️⃣ Instalá una app para transmitir</summary>
+      <ul>
+        <li>📱 <b>Android:</b> <b>MediaCast</b> (gratis, en Play Store). Si no la encontrás, buscá "Icecast" en Play Store: sirve cualquiera que transmita en <b>MP3</b> a un servidor Icecast.</li>
+        <li>🍎 <b>iPhone:</b> <b>iziCast</b> (es paga).</li>
+        <li>💻 <b>Compu:</b> <b>BUTT</b> (gratis, <a href="https://danielnoethen.de/butt/" target="_blank" rel="noopener">danielnoethen.de/butt</a>). Si querés mezclar música y micrófono como DJ, <b>Mixxx</b> (también gratis). Si ya tenés <b>SAM Broadcaster</b>, también sirve.</li>
+      </ul>
+    </details>
+    <details><summary>3️⃣ Cargá los datos en la app</summary>
+      <p>En la configuración del servidor de la app, completá:</p>
+      <div class="rg-f">
+        <b>Tipo</b><span>Icecast (o Icecast 2)</span>
+        <b>Servidor / Host</b><span>el que te pasaron</span>
+        <b>Puerto</b><span>el que te pasaron</span>
+        <b>Mount</b><span>con una barra adelante, ej. <code>/abc123</code></span>
+        <b>Usuario</b><span>el que te pasaron (casi siempre <code>source</code>)</span>
+        <b>Contraseña</b><span>la que te pasaron</span>
+        <b>Formato</b><span>MP3</span>
+        <b>Calidad</b><span>96 kbps, el máximo del plan gratis (64 si usás datos del celu)</span>
+      </div>
+      <p><b>En MediaCast:</b> menú ☰ → Ajustes → elegí Icecast y completá.<br><b>En BUTT:</b> Settings → Main → en "Server" tocá ADD → elegí Icecast, completá y Save. En la pestaña Audio elegí tu micrófono.</p>
+    </details>
+    <details><summary>4️⃣ Salí al aire</summary>
+      <ul>
+        <li>Tocá <b>Conectar</b> (en BUTT, el botón ▶). Si conecta, ya estás al aire.</li>
+        <li>Avisá en General: <i>"🔴 ¡Estoy al aire en la 📻!"</i>. La gente lo escucha tocando 📻 → ▶️ (se abre un reproductor chiquito).</li>
+        <li>Hay unos segundos de retraso. No prendas la 📻 del chat en tu propio celu mientras hablás: te vas a escuchar con eco y retraso. Pedile a alguien que te confirme si se escucha bien.</li>
+        <li>Para terminar, tocá Desconectar (o ■ en BUTT).</li>
+      </ul>
+    </details>
+    <details><summary>💡 Consejos</summary>
+      <ul>
+        <li>🎧 Usá auriculares con micrófono. Sin auris, el micro levanta lo que suena y se acopla.</li>
+        <li>📶 Mejor con Wi-Fi. Con datos, una hora gasta unos 43 MB a 96 kbps (30 MB a 64 kbps).</li>
+        <li>🔋 Dejá la app abierta y sacale el ahorro de batería: Android puede cortar la transmisión si la manda al fondo.</li>
+        <li>👤 Puede transmitir una sola persona a la vez. Si alguien ya está al aire, a vos no te va a dejar conectar.</li>
+        <li>🎵 Para pasar temas conocidos, mejor usá la Rocola del chat. La radio rinde más para charlar, programas y música propia.</li>
+        <li>📜 Las reglas del chat también valen al aire.</li>
+      </ul>
+    </details>
+    <details><summary>🔧 Si algo falla</summary>
+      <ul>
+        <li><b>"Contraseña incorrecta" / error 401:</b> revisá usuario y contraseña (ojo con espacios al copiar).</li>
+        <li><b>No conecta / "conexión rechazada":</b> lo más común es que el servidor esté apagado. Pedile al dueño que toque Start Server en Caster.fm. Si sigue, revisá servidor, puerto y que el mount tenga la <code>/</code> adelante.</li>
+        <li><b>"Mount in use" / ocupado:</b> hay otra persona al aire. Esperá a que termine.</li>
+        <li><b>Conecta pero no se escucha nada:</b> dale permiso de micrófono a la app y fijate que el formato sea MP3 y no más de 96 kbps.</li>
+        <li><b>Se corta:</b> conexión floja o el celu cerró la app. Bajá a 64 kbps y dejala en primer plano.</li>
+      </ul>
+    </details>`;
+  sh.append(box);
+  sbtn(sh, "Cerrar", closeSheet);
+}
+
 // ---------- Enviar ----------
 function sendText(text, media = pendingMedia) {
   if (text === "/reglas" && !media) return $("rulesBtn").click();
+  if (!media && /^\/\s*(radio\s+(ayuda|gu[ií]a|help|\?)|hacerradio|locutor(es|a)?|gu[ií]aradio)\s*$/i.test(text)) return openRadioGuide();
   const dec = !media && text.match(/^\/\s*(decidi|decidí|votacion|votación|encuesta)\b\s*(.*)$/i);
   if (dec) {
     const parts = dec[2].split("|").map((x) => x.trim()).filter(Boolean);
