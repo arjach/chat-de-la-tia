@@ -247,7 +247,7 @@ function banAdd(c, ms, reason, by) {
 }
 function banRemove(nick) {
   const n = String(nick || "").toLowerCase().replace(/^@/, "");
-  let k = 0; for (const [key, b] of bans) if ((b.nick || "").toLowerCase() === n) { bans.delete(key); k++; }
+  let k = 0; for (const [key, b] of bans) if ((b.nick || "").toLowerCase() === n || (b.rel || "").toLowerCase() === n) { bans.delete(key); k++; }
   if (k) dirty(); return k;
 }
 const fmtDur = (ms) => ms === Infinity || ms >= FOREVER / 2 ? "para siempre" : ms >= 86400e3 ? `${Math.round(ms / 86400e3)} día${Math.round(ms / 86400e3) === 1 ? "" : "s"}` : ms >= 3600e3 ? `${Math.round(ms / 3600e3)} h` : `${Math.max(1, Math.round(ms / 60000))} min`;
@@ -258,6 +258,83 @@ function parseDur(w) {
   const n = Math.max(1, parseInt(m[1])), u = m[2][0];
   return n * (u === "m" ? 60000 : u === "h" ? 3600e3 : u === "s" ? 7 * 86400e3 : 86400e3);
 }
+
+
+// ---------- 🔍 Cuentas relacionadas (para los que entran camuflados con otro apodo) ----------
+// Se anota qué apodos entran desde cada dispositivo y desde cada red. NO se guardan IPs: solo una huella cifrada.
+// Solo los mods ven los apodos relacionados (nunca IPs ni datos personales).
+const seenBy = new Map();   // "d:<dev>" | "i:<huella de red>" -> [{ n: apodo, t }]
+const lastOf = new Map();   // apodo (minúsculas) -> { d, i, t }  (para buscar aunque no esté conectado)
+const sanctions = new Map(); // apodo (minúsculas) -> { k: "baneo" | "silencio" | …, t }
+const relAlerted = new Map(); // "apodo|otro" -> cuándo se avisó (para no repetir)
+const SEEN_DEV_MS = 60 * 86400e3, SEEN_NET_MS = 14 * 86400e3, SANCTION_MS = 30 * 86400e3;
+const netKey = (ip) => "i:" + require("crypto").createHmac("sha256", process.env.ADMIN_PASSWORD || "gente-rota").update(String(ip || "")).digest("base64url").slice(0, 16);
+function seenNote(c) {
+  if (!c.nick || c.bot) return;
+  const t = now(), n = c.nick, ln = n.toLowerCase(), keys = [];
+  if (c.dev) keys.push("d:" + c.dev);
+  if (c.ip) keys.push(netKey(c.ip));
+  for (const k of keys) {
+    const arr = (seenBy.get(k) || []).filter((x) => x.n.toLowerCase() !== ln && t - x.t < SEEN_DEV_MS);
+    arr.push({ n, t }); seenBy.set(k, arr.slice(-12));
+  }
+  lastOf.set(ln, { d: c.dev || "", i: c.ip ? netKey(c.ip) : "", t });
+  if (seenBy.size > 6000) { const cut = [...seenBy].sort((a, b) => a[1].at(-1).t - b[1].at(-1).t).slice(0, 1000); cut.forEach(([k]) => seenBy.delete(k)); }
+  if (lastOf.size > 6000) { const cut = [...lastOf].sort((a, b) => a[1].t - b[1].t).slice(0, 1000); cut.forEach(([k]) => lastOf.delete(k)); }
+  dirty();
+}
+function markSanction(nick, k) { if (!nick || nick === BOT) return; sanctions.set(String(nick).toLowerCase(), { k, t: now() }); dirty(); }
+// Otros apodos del mismo dispositivo (seguro) y de la misma red (puede ser casualidad: casas, wifi públicos, datos móviles)
+function relatedOf(nick, dev, net) {
+  const t = now(), ln = String(nick).toLowerCase(), sameDev = new Map(), sameNet = new Map();
+  for (const x of (dev && seenBy.get("d:" + dev)) || []) if (x.n.toLowerCase() !== ln && t - x.t < SEEN_DEV_MS) sameDev.set(x.n.toLowerCase(), x);
+  for (const x of (net && seenBy.get(net)) || []) if (x.n.toLowerCase() !== ln && !sameDev.has(x.n.toLowerCase()) && t - x.t < SEEN_NET_MS) sameNet.set(x.n.toLowerCase(), x);
+  return { dev: [...sameDev.values()], net: [...sameNet.values()] };
+}
+const agoTxt = (t) => { const m = Math.round((now() - t) / 60000); return m < 60 ? `hace ${Math.max(1, m)} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} día${Math.round(m / 1440) === 1 ? "" : "s"}`; };
+function sanctionTxt(n) {
+  const ln = String(n).toLowerCase(), b = banFind(null, null, n);
+  if (b) return `⛔ baneado/a${b.until >= FOREVER / 2 ? " para siempre" : ""}`;
+  const s = sanctions.get(ln);
+  return s && now() - s.t < SANCTION_MS ? `${s.k} ${agoTxt(s.t)}` : "";
+}
+function relatedText(nick, dev, net) {
+  const r = relatedOf(nick, dev, net);
+  if (!r.dev.length && !r.net.length) return "🔍 Otras cuentas: ninguna que yo sepa.";
+  const line = (x) => { const s = sanctionTxt(x.n); return `${x.n} (${agoTxt(x.t)}${s ? " · " + s : ""})`; };
+  return "🔍 Otras cuentas:" +
+    (r.dev.length ? `\n  📱 Mismo dispositivo: ${r.dev.map(line).join(", ")}` : "") +
+    (r.net.length ? `\n  📶 Misma red (puede ser casualidad): ${r.net.map(line).join(", ")}` : "");
+}
+// Al entrar: si viene del dispositivo (o la red) de alguien sancionado, se avisa a los mods
+function relScan(c) {
+  if (!c.nick || c.admin) return;
+  const net = c.ip ? netKey(c.ip) : "", r = relatedOf(c.nick, c.dev, net), t = now(), out = [];
+  for (const [list, strong] of [[r.dev, true], [r.net, false]]) for (const x of list) {
+    const s = sanctionTxt(x.n);
+    if (!s || (!strong && !/baneado|baneo/.test(s))) continue; // por red solo se avisa si el otro está/estuvo baneado
+    const key = c.nick.toLowerCase() + "|" + x.n.toLowerCase();
+    if (t - (relAlerted.get(key) || 0) < 3600e3) continue;
+    relAlerted.set(key, t);
+    out.push(strong ? `📱 mismo dispositivo que ${x.n} (${s})` : `📶 misma red que ${x.n} (${s}) — puede ser casualidad`);
+  }
+  if (relAlerted.size > 2000) relAlerted.clear();
+  if (out.length) { notifyAdmins(`⚠️ Posible cuenta camuflada: ${c.nick} entra desde ${out.join(" · ")}. Mirá /info ${c.nick}`); logMod("🔍 detector", `${c.nick}: ${out.join(" · ")}`); }
+}
+
+// ---------- 👻 Silencio fantasma (para trolls) ----------
+// El troll ve sus mensajes como si nada, pero nadie más los ve (los mods sí, marcados con 👻). No se anuncia.
+const shadows = new Map(); // "dev:<dev>" | "nick:<apodo>" -> { until, nick, by, at }
+function shadowFind(c) {
+  const t = now();
+  for (const k of [c.dev && "dev:" + c.dev, c.nick && "nick:" + c.nick.toLowerCase()]) {
+    if (!k) continue; const s = shadows.get(k);
+    if (s && s.until > t) return s;
+    if (s) { shadows.delete(k); dirty(); }
+  }
+  return null;
+}
+const isShadow = (c) => !!c && !c.admin && (c.shadowUntil || 0) > now();
 
 // ---------- 📋 Registro de moderación (lo ve el dueño) ----------
 let modLog = [];   // { at, by, text }
@@ -428,6 +505,7 @@ function mute(c, id, minutes, reason, by = BOT) {
   c.mutedUntil = now() + minutes * 60000;
   voiceLeave(id);
   c.mutes++;
+  markSanction(c.nick, "silenciado/a");
   notice(id, `🔇 Fuiste silenciado/a por ${minutes} min. Motivo: ${reason}`, "warn");
   logMod(by === BOT ? "🤖 automático" : by, `🔇 silenció a ${c.nick} ${minutes} min — ${reason}`);
   botSay(`🔇 ${c.nick} fue silenciado/a ${minutes} min${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
@@ -438,6 +516,14 @@ function kick(id, reason, ban = false, by = BOT, ms = 24 * 3600e3) {
   c.gone = true; // no queda "en segundo plano": se va de verdad
   if (c.away) setTimeout(() => finalLeave(c, id), 400);
   if (ban) banAdd(c, ms, reason, by);
+  markSanction(c.nick, ban ? "baneo" : "expulsado/a");
+  // ⛔ El baneo arrastra a los otros apodos que usó desde ese mismo dispositivo
+  if (ban && c.nick && c.dev) {
+    const others = relatedOf(c.nick, c.dev, "").dev.map((x) => x.n).filter((n) => !byNick(n)?.c.admin);
+    const at = now(), until = ms === Infinity ? FOREVER : at + ms;
+    for (const n of others) bans.set("nick:" + n.toLowerCase(), { until, nick: n, rel: c.nick, by, reason: `${reason} (otra cuenta de ${c.nick})`, at });
+    if (others.length) { dirty(); notifyAdmins(`⛔ También quedaron baneados otros apodos de ${c.nick} (mismo dispositivo): ${others.join(", ")}`); }
+  }
   io.to(id).emit("kicked", { reason, ban, mins: ban ? (ms === Infinity ? -1 : Math.round(ms / 60000)) : 0 });
   botSay(`${ban ? "⛔" : "👢"} ${c.nick || "Alguien"} fue ${ban ? `baneado/a ${ms === Infinity ? "para siempre" : "por " + fmtDur(ms)}` : "expulsado/a"}${by !== BOT ? " por un moderador" : ""}. Motivo: ${reason}`);
   logMod(by === BOT ? "🤖 automático" : by, `${ban ? `⛔ baneó (${fmtDur(ms)})` : "👢 expulsó"} a ${c.nick || "?"} — ${reason}`);
@@ -452,6 +538,7 @@ function strike(c, id, n, reason) {
     if (c.mutes >= 2) return kick(id, "Acumuló demasiadas sanciones");
     return mute(c, id, 5, reason);
   }
+  markSanction(c.nick, "advertido/a");
   notice(id, `⚠️ Advertencia ${c.strikes.length}/3: ${reason}. A la tercera te silencio 5 minutos.`, "warn");
 }
 
@@ -583,7 +670,7 @@ function runCommand(c, id, text, room = "general") {
     let help = "Comandos: /ayuda · /reglas · /novedades (lo nuevo del chat) · /tiempo (tu límite y descanso) · /logros (los de más nivel) · /admin <clave> · /juegos (en las salas de Juegos)";
     if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /quitardescanso <apodo> (si alguien se bloqueó por error) · /novedad 📻 | Título | Texto (anunciar un cambio) · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
-      "\n• Usuarios: /info <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
+      "\n• Usuarios: /info <apodo> · /cuentas <apodo> (otras cuentas) · /fantasma <apodo> [1d] · /desfantasma <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
       "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué) · /liberar Apodo (suelta un apodo 💤 trabado)" +
       "\n• Más: /apodo <apodo> <nuevo> (cambiar apodo) · /sinavatar <apodo> (quitar foto de perfil) · /sinfotos <apodo> · /confotos <apodo> · /purgar <apodo> (borra sus mensajes)" +
       "\n• Salas: /cerrar · /abrir (en la sala actual) · /lento <seg> · /limpiar · /fijar <texto> · /desfijar · /anuncio <texto>" +
@@ -609,7 +696,7 @@ function runCommand(c, id, text, room = "general") {
     io.to(id).emit("admin-fail");
     return notice(id, "Clave incorrecta.", "warn");
   }
-  const MOD_ONLY = ["liberar", "desbanear", "baneados", "registro", "refugio", "sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
+  const MOD_ONLY = ["cuentas", "fantasma", "desfantasma", "liberar", "desbanear", "baneados", "registro", "refugio", "sinavatar", "db", "mod", "desmod", "mods", "crearclave", "quitarclave", "info", "advertir", "warn", "silenciar", "mute", "desilenciar", "unmute", "expulsar", "kick", "banear", "ban", "desbanear-todo", "fijar", "desfijar", "anuncio", "lento", "limpiar", "filtro", "reportes", "apodo", "sinfotos", "confotos", "purgar", "cerrar", "abrir", "silenciados"];
   if (!c.admin) return notice(id, MOD_ONLY.includes(cmd)
     ? `"/${cmd}" es un comando de moderación. Si sos el dueño o moderador, primero escribí /admin <tu clave> (tiene que aparecerte 👑 o 🛡️ al lado del nombre).`
     : `No conozco el comando "/${cmdRaw}". Probá /ayuda.`);
@@ -756,6 +843,35 @@ function runCommand(c, id, text, room = "general") {
       dirty();
       return notice(id, `Filtro actualizado (${BAD_WORDS.length} palabras).`, "mod");
     }
+    case "cuentas": {
+      // 🔍 funciona aunque no esté conectado (con el último dispositivo/red que usó)
+      if (!targetNick) return notice(id, "Uso: /cuentas Apodo — muestra otros apodos usados desde su dispositivo o su red.", "warn");
+      const L = target ? { d: target.c.dev, i: target.c.ip ? netKey(target.c.ip) : "" } : lastOf.get(targetNick.toLowerCase());
+      if (!L) return notice(id, `No tengo registro de «${targetNick}» (o hace mucho que no entra).`, "mod");
+      return notice(id, `${target ? target.c.nick : targetNick}${sanctionTxt(targetNick) ? " · " + sanctionTxt(targetNick) : ""}\n` + relatedText(targetNick, L.d, L.i), "mod");
+    }
+    case "fantasma": {
+      if (!target) return notice(id, "No encuentro a ese usuario (tiene que estar conectado/a). Uso: /fantasma Apodo [1h | 1d | 3d | 1sem]", "warn");
+      if (target.c.admin) return notice(id, "No podés poner en fantasma a un moderador.", "warn");
+      let ms = parseDur(why[0]); if (ms === null) ms = 24 * 3600e3;
+      if (!c.owner && (ms === Infinity || ms > 7 * 86400e3)) return notice(id, "Los moderadores pueden hasta 1 semana.", "warn");
+      const until = ms === Infinity ? FOREVER : now() + ms, info = { until, nick: target.c.nick, by: c.nick, at: now() };
+      if (target.c.dev) shadows.set("dev:" + target.c.dev, info);
+      shadows.set("nick:" + target.c.nick.toLowerCase(), info);
+      target.c.shadowUntil = until; dirty();
+      markSanction(target.c.nick, "fantasma");
+      logMod(c.nick, `👻 puso en silencio fantasma a ${target.c.nick} (${fmtDur(ms)})`);
+      notifyAdmins(`👻 ${c.nick} puso a ${target.c.nick} en silencio fantasma (${fmtDur(ms)}). Sus mensajes los ven solo él/ella y los mods. No se le avisa.`);
+      return;
+    }
+    case "desfantasma": {
+      const n = (target ? target.c.nick : targetNick || "").toLowerCase();
+      if (!n) return notice(id, "Uso: /desfantasma Apodo", "warn");
+      let k = 0; for (const [key, sh] of shadows) if (sh.nick.toLowerCase() === n) { shadows.delete(key); k++; }
+      if (target) target.c.shadowUntil = 0;
+      if (k) { dirty(); logMod(c.nick, `👻 sacó el silencio fantasma a ${n}`); }
+      return notice(id, k || target ? `✅ ${target ? target.c.nick : targetNick} ya se ve de nuevo.` : `No encuentro un silencio fantasma de «${targetNick}».`, "mod");
+    }
     case "info": {
       if (!target) return notice(id, "No encuentro a ese usuario.");
       const u = target.c, t = now();
@@ -764,7 +880,7 @@ function runCommand(c, id, text, room = "general") {
       return notice(id, `ℹ️ ${u.nick}${u.owner ? " 👑" : u.admin ? " 🛡️" : ""}\n• Conectado hace ${mins} min · estado: ${u.status}` +
         `\n• Advertencias recientes: ${u.strikes.filter((x) => t - x < 600000).length}/3 · silencios: ${u.mutes}` +
         `\n• ${u.mutedUntil > t ? `🔇 Silenciado/a (${Math.ceil((u.mutedUntil - t) / 60000)} min)` : "Puede escribir"} · ${u.noMedia ? "📷 sin fotos" : "fotos permitidas"}` +
-        `\n• Reportes (15 min): ${rep}`, "mod");
+        `\n• Reportes (15 min): ${rep}` + (isShadow(u) ? "\n• 👻 En silencio fantasma" : "") + "\n" + relatedText(u.nick, u.dev, u.ip ? netKey(u.ip) : ""), "mod");
     }
     case "advertir": case "warn": {
       if (!target) return notice(id, "No encuentro a ese usuario.");
@@ -863,6 +979,15 @@ function publishPublic(c, room, text, media, replyTo) {
   const reply = buildReply(replyTo, room);
   remember(id, { chat: room, from: c.nick, pkey: c.pkey, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!(media.image || media.gif || media.audio) });
   const out = { id, room, from: c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
+  if (isShadow(c) && room !== "mods") {
+    // 👻 lo ve solo quien lo escribió (en todos sus dispositivos) y los mods, marcado
+    const mine = [], mods = [];
+    for (const [sid, rc] of clients) { if (!rc.nick) continue; if (rc.pkey && rc.pkey === c.pkey) mine.push(sid); else if (rc.admin) mods.push(sid); }
+    const o = room === "confesiones" ? { id, room, from: "Anónimo", anon: true, text, ...media, reply, ts: out.ts } : out;
+    if (mine.length) io.to(mine).emit("public-message", room === "confesiones" ? { ...o, mine: true } : o);
+    if (mods.length) io.to(mods).emit("public-message", { ...o, shadow: true, ...(room === "confesiones" ? { realFrom: c.nick } : {}) });
+    return;
+  }
   if (room === "mods") emitToMods("public-message", out);
   else if (room === "confesiones") {
     // Nadie ve el nombre; los moderadores sí (para poder moderar); el autor lo ve como propio
@@ -3061,7 +3186,7 @@ io.on("connection", (socket) => {
     if (!media) return;
     // Fotos: solo con permiso de un moderador
     if (media.image && !canPhoto(c)) { sendPerm(c, socket.id); return notice(socket.id, NO_PHOTO, "warn"); }
-    const GE = ENGINE_BY_ROOM[room];
+    const GE = isShadow(c) ? null : ENGINE_BY_ROOM[room]; // 👻 en fantasma no juega (si ganara, se notaría)
     if (GE && hasMedia && GE.mediaBlocked?.(c, socket.id)) return;
     if (GE && text && GE.intercept(c, socket.id, text)) return;
     if (text && !hasMedia) styleNote(c.nick, room, text);
@@ -3086,7 +3211,7 @@ io.on("connection", (socket) => {
     remember(id, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!(media.image || media.gif || media.audio) });
     const reply = buildReply(replyTo, null, c.nick, target.c.nick);
     const msg = { id, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, reply, ts: now() };
-    io.to(target.id).emit("private-message", msg);
+    if (!isShadow(c)) io.to(target.id).emit("private-message", msg); // 👻 cree que lo mandó, pero no le llega a nadie
     cb({ ok: true, msg });
   });
 
@@ -3124,14 +3249,14 @@ io.on("connection", (socket) => {
       const nid = newId();
       remember(nid, { chat: "private", from: c.nick, to: target.c.nick, text: text || mediaLabel(media), cap: text || "", mu: { ...media }, ts: now(), media: !!m.media });
       const msg = { id: nid, from: c.nick, to: target.c.nick, admin: c.admin, role: role(c), text, ...media, fwd, ts: now() };
-      io.to(target.id).emit("private-message", msg);
+      if (!isShadow(c)) io.to(target.id).emit("private-message", msg);
       sent.push(msg);
     }
     cb({ ok: sent.length > 0, msgs: sent, errors, error: sent.length ? "" : errors.join(" ") });
   });
 
   socket.on("typing", ({ to, room, on } = {}) => {
-    if (!c.nick || c.mutedUntil > now()) return;
+    if (!c.nick || c.mutedUntil > now() || isShadow(c)) return;
     if (!to) {
       const r = ROOMS.includes(room) ? room : "general";
       if (r === "confesiones") return;
@@ -3162,7 +3287,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("react", ({ id, emoji } = {}) => {
-    if (!c.nick || !REACTIONS.includes(emoji)) return;
+    if (!c.nick || !REACTIONS.includes(emoji) || isShadow(c)) return;
     const m = messages.get(id);
     if (!m) return;
     if (m.chat === "private" && c.nick !== m.from && c.nick !== m.to) return;
@@ -3627,6 +3752,9 @@ let newsLog = [];
 function news(p, ico, text) {
   if (!p || p.quiet) return;
   const n = { ico, text, nick: p.nick || "", at: now() };
+  // 👻 en silencio fantasma: sus logros los ve solo él/ella (si los vieran todos, se notaría que sigue escribiendo)
+  const sh = [...clients].filter(([, c]) => c.nick && c.nick === p.nick && isShadow(c));
+  if (sh.length) { io.to(sh.map(([sid]) => sid)).emit("news", n); return; }
   newsLog.push(n); if (newsLog.length > 30) newsLog = newsLog.slice(-30);
   io.emit("news", n);
 }
@@ -3785,6 +3913,8 @@ function achJoin(c) {
   const isNew = !profiles.has(pkeyOf(c.nick, c.dev || c.ip));
   c.pkey = pkeyOf(c.nick, c.dev || c.ip);
   if (c.newProf === undefined) c.newProf = isNew; // ¿es su primera vez con este apodo? (para no abrumarlo con "novedades")
+  { const sh = shadowFind(c); c.shadowUntil = sh ? sh.until : 0; }
+  seenNote(c); relScan(c);
   { const old = profiles.get(c.pkey); c.veteran = !!old && (old.xp || 0) >= 30; }
   if (!c.veteran && !c.admin) {
     const t = now(); newJoins.push(t); while (newJoins.length && t - newJoins[0] > 2 * 60000) newJoins.shift();
@@ -4687,6 +4817,8 @@ function snapshot() {
     modKeys: [...modKeys].filter(([k]) => !envModKeys.has(k)), // las de Render ya están allá
     bans: [...bans].filter(([, b]) => b.until > t), modLog, usedBags, radio, djOn: dj.on,
     breaks: [...breaks].filter(([, b]) => b.until > t), devLinks: [...devLinks], changelog, chlogSeeded: true,
+    seenBy: [...seenBy].filter(([, a]) => t - (a.at(-1)?.t || 0) < SEEN_DEV_MS), lastOf: [...lastOf].filter(([, x]) => t - x.t < SEEN_DEV_MS),
+    sanctions: [...sanctions].filter(([, x]) => t - x.t < SANCTION_MS), shadows: [...shadows].filter(([, x]) => x.until > t),
     points: [...points],
     pinned, slowMode, badWords: BAD_WORDS, locked: [...lockedRooms], events, approvalMode,
     weekly: { start: weekly.start, points: [...weekly.points] }, champions,
@@ -4722,6 +4854,10 @@ async function loadState() {
       });
       if (Array.isArray(st.modLog)) modLog = st.modLog.slice(-200);
       (st.breaks || []).forEach(([k, b]) => { if (b?.until > now()) breaks.set(k, b); });
+      (st.seenBy || []).forEach(([k, a]) => { if (Array.isArray(a)) seenBy.set(k, a.filter((x) => x && x.n).slice(-12)); });
+      (st.lastOf || []).forEach(([k, x]) => { if (x) lastOf.set(k, x); });
+      (st.sanctions || []).forEach(([k, x]) => { if (x) sanctions.set(k, x); });
+      (st.shadows || []).forEach(([k, x]) => { if (x?.until > now()) shadows.set(k, x); });
       (st.devLinks || []).forEach(([d, g]) => { if (typeof d === "string" && typeof g === "string") devLinks.set(d, g); });
       // la primera vez quedan las de esta semana (CHANGELOG_SEED); después, lo guardado (incluye las del dueño)
       if (st.chlogSeeded && Array.isArray(st.changelog)) changelog = st.changelog.filter((x) => x && x.id && x.title).slice(-40);
