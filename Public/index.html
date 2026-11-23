@@ -223,6 +223,8 @@
   .msg.mention .bubble { background: var(--mention); border-color: var(--accent); }
   .msg.bot .bubble { background: transparent; border: 1px dashed var(--accent); color: var(--text); }
   .msg.deleted .bubble { font-style: italic; opacity: .55; cursor: default; }
+  .msg.shadowed .bubble { opacity: .5; border: 1px dashed var(--muted); }
+  .msg.shadowed .bubble::before { content: "👻 en silencio fantasma: solo lo ven él/ella y los mods"; display: block; font-size: 10.5px; font-style: italic; color: var(--muted); margin-bottom: 2px; }
   .msg .meta { font-size: 11px; color: var(--muted); margin: 0 4px 2px; display: flex; gap: 6px; align-items: center; }
   .msg.me .meta { justify-content: flex-end; }
   .msg .who { font-weight: 800; cursor: pointer; }
@@ -752,6 +754,7 @@
       <li>😴 Si es tarde, dormí: mañana el chat sigue acá</li>
     </ul>
     <button class="primary" id="restBtn" hidden onclick="try{localStorage.removeItem('gr-rest')}catch{};location.reload()">Volver a entrar</button>
+    <button type="button" class="link-toggle" id="restRetry" onclick="try{localStorage.removeItem('gr-rest')}catch{};location.reload()">¿Te lo habilitó el dueño? Probar de nuevo</button>
   </div>
 </div>
 
@@ -1038,6 +1041,7 @@ function rulesHTML(card, mode) {
       <li><b>🤫 Confesiones es anónima para los demás,</b> pero los moderadores pueden ver quién escribió, para cuidar el espacio.</li>
       <li><b>Respetá los privados.</b> Si alguien no quiere hablar, no insistas. Tocá el nombre de cualquier persona para bloquearla (no se van a leer entre ustedes) o reportarla.</li>
       <li><b>🔒 Tus privados son privados.</b> Los mensajes privados no se guardan y nadie del equipo (ni el dueño ni los moderadores) los puede leer.</li>
+      <li><b>🔍 Una persona, un apodo.</b> Para cuidar el chat, los moderadores pueden ver si una cuenta nueva entra desde el mismo dispositivo que otra. Nunca ven tu IP ni datos personales.</li>
     </ol>
     <p class="sub" style="margin:0">🤖 El bot <b>Fastidio</b> modera automáticamente: frena el spam y silencia a quien acumule 3 advertencias. Los moderadores 🛡️ pueden silenciar, expulsar o banear.</p>
     ${mode === "accept"
@@ -1485,7 +1489,7 @@ function renderMessage(m) {
   if (isBlocked(m.from)) return null;
   const mine = isMine(m);
   const d = el("div", "msg" + (mine ? " me" : "") + (m.bot ? " bot" : "") + (m.from === CRUPIER ? " crupier" : "") + (m.deleted ? " deleted" : "")
-    + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && !m.audio && !m.poll && onlyEmoji(m.text) ? " big" : ""));
+    + (m.shadow ? " shadowed" : "") + (mentionsOrReplies(m) ? " mention" : "") + (!m.deleted && !m.reply && !m.image && !m.gif && !m.audio && !m.poll && onlyEmoji(m.text) ? " big" : ""));
   d.dataset.id = m.id || "";
   const meta = el("div", "meta");
   if (m.admin) meta.append(el("span", "mod", m.role === "owner" ? "👑 dueño" : "🛡️ mod"));
@@ -1952,6 +1956,12 @@ function openSheet(nick) {
     if (info?.ck?.tit) btn("🏷️ Sacarle el título", () => cmd(`/sintitulo ${nick}`));
     btn("📷 Devolverle fotos y GIFs", () => cmd(`/confotos ${nick}`));
     btn("🧹 Borrar todos sus mensajes", () => { if (confirm(`¿Borrar todos los mensajes de ${nick} en las salas?`)) cmd(`/purgar ${nick}`); }, "danger");
+    btn("🔍 Ver otras cuentas", () => cmd(`/cuentas ${nick}`));
+    btn("👻 Silencio fantasma", () => {
+      const d = prompt(`Silencio fantasma para ${nick}: sigue escribiendo como si nada, pero nadie más lo ve (vos y los mods sí). No se le avisa.\n\n¿Por cuánto tiempo? 1h · 1d · 3d · 1sem${isOwner ? " · perma" : ""}`, "1d");
+      if (d !== null) cmd(`/fantasma ${nick} ${d.trim() || "1d"}`);
+    }, "danger");
+    btn("👻 Sacar silencio fantasma", () => cmd(`/desfantasma ${nick}`));
     btn("👢 Expulsar", () => { const r = prompt("Motivo de la expulsión:", "No respetar las reglas"); if (r !== null) cmd(`/expulsar ${nick} ${r}`); }, "danger");
     btn("⛔ Banear", () => {
       const d = prompt(`¿Por cuánto tiempo?\n30m · 2h · 1d · 3d · 1sem${isOwner ? " · perma" : ""}`, "1d"); if (d === null) return;
