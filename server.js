@@ -635,12 +635,21 @@ function runCommand(c, id, text, room = "general") {
   if (cmd === "novedades") { io.to(id).emit("open-changelog"); return; }
   if (cmd === "tiempo" || cmd === "descanso" || cmd === "limite" || cmd === "límite") { io.to(id).emit("open-well"); return; }
   // 👑 Levantar un descanso voluntario (por si alguien se equivocó). Solo el dueño.
-  if (cmd === "quitardescanso") {
-    if (!c.owner) return notice(id, "Solo el dueño puede levantar un descanso.", "warn");
-    const n = arg.trim().toLowerCase(); if (!n) return notice(id, "Uso: /quitardescanso Apodo", "warn");
+  // También levanta el límite diario de hoy (/quitarlimite hace lo mismo)
+  if (cmd === "quitardescanso" || cmd === "quitarlimite" || cmd === "quitarlímite") {
+    if (!c.owner) return notice(id, "Solo el dueño puede levantar un descanso o un límite.", "warn");
+    const n = arg.trim().toLowerCase(); if (!n) return notice(id, "Uso: /quitardescanso Apodo (sirve para el descanso y para el límite diario)", "warn");
     let k = 0; for (const [key, b] of breaks) if (b.nick.toLowerCase() === n || key === "nick:" + n) { breaks.delete(key); k++; }
     if (k) dirty();
-    return notice(id, k ? `🌿 Listo: ${arg.trim()} ya puede volver a entrar.` : `No encontré un descanso activo de ${arg.trim()}.`, "mod");
+    // límite diario: por hoy no le cuenta más (mañana vuelve su límite normal)
+    let lim = 0; const day = arDay();
+    for (const [pk, p] of profiles) if (pk.startsWith(n + "|") && limitOf(p, pk)) {
+      const u = useToday.get(pk);
+      useToday.set(pk, { day, ms: u && u.day === day ? u.ms : 0, w: 2, free: true }); lim++; useDirty = true;
+    }
+    if (k || lim) logMod(c.nick, `🌿 le levantó ${k ? "el descanso" : ""}${k && lim ? " y " : ""}${lim ? "el límite de hoy" : ""} a ${arg.trim()}`);
+    if (!k && !lim) return notice(id, `No encontré ni un descanso activo ni un límite diario de «${arg.trim()}». Fijate que el apodo esté bien escrito.`, "mod");
+    return notice(id, `🌿 Listo: ${arg.trim()} ya puede volver a entrar` + (lim ? " (por hoy sin límite; mañana vuelve el que eligió)" : "") + ". Si le sigue apareciendo la pantalla, que toque «Probar de nuevo».", "mod");
   }
   if (cmd === "piezas") { const p = profiles.get(c.pkey); return notice(id, `🧩 Tenés ${p?.pz || 0} piezas. Gastalas en ✏️ Mi perfil → 🛒 Tienda.`, "help"); }
   if (cmd === "sintitulo") {
@@ -668,7 +677,7 @@ function runCommand(c, id, text, room = "general") {
   }
   if (cmd === "ayuda") {
     let help = "Comandos: /ayuda · /reglas · /novedades (lo nuevo del chat) · /tiempo (tu límite y descanso) · /logros (los de más nivel) · /admin <clave> · /juegos (en las salas de Juegos)";
-    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /quitardescanso <apodo> (si alguien se bloqueó por error) · /novedad 📻 | Título | Texto (anunciar un cambio) · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
+    if (c.owner) help += "\nDueño 👑: /mod <apodo> (hacer moderador a alguien conectado) · /desmod <apodo> · /crearclave <nombre> (sin que esté conectado) · /quitarclave <nombre> · /quitardescanso <apodo> (levanta un descanso o el límite de hoy) · /novedad 📻 | Título | Texto (anunciar un cambio) · /mods (ver moderadores y claves) · /db (estado de la base de datos)";
     if (c.admin) help += "\n🛡️ Moderación (o usá el botón 🛡️ Panel):" +
       "\n• Usuarios: /info <apodo> · /cuentas <apodo> (otras cuentas) · /fantasma <apodo> [1d] · /desfantasma <apodo> · /advertir <apodo> [motivo] · /silenciar <apodo> [min] · /desilenciar <apodo> · /expulsar <apodo> [motivo] · /banear <apodo> [30m|2h|3d|1sem|perma] [motivo] · /desbanear <apodo> · /baneados · /desbanear-todo" +
       "\n• Seguridad: /refugio [min] (los recién llegados solo leen) · /refugio off · /registro (solo dueño: quién hizo qué) · /liberar Apodo (suelta un apodo 💤 trabado)" +
@@ -4708,7 +4717,7 @@ function wellBlock(nick, dev, admin) {
   const br = !admin && breakFind(dev, nick);
   if (br) return { kind: "break", until: br.until, msg: `🌿 Te tomaste un descanso del chat. Podés volver ${fmtArDate(br.until)}.` };
   const pkey = pkeyOf(nick, dev), lim = limitOf(profiles.get(pkey), pkey);
-  if (lim && usedMs(pkey) >= lim * 60000) return { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Llegaste a tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` };
+  if (lim && !useToday.get(pkey)?.free && usedMs(pkey) >= lim * 60000) return { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Llegaste a tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` };
   return null;
 }
 function wellInfo(c) {
@@ -4733,7 +4742,7 @@ setInterval(() => {
     if (!u || u.day !== day) { u = { day, ms: 0, w: 0 }; useToday.set(c.pkey, u); }
     u.ms += step; useDirty = true;
     const lim = limitOf(profiles.get(c.pkey), c.pkey);
-    if (!lim) continue;
+    if (!lim || u.free) continue;
     const left = lim * 60000 - u.ms;
     if (left <= 0) wellKick((x) => x.pkey === c.pkey, { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Llegaste a tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` });
     else if (left <= 60e3 && u.w < 2) { u.w = 2; io.to(sid).emit("limit-warn", { left: 1 }); }
@@ -4745,7 +4754,7 @@ setInterval(() => {
 setInterval(async () => {
   if (!db.on || !useDirty) return;
   useDirty = false;
-  const day = arDay(), rows = [...useToday].filter(([, u]) => u.day === day).map(([k, u]) => [k, u.ms, u.w]);
+  const day = arDay(), rows = [...useToday].filter(([, u]) => u.day === day).map(([k, u]) => [k, u.ms, u.w, u.free ? 1 : 0]);
   try { await redis(["SET", USE_KEY, JSON.stringify({ day, rows }), "EX", "172800"]); } catch { useDirty = true; }
 }, 180e3).unref();
 async function loadUsage() {
@@ -4753,7 +4762,7 @@ async function loadUsage() {
   try {
     const raw = await redis(["GET", USE_KEY]); if (!raw) return;
     const st = JSON.parse(raw); if (st.day !== arDay()) return;
-    for (const [k, ms, w] of st.rows || []) useToday.set(k, { day: st.day, ms: +ms || 0, w: +w || 0 });
+    for (const [k, ms, w, free] of st.rows || []) useToday.set(k, { day: st.day, ms: +ms || 0, w: +w || 0, free: !!free });
   } catch {}
 }
 function wellHandlers(socket, c) {
@@ -4772,11 +4781,11 @@ function wellHandlers(socket, c) {
       msg = n ? `⏳ Lo cambiaste a ${fmtMin(n)}: rige desde mañana. Hoy sigue el de ${fmtMin(cur)}.` : `⏳ Mañana te quedás sin límite. Hoy sigue el de ${fmtMin(cur)}.`;
     }
     profDirty.add(c.pkey);
-    const u = useToday.get(c.pkey); if (u) u.w = 0; // que vuelva a avisar con el límite nuevo
+    const u = useToday.get(c.pkey); if (u && !u.free) u.w = 0; // que vuelva a avisar con el límite nuevo
     cb({ ok: true, msg, info: wellInfo(c) });
     // si el límite nuevo ya está superado, se va ahora
     const lim = limitOf(p, c.pkey);
-    if (lim && usedMs(c.pkey) >= lim * 60000) wellKick((x) => x.pkey === c.pkey, { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Ya pasaste tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` });
+    if (lim && !useToday.get(c.pkey)?.free && usedMs(c.pkey) >= lim * 60000) wellKick((x) => x.pkey === c.pkey, { kind: "limit", until: nextArMidnight(), lim, msg: `⏳ Ya pasaste tu límite de hoy (${fmtMin(lim)}). Nos vemos mañana 💛` });
   });
   socket.on("break-take", (d, cb) => {
     if (!c.nick || typeof cb !== "function") return;
